@@ -61,3 +61,21 @@ impl From<serde_json::Error> for Error {
         Error::Serialization(e.to_string())
     }
 }
+
+impl From<rmp_serde::encode::Error> for Error {
+    fn from(e: rmp_serde::encode::Error) -> Self {
+        Error::Serialization(e.to_string())
+    }
+}
+
+impl From<rmp_serde::decode::Error> for Error {
+    fn from(e: rmp_serde::decode::Error) -> Self {
+        Error::Serialization(e.to_string())
+    }
+}
+
+impl From<postcard::Error> for Error {
+    fn from(e: postcard::Error) -> Self {
+        Error::Serialization(e.to_string())
+    }
+}

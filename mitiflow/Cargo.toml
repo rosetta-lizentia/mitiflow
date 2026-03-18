@@ -17,6 +17,8 @@ full = ["store", "wal", "partition"]
 zenoh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rmp-serde = { workspace = true }
+postcard = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
