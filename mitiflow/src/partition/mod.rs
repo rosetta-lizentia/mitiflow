@@ -73,7 +73,10 @@ impl PartitionManager {
 
         // Discover existing workers via liveliness get.
         let mut initial_workers = vec![worker_id.clone()];
-        let replies = session.liveliness().get(&format!("{liveliness_prefix}/*")).await?;
+        let replies = session
+            .liveliness()
+            .get(&format!("{liveliness_prefix}/*"))
+            .await?;
         while let Ok(reply) = replies.recv_async().await {
             if let Ok(sample) = reply.result() {
                 let key = sample.key_expr().as_str();

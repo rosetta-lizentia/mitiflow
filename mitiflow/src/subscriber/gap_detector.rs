@@ -83,11 +83,7 @@ impl Default for GapDetector {
 
 impl SequenceTracker for GapDetector {
     fn on_sample(&mut self, pub_id: &PublisherId, seq: u64) -> SampleResult {
-        let expected = self
-            .last_seen
-            .get(pub_id)
-            .map(|last| last + 1)
-            .unwrap_or(0);
+        let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
 
         if seq == expected {
             // Normal: exactly the next expected sequence.
@@ -107,11 +103,7 @@ impl SequenceTracker for GapDetector {
     }
 
     fn on_heartbeat(&mut self, pub_id: &PublisherId, current_seq: u64) -> Vec<MissInfo> {
-        let expected = self
-            .last_seen
-            .get(pub_id)
-            .map(|last| last + 1)
-            .unwrap_or(0);
+        let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
 
         if current_seq >= expected && expected <= current_seq {
             let next = current_seq + 1;
@@ -187,10 +179,13 @@ mod tests {
         assert_eq!(det.on_sample(&pub_a, 0), SampleResult::Deliver);
         assert_eq!(det.on_sample(&pub_b, 0), SampleResult::Deliver);
         assert_eq!(det.on_sample(&pub_a, 1), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_b, 5), SampleResult::Gap(MissInfo {
-            source: pub_b,
-            missed: 1..5,
-        }));
+        assert_eq!(
+            det.on_sample(&pub_b, 5),
+            SampleResult::Gap(MissInfo {
+                source: pub_b,
+                missed: 1..5,
+            })
+        );
         assert_eq!(det.last_seen(&pub_a), Some(1));
         assert_eq!(det.last_seen(&pub_b), Some(5));
     }

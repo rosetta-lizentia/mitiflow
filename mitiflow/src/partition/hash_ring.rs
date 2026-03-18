@@ -33,7 +33,8 @@ pub fn worker_for(partition: u32, workers: &[String]) -> Option<&str> {
 /// Returns a map from `worker_id` → `Vec<partition_index>`. Each partition is
 /// assigned to exactly one worker via HRW hashing.
 pub fn assignments(workers: &[String], num_partitions: u32) -> HashMap<String, Vec<u32>> {
-    let mut map: HashMap<String, Vec<u32>> = workers.iter().map(|w| (w.clone(), Vec::new())).collect();
+    let mut map: HashMap<String, Vec<u32>> =
+        workers.iter().map(|w| (w.clone(), Vec::new())).collect();
 
     for p in 0..num_partitions {
         if let Some(w) = worker_for(p, workers) {
@@ -135,10 +136,7 @@ mod tests {
         // HRW guarantees minimal disruption: only ~1/N partitions should move
         // when adding 1 worker. With 3 workers, roughly 64/3 ≈ 21 should move.
         // Allow some slack.
-        assert!(
-            moved <= 30,
-            "too many partitions moved on join: {moved}"
-        );
+        assert!(moved <= 30, "too many partitions moved on join: {moved}");
         assert!(
             moved >= 10,
             "suspiciously few partitions moved on join: {moved}"

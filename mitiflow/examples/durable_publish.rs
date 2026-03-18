@@ -7,9 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use mitiflow::{
-    Event, EventBusConfig, EventPublisher, EventStore, FjallBackend, HeartbeatMode,
-};
+use mitiflow::{Event, EventBusConfig, EventPublisher, EventStore, FjallBackend, HeartbeatMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OrderEvent {

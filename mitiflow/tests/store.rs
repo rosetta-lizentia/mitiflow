@@ -5,9 +5,9 @@ use std::time::Duration;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use mitiflow::store::FjallBackend;
 use mitiflow::store::backend::{EventMetadata, StorageBackend};
 use mitiflow::store::query::QueryFilters;
-use mitiflow::store::FjallBackend;
 use mitiflow::types::PublisherId;
 use mitiflow::{Event, EventBusConfig, EventPublisher, EventStore, HeartbeatMode};
 
@@ -290,7 +290,10 @@ async fn event_store_persists_and_publishes_watermark() {
 
     // The store's backend should have committed_seq >= some value.
     let committed = store.backend().committed_seq();
-    assert!(committed >= 1, "store should have committed some events, got {committed}");
+    assert!(
+        committed >= 1,
+        "store should have committed some events, got {committed}"
+    );
 
     let stored = store.backend().query(&QueryFilters::default()).unwrap();
     assert!(
@@ -301,10 +304,7 @@ async fn event_store_persists_and_publishes_watermark() {
 
     // Subscribe to watermark and verify we get one.
     let wm_key = config.resolved_watermark_key();
-    let wm_sub = session
-        .declare_subscriber(&wm_key)
-        .await
-        .unwrap();
+    let wm_sub = session.declare_subscriber(&wm_key).await.unwrap();
 
     let wm_sample = tokio::time::timeout(Duration::from_secs(2), wm_sub.recv_async())
         .await

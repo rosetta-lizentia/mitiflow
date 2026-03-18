@@ -40,10 +40,7 @@ async fn main() -> mitiflow::Result<()> {
 
     // Create the publisher.
     let publisher = EventPublisher::new(&session, config).await?;
-    println!(
-        "Publisher started: {}",
-        publisher.publisher_id()
-    );
+    println!("Publisher started: {}", publisher.publisher_id());
 
     // Allow subscriber to fully initialize.
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -64,12 +61,10 @@ async fn main() -> mitiflow::Result<()> {
     // Receive all events.
     println!("\nReceiving events...");
     for _ in 0..num_events {
-        let event: Event<SensorReading> = tokio::time::timeout(
-            Duration::from_secs(5),
-            subscriber.recv(),
-        )
-        .await
-        .expect("timed out waiting for event")?;
+        let event: Event<SensorReading> =
+            tokio::time::timeout(Duration::from_secs(5), subscriber.recv())
+                .await
+                .expect("timed out waiting for event")?;
 
         println!(
             "  Received seq={}, sensor={}, temp={:.1}°C, humidity={:.1}%",

@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
+use mitiflow::DeadLetterQueue;
 use mitiflow::dlq::{BackoffStrategy, DlqConfig, RetryOutcome};
 use mitiflow::event::RawEvent;
 use mitiflow::types::{EventId, PublisherId};
-use mitiflow::DeadLetterQueue;
 
 fn make_raw_event() -> RawEvent {
     RawEvent {

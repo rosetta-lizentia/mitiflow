@@ -12,7 +12,12 @@ fn hrw_deterministic_assignment() {
 
 #[test]
 fn hrw_all_partitions_assigned() {
-    let workers = vec!["alpha".into(), "beta".into(), "gamma".into(), "delta".into()];
+    let workers = vec![
+        "alpha".into(),
+        "beta".into(),
+        "gamma".into(),
+        "delta".into(),
+    ];
     let map = hash_ring::assignments(&workers, 128);
     let total: usize = map.values().map(|v| v.len()).sum();
     assert_eq!(total, 128);
@@ -63,7 +68,9 @@ async fn partition_manager_basic() {
         .build()
         .unwrap();
 
-    let pm = mitiflow::PartitionManager::new(&session, config).await.unwrap();
+    let pm = mitiflow::PartitionManager::new(&session, config)
+        .await
+        .unwrap();
     let parts = pm.my_partitions().await;
 
     // Single worker should own all 16 partitions.
@@ -83,7 +90,9 @@ async fn partition_manager_two_workers_rebalance() {
         .build()
         .unwrap();
 
-    let pm1 = mitiflow::PartitionManager::new(&session1, config1).await.unwrap();
+    let pm1 = mitiflow::PartitionManager::new(&session1, config1)
+        .await
+        .unwrap();
 
     // w1 starts alone — should own all 16.
     let initial = pm1.my_partitions().await;
@@ -96,7 +105,9 @@ async fn partition_manager_two_workers_rebalance() {
         .build()
         .unwrap();
 
-    let pm2 = mitiflow::PartitionManager::new(&session2, config2).await.unwrap();
+    let pm2 = mitiflow::PartitionManager::new(&session2, config2)
+        .await
+        .unwrap();
 
     // Give rebalance time to propagate.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;

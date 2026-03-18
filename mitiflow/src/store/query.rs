@@ -60,9 +60,10 @@ impl QueryFilters {
                             })?);
                     }
                     "limit" => {
-                        filters.limit = Some(value.trim().parse::<usize>().map_err(|e| {
-                            Error::InvalidConfig(format!("invalid limit: {e}"))
-                        })?);
+                        filters.limit =
+                            Some(value.trim().parse::<usize>().map_err(|e| {
+                                Error::InvalidConfig(format!("invalid limit: {e}"))
+                            })?);
                     }
                     _ => { /* ignore unknown parameters */ }
                 }

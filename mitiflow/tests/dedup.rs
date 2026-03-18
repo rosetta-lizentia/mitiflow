@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
+use mitiflow::SequenceCheckpoint;
 use mitiflow::subscriber::gap_detector::{GapDetector, SampleResult, SequenceTracker};
 use mitiflow::types::PublisherId;
-use mitiflow::SequenceCheckpoint;
 
 #[test]
 fn checkpoint_persist_and_restore() {

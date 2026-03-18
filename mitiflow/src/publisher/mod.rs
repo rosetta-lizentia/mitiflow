@@ -1,22 +1,22 @@
 //! Event publisher with sequencing, caching, and heartbeat.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
+use zenoh::Session;
 use zenoh::pubsub::Publisher;
 use zenoh::qos::CongestionControl;
-use zenoh::Session;
 
 use crate::attachment::encode_metadata;
 use crate::config::{EventBusConfig, HeartbeatMode};
-use crate::error::Result;
 #[cfg(feature = "store")]
 use crate::error::Error;
+use crate::error::Result;
 use crate::event::Event;
 use crate::types::PublisherId;
 
@@ -185,9 +185,7 @@ impl EventPublisher {
         #[cfg(feature = "store")]
         let watermark_tx = {
             let watermark_key = config.resolved_watermark_key();
-            let wm_subscriber = session
-                .declare_subscriber(&watermark_key)
-                .await?;
+            let wm_subscriber = session.declare_subscriber(&watermark_key).await?;
             // Capacity is generous — slow callers will just miss old watermarks
             // and wait for the next one.
             let (tx, _) = tokio::sync::broadcast::channel(64);
@@ -250,11 +248,7 @@ impl EventPublisher {
     }
 
     /// Publish an event to an explicit key expression (e.g., a partition key).
-    pub async fn publish_to<T: Serialize>(
-        &self,
-        key: &str,
-        event: &Event<T>,
-    ) -> Result<u64> {
+    pub async fn publish_to<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64> {
         let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
         self.publish_inner(key, event, seq).await?;
         Ok(seq)
@@ -275,9 +269,10 @@ impl EventPublisher {
     pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
         let seq = self.publish(event).await?;
 
-        let watermark_tx = self.watermark_tx.as_ref().ok_or_else(|| {
-            Error::InvalidConfig("watermark subscriber not initialized".into())
-        })?;
+        let watermark_tx = self
+            .watermark_tx
+            .as_ref()
+            .ok_or_else(|| Error::InvalidConfig("watermark subscriber not initialized".into()))?;
         // Subscribe before waiting — each caller gets its own receiver.
         let mut rx = watermark_tx.subscribe();
         let timeout_dur = self.config.durable_timeout;

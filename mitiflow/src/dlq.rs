@@ -141,9 +141,7 @@ impl DeadLetterQueue {
             "routing event to DLQ after max retries"
         );
 
-        self.session
-            .put(&dlq_key, event.payload.clone())
-            .await?;
+        self.session.put(&dlq_key, event.payload.clone()).await?;
 
         debug!(event_id = %event.id, "event published to DLQ");
         Ok(())

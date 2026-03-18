@@ -120,10 +120,7 @@ impl EventStore {
 
         // -- 2. Queryable task: serve stored events for replay --
         {
-            let queryable = self
-                .session
-                .declare_queryable(&store_key_prefix)
-                .await?;
+            let queryable = self.session.declare_queryable(&store_key_prefix).await?;
             let backend = Arc::clone(&self.backend);
             let cancel = self.cancel.clone();
 

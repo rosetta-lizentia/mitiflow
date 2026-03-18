@@ -143,9 +143,7 @@ mod fjall_impl {
 
             let metadata = db
                 .keyspace("metadata", fjall::KeyspaceCreateOptions::default)
-                .map_err(|e| {
-                    Error::StoreError(format!("failed to open metadata keyspace: {e}"))
-                })?;
+                .map_err(|e| Error::StoreError(format!("failed to open metadata keyspace: {e}")))?;
 
             let keys = db
                 .keyspace("keys", fjall::KeyspaceCreateOptions::default)
@@ -225,11 +223,7 @@ mod fjall_impl {
             let current = self.cached_committed_seq.load(Ordering::Acquire);
             if metadata.seq == 0 || metadata.seq == current + 1 {
                 let new_committed = metadata.seq;
-                batch.insert(
-                    &self.metadata,
-                    "committed_seq",
-                    new_committed.to_le_bytes(),
-                );
+                batch.insert(&self.metadata, "committed_seq", new_committed.to_le_bytes());
                 // commit batch first, then update cache
                 batch
                     .commit()
@@ -387,9 +381,7 @@ mod fjall_impl {
                 let key_expr = meta.key_expr;
 
                 all_entries.push((event_key.clone(), key_expr.clone(), seq));
-                let entry = latest
-                    .entry(key_expr)
-                    .or_insert((event_key.clone(), seq));
+                let entry = latest.entry(key_expr).or_insert((event_key.clone(), seq));
                 if seq > entry.1 {
                     *entry = (event_key, seq);
                 }
@@ -401,11 +393,9 @@ mod fjall_impl {
             for (event_key, key_expr, _seq) in &all_entries {
                 if let Some((latest_key, _)) = latest.get(key_expr) {
                     if event_key != latest_key {
-                        self.events
-                            .remove(event_key.as_slice())
-                            .map_err(|e| {
-                                Error::StoreError(format!("compact remove failed: {e}"))
-                            })?;
+                        self.events.remove(event_key.as_slice()).map_err(|e| {
+                            Error::StoreError(format!("compact remove failed: {e}"))
+                        })?;
                         removed += 1;
                     } else {
                         retained += 1;

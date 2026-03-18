@@ -98,8 +98,16 @@ async fn rebalance(
 
     let (gained, lost) = {
         let old_parts = my_partitions.read().await;
-        let gained: Vec<u32> = new_parts.iter().copied().filter(|p| !old_parts.contains(p)).collect();
-        let lost: Vec<u32> = old_parts.iter().copied().filter(|p| !new_parts.contains(p)).collect();
+        let gained: Vec<u32> = new_parts
+            .iter()
+            .copied()
+            .filter(|p| !old_parts.contains(p))
+            .collect();
+        let lost: Vec<u32> = old_parts
+            .iter()
+            .copied()
+            .filter(|p| !new_parts.contains(p))
+            .collect();
         (gained, lost)
     };
 

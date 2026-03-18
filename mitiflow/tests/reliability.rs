@@ -28,7 +28,9 @@ async fn single_publisher_single_subscriber() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
     let config = test_config("single_pub_sub");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
 
     // Let subscriber fully initialize.
@@ -43,13 +45,11 @@ async fn single_publisher_single_subscriber() {
 
     // Receive all events.
     for _ in 0..count {
-        let event: Event<TestPayload> = tokio::time::timeout(
-            Duration::from_secs(5),
-            subscriber.recv(),
-        )
-        .await
-        .expect("timed out")
-        .expect("recv failed");
+        let event: Event<TestPayload> =
+            tokio::time::timeout(Duration::from_secs(5), subscriber.recv())
+                .await
+                .expect("timed out")
+                .expect("recv failed");
 
         assert!(event.seq.is_some());
         assert!(event.payload.value < count);
@@ -65,7 +65,9 @@ async fn recv_raw_returns_deserializable_event() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
     let config = test_config("recv_raw");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -95,7 +97,9 @@ async fn multiple_events_maintain_sequence_order() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
     let config = test_config("seq_order");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -110,13 +114,11 @@ async fn multiple_events_maintain_sequence_order() {
 
     let mut received = Vec::new();
     for _ in 0..count {
-        let event: Event<TestPayload> = tokio::time::timeout(
-            Duration::from_secs(5),
-            subscriber.recv(),
-        )
-        .await
-        .expect("timed out")
-        .expect("recv failed");
+        let event: Event<TestPayload> =
+            tokio::time::timeout(Duration::from_secs(5), subscriber.recv())
+                .await
+                .expect("timed out")
+                .expect("recv failed");
 
         received.push(event.payload.value);
     }
@@ -161,7 +163,9 @@ async fn publish_to_custom_key() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
     let config = test_config("custom_key");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -176,13 +180,10 @@ async fn publish_to_custom_key() {
         .unwrap();
     assert_eq!(seq, 0);
 
-    let event: Event<TestPayload> = tokio::time::timeout(
-        Duration::from_secs(5),
-        subscriber.recv(),
-    )
-    .await
-    .expect("timed out")
-    .expect("recv failed");
+    let event: Event<TestPayload> = tokio::time::timeout(Duration::from_secs(5), subscriber.recv())
+        .await
+        .expect("timed out")
+        .expect("recv failed");
 
     assert_eq!(event.payload.value, 99);
     assert_eq!(
