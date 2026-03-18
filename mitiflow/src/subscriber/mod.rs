@@ -2,6 +2,9 @@
 
 pub mod gap_detector;
 
+#[cfg(feature = "store")]
+pub mod checkpoint;
+
 use std::sync::Arc;
 
 use serde::Serialize;

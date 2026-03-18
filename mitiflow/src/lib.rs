@@ -8,6 +8,7 @@
 pub mod attachment;
 pub mod codec;
 pub mod config;
+pub mod dlq;
 pub mod error;
 pub mod event;
 pub mod publisher;
@@ -23,6 +24,7 @@ pub mod partition;
 // Public re-exports
 pub use codec::CodecFormat;
 pub use config::{EventBusConfig, EventBusConfigBuilder, HeartbeatMode, RecoveryMode};
+pub use dlq::{BackoffStrategy, DeadLetterQueue, DlqConfig, RetryOutcome};
 pub use error::{Error, Result};
 pub use event::Event;
 pub use publisher::EventPublisher;
@@ -31,3 +33,9 @@ pub use types::{EventId, PublisherId};
 
 #[cfg(feature = "store")]
 pub use store::{EventStore, FjallBackend};
+
+#[cfg(feature = "store")]
+pub use subscriber::checkpoint::SequenceCheckpoint;
+
+#[cfg(feature = "partition")]
+pub use partition::PartitionManager;
