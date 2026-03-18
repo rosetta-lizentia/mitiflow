@@ -50,7 +50,7 @@ impl SequenceCheckpoint {
         }
 
         self.keyspace
-            .insert(&key, seq.to_be_bytes())
+            .insert(key, seq.to_be_bytes())
             .map_err(|e| Error::CheckpointError(format!("insert failed: {e}")))?;
 
         Ok(())
@@ -61,7 +61,7 @@ impl SequenceCheckpoint {
         let key = pub_id.to_bytes();
         match self
             .keyspace
-            .get(&key)
+            .get(key)
             .map_err(|e| Error::CheckpointError(format!("get failed: {e}")))?
         {
             Some(bytes) => {
@@ -109,7 +109,7 @@ impl SequenceCheckpoint {
     pub fn remove(&self, pub_id: &PublisherId) -> Result<()> {
         let key = pub_id.to_bytes();
         self.keyspace
-            .remove(&key)
+            .remove(key)
             .map_err(|e| Error::CheckpointError(format!("remove failed: {e}")))?;
         Ok(())
     }

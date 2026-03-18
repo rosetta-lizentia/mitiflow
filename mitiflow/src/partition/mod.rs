@@ -22,6 +22,9 @@ use zenoh::Session;
 use crate::config::EventBusConfig;
 use crate::error::{Error, Result};
 
+/// Type alias for the shared rebalance callback.
+pub type RebalanceCb = Arc<RwLock<Option<Box<dyn Fn(&[u32], &[u32]) + Send + Sync>>>>;
+
 /// Manages partition assignment for a single worker in a consumer group.
 ///
 /// On construction, declares a liveliness token and discovers existing workers.
@@ -55,7 +58,7 @@ pub struct PartitionManager {
     /// Background task handle.
     _task: tokio::task::JoinHandle<()>,
     /// Rebalance callback (if registered before construction, pass via builder).
-    rebalance_cb: Arc<RwLock<Option<Box<dyn Fn(&[u32], &[u32]) + Send + Sync>>>>,
+    rebalance_cb: RebalanceCb,
 }
 
 impl PartitionManager {
@@ -103,8 +106,7 @@ impl PartitionManager {
         let my_partitions = Arc::new(RwLock::new(my_parts));
         let workers = Arc::new(RwLock::new(initial_workers));
         let cancel = CancellationToken::new();
-        let rebalance_cb: Arc<RwLock<Option<Box<dyn Fn(&[u32], &[u32]) + Send + Sync>>>> =
-            Arc::new(RwLock::new(None));
+        let rebalance_cb: RebalanceCb = Arc::new(RwLock::new(None));
 
         // Spawn the membership watcher task.
         let task = {

@@ -105,7 +105,7 @@ impl SequenceTracker for GapDetector {
     fn on_heartbeat(&mut self, pub_id: &PublisherId, current_seq: u64) -> Vec<MissInfo> {
         let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
 
-        if current_seq >= expected && expected <= current_seq {
+        if current_seq >= expected {
             let next = current_seq + 1;
             if expected < next {
                 return vec![MissInfo {

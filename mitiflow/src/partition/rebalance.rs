@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use zenoh::Session;
 
-use super::hash_ring;
+use super::{hash_ring, RebalanceCb};
 
 /// Run the membership watcher loop.
 ///
@@ -19,6 +19,7 @@ use super::hash_ring;
 /// recomputes the HRW assignment and updates the shared state.
 ///
 /// The `_token` parameter keeps the liveliness token alive as long as this task runs.
+#[allow(clippy::too_many_arguments)]
 pub async fn membership_watcher(
     session: &Session,
     liveliness_prefix: &str,
@@ -26,7 +27,7 @@ pub async fn membership_watcher(
     num_partitions: u32,
     my_partitions: &Arc<RwLock<Vec<u32>>>,
     workers: &Arc<RwLock<Vec<String>>>,
-    rebalance_cb: &Arc<RwLock<Option<Box<dyn Fn(&[u32], &[u32]) + Send + Sync>>>>,
+    rebalance_cb: &RebalanceCb,
     cancel: CancellationToken,
     _token: zenoh::liveliness::LivelinessToken,
 ) -> crate::error::Result<()> {
@@ -91,7 +92,7 @@ async fn rebalance(
     num_partitions: u32,
     workers: &[String],
     my_partitions: &Arc<RwLock<Vec<u32>>>,
-    rebalance_cb: &Arc<RwLock<Option<Box<dyn Fn(&[u32], &[u32]) + Send + Sync>>>>,
+    rebalance_cb: &RebalanceCb,
 ) {
     let assignment = hash_ring::assignments(workers, num_partitions);
     let new_parts = assignment.get(my_id).cloned().unwrap_or_default();

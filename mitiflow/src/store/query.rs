@@ -30,7 +30,7 @@ impl QueryFilters {
     pub fn from_selector(params: &str) -> Result<Self> {
         let mut filters = Self::default();
 
-        for part in params.split(|c| c == ';' || c == '&') {
+        for part in params.split([';', '&']) {
             let part = part.trim();
             if part.is_empty() {
                 continue;
