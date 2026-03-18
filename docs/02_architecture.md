@@ -75,7 +75,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 flume = "0.11"                  # MPMC channels for watermark broadcast
 
-fjall = { version = "2", optional = true }
+fjall = { version = "3.1.2", optional = true }
 ```
 
 ---

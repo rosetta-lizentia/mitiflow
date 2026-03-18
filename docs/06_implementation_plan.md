@@ -35,7 +35,7 @@ graph TD
     MG["mitiflow-gateway"] --> M["mitiflow (core)"]
     MB["mitiflow-bench"] --> M
     M --> Z["zenoh 1.8"]
-    M --> R["fjall 2.x (optional)"]
+    M --> R["fjall 3.1.2 (optional)"]
     MG --> KP["kafka-protocol 0.12"]
     MB --> CR["criterion 0.5"]
 ```

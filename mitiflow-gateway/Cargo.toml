@@ -1,0 +1,20 @@
+[package]
+name = "mitiflow-gateway"
+description = "Kafka wire protocol gateway for mitiflow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mitiflow = { path = "../mitiflow", features = ["full"] }
+zenoh = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# kafka-protocol = "0.12"  # TODO: uncomment when implementing Phase 5
+
+[dev-dependencies]
+tokio-test = { workspace = true }

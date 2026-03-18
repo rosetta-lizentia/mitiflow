@@ -1,0 +1,32 @@
+[package]
+name = "mitiflow"
+description = "Production-grade event streaming for Zenoh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["store"]
+store = ["dep:fjall"]
+wal = ["dep:fjall"]
+partition = []
+full = ["store", "wal", "partition"]
+
+[dependencies]
+zenoh = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+flume = { workspace = true }
+tokio-util = { workspace = true }
+fjall = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
