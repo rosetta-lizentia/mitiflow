@@ -31,9 +31,13 @@ pub async fn membership_watcher(
     cancel: CancellationToken,
     _token: zenoh::liveliness::LivelinessToken,
 ) -> crate::error::Result<()> {
+    // history(true): receive currently-alive tokens on subscription so we don't
+    // miss tokens that were declared between PartitionManager::new() returning
+    // and this background task actually starting.
     let subscriber = session
         .liveliness()
         .declare_subscriber(format!("{liveliness_prefix}/*"))
+        .history(true)
         .await?;
 
     loop {
