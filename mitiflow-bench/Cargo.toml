@@ -40,3 +40,7 @@ path = "src/bin/bench_pubsub.rs"
 [[bin]]
 name = "bench_durable"
 path = "src/bin/bench_durable.rs"
+
+[[bin]]
+name = "bench_durable_pubsub"
+path = "src/bin/bench_durable_pubsub.rs"

@@ -86,6 +86,133 @@ impl ConsumerWork for NatsConsumer {
     }
 }
 
+/// NATS JetStream durable producer (ProducerWork — publish with ACK per item).
+#[derive(Clone)]
+pub struct NatsDurableProducer {
+    pub url: String,
+    pub topic: String,
+    pub payload_size: usize,
+}
+
+pub struct NatsDurableProducerState {
+    js: jetstream::Context,
+    topic: String,
+    payload_size: usize,
+}
+
+impl ProducerWork for NatsDurableProducer {
+    type State = NatsDurableProducerState;
+
+    async fn init(&self) -> Self::State {
+        let client = async_nats::connect(&self.url)
+            .await
+            .expect("failed to connect to NATS");
+        let js = jetstream::new(client);
+
+        // Ensure the stream exists for this subject.
+        let stream_name = self.topic.replace(['.', '/'], "_");
+        let _ = js
+            .get_or_create_stream(jetstream::stream::Config {
+                name: stream_name,
+                subjects: vec![self.topic.clone()],
+                ..Default::default()
+            })
+            .await
+            .expect("failed to create JetStream stream");
+
+        NatsDurableProducerState {
+            js,
+            topic: self.topic.clone(),
+            payload_size: self.payload_size,
+        }
+    }
+
+    async fn produce(&self, state: &mut Self::State) -> Result<(), String> {
+        let payload = build_payload(state.payload_size, now_unix_ns_estimate());
+        match state.js.publish(state.topic.clone(), payload.into()).await {
+            Ok(ack_future) => match ack_future.await {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            },
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+/// NATS JetStream consumer (ConsumerWork — ordered push consumer on a JetStream stream).
+#[derive(Clone)]
+pub struct NatsJetStreamConsumer {
+    pub url: String,
+    pub topic: String,
+}
+
+pub struct NatsJetStreamConsumerState {
+    messages: futures::stream::Fuse<async_nats::jetstream::consumer::push::Ordered>,
+}
+
+impl ConsumerWork for NatsJetStreamConsumer {
+    type State = NatsJetStreamConsumerState;
+
+    async fn init(&self) -> Self::State {
+        use async_nats::jetstream::consumer::{push::OrderedConfig, DeliverPolicy};
+
+        let client = async_nats::connect(&self.url)
+            .await
+            .expect("failed to connect to NATS");
+        let js = jetstream::new(client);
+
+        let stream_name = self.topic.replace(['.', '/'], "_");
+        let stream = js
+            .get_or_create_stream(jetstream::stream::Config {
+                name: stream_name,
+                subjects: vec![self.topic.clone()],
+                ..Default::default()
+            })
+            .await
+            .expect("failed to get JetStream stream");
+
+        let consumer = stream
+            .create_consumer(OrderedConfig {
+                filter_subject: self.topic.clone(),
+                deliver_policy: DeliverPolicy::New,
+                ..Default::default()
+            })
+            .await
+            .expect("failed to create JetStream ordered consumer");
+
+        let messages = consumer
+            .messages()
+            .await
+            .expect("failed to get JetStream messages");
+
+        use futures::StreamExt;
+        NatsJetStreamConsumerState {
+            messages: messages.fuse(),
+        }
+    }
+
+    async fn run(&self, mut state: Self::State, recorder: ConsumerRecorder) -> Self::State {
+        use futures::StreamExt;
+        loop {
+            tokio::select! {
+                item = state.messages.next() => {
+                    match item {
+                        Some(Ok(msg)) => {
+                            let now = now_unix_ns_estimate();
+                            let sent_ts = extract_timestamp(&msg.payload);
+                            recorder.record(now.saturating_sub(sent_ts)).await;
+                        }
+                        Some(Err(_)) => continue,
+                        None => break,
+                    }
+                }
+                _ = recorder.stopped() => break,
+            }
+        }
+        state
+    }
+}
+
 /// NATS JetStream durable publish (waits for server ACK).
 #[derive(Clone)]
 pub struct NatsDurableWork {

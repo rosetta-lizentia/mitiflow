@@ -110,6 +110,68 @@ pub struct DurableCli {
     pub redis_url: String,
 }
 
+/// Transport backends that support durable (ACKed) publishing.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DurableTransport {
+    /// Mitiflow durable publish (sequencing + EventStore ACK).
+    Mitiflow,
+    /// Apache Kafka with acks=all.
+    #[cfg(feature = "kafka")]
+    Kafka,
+    /// Redpanda (Kafka-compatible) with acks=all.
+    #[cfg(feature = "kafka")]
+    Redpanda,
+    /// NATS JetStream (publish with ACK).
+    #[cfg(feature = "nats")]
+    Nats,
+    /// Redis Streams (XADD is inherently durable).
+    #[cfg(feature = "redis")]
+    Redis,
+}
+
+/// CLI arguments for durable pub/sub (end-to-end) benchmarks.
+#[derive(Parser)]
+#[command(name = "mitiflow-bench-durable-pubsub")]
+pub struct DurablePubSubCli {
+    #[command(flatten)]
+    pub bench: BenchmarkConfig,
+
+    /// Durable transport backend to benchmark.
+    #[arg(long, value_enum)]
+    pub transport: DurableTransport,
+
+    /// Payload size in bytes (first 8 bytes are timestamp).
+    #[arg(long, default_value = "256")]
+    pub payload_size: usize,
+
+    /// Topic / key expression to use.
+    #[arg(long, default_value = "bench/test")]
+    pub topic: String,
+
+    /// Number of consumers (for fan-out tests).
+    #[arg(long, default_value = "1")]
+    pub consumers: usize,
+
+    /// Zenoh router endpoint (omit for peer mode).
+    #[arg(long)]
+    pub zenoh_connect: Option<String>,
+
+    /// Kafka broker address.
+    #[cfg(feature = "kafka")]
+    #[arg(long, default_value = "localhost:9092")]
+    pub kafka_broker: String,
+
+    /// NATS server URL.
+    #[cfg(feature = "nats")]
+    #[arg(long, default_value = "nats://localhost:4222")]
+    pub nats_url: String,
+
+    /// Redis server URL.
+    #[cfg(feature = "redis")]
+    #[arg(long, default_value = "redis://localhost:6379")]
+    pub redis_url: String,
+}
+
 /// Build a benchmark payload of the given size.
 ///
 /// First 8 bytes are a little-endian nanosecond timestamp; rest is zeros.

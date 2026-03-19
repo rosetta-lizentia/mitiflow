@@ -85,6 +85,44 @@ impl ConsumerWork for MitiflowConsumer {
     }
 }
 
+/// Mitiflow durable producer (ProducerWork — calls publish_bytes_durable per item).
+#[derive(Clone)]
+pub struct MitiflowDurableProducer {
+    pub session: Session,
+    pub topic: String,
+    pub payload_size: usize,
+    pub config: EventBusConfig,
+}
+
+pub struct MitiflowDurableProducerState {
+    publisher: EventPublisher,
+    payload_size: usize,
+}
+
+impl ProducerWork for MitiflowDurableProducer {
+    type State = MitiflowDurableProducerState;
+
+    async fn init(&self) -> Self::State {
+        let publisher = EventPublisher::new(&self.session, self.config.clone())
+            .await
+            .expect("failed to create mitiflow durable publisher");
+        MitiflowDurableProducerState {
+            publisher,
+            payload_size: self.payload_size,
+        }
+    }
+
+    async fn produce(&self, state: &mut Self::State) -> Result<(), String> {
+        let data = build_payload(state.payload_size, now_unix_ns_estimate());
+        state
+            .publisher
+            .publish_bytes_durable(data)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
 /// Mitiflow durable publish work (request pattern — publish_durable per iteration).
 #[derive(Clone)]
 pub struct MitiflowDurableWork {

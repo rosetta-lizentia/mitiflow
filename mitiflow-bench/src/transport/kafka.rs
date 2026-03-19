@@ -136,6 +136,51 @@ impl ConsumerWork for KafkaConsumer {
     }
 }
 
+/// Kafka/Redpanda durable producer (ProducerWork — acks=all per item).
+#[derive(Clone)]
+pub struct KafkaDurableProducer {
+    pub broker: String,
+    pub topic: Arc<String>,
+    pub payload_size: usize,
+}
+
+pub struct KafkaDurableProducerState {
+    producer: FutureProducer,
+    topic: Arc<String>,
+    payload_size: usize,
+}
+
+impl ProducerWork for KafkaDurableProducer {
+    type State = KafkaDurableProducerState;
+
+    async fn init(&self) -> Self::State {
+        let producer: FutureProducer = ClientConfig::new()
+            .set("bootstrap.servers", &self.broker)
+            .set("message.timeout.ms", "10000")
+            .set("acks", "all")
+            .set("linger.ms", "0")
+            .create()
+            .expect("failed to create kafka durable producer");
+        KafkaDurableProducerState {
+            producer,
+            topic: Arc::clone(&self.topic),
+            payload_size: self.payload_size,
+        }
+    }
+
+    async fn produce(&self, state: &mut Self::State) -> Result<(), String> {
+        let payload = build_payload(state.payload_size, now_unix_ns_estimate());
+        let record: FutureRecord<'_, str, Vec<u8>> =
+            FutureRecord::to(&state.topic).payload(&payload);
+        state
+            .producer
+            .send(record, Duration::from_secs(10))
+            .await
+            .map(|_| ())
+            .map_err(|(e, _)| e.to_string())
+    }
+}
+
 /// Kafka durable publish (acks=all).
 #[derive(Clone)]
 pub struct KafkaDurableWork {
