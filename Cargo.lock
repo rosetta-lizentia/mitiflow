@@ -1719,6 +1719,7 @@ dependencies = [
  "fjall",
  "flume 0.11.1",
  "postcard",
+ "rand 0.8.5",
  "rmp-serde",
  "scc",
  "serde",

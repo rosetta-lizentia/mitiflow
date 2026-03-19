@@ -62,6 +62,12 @@ pub struct EventBusConfig {
     /// Evict tracking state for publishers silent longer than this duration.
     /// `None` disables eviction (the default).
     pub publisher_ttl: Option<Duration>,
+    /// Delay before querying the store for gap recovery, giving the EventStore
+    /// time to persist in-flight events. Default: 50ms.
+    pub recovery_delay: Duration,
+    /// Maximum number of store recovery attempts (with exponential backoff)
+    /// before declaring a gap irrecoverable. Default: 3.
+    pub max_recovery_attempts: u32,
 
     // -- Store (feature = "store") --
     /// Key prefix for the event store queryable. Defaults to `"{key_prefix}/_store"`.
@@ -146,6 +152,8 @@ pub struct EventBusConfigBuilder {
     history_on_subscribe: bool,
     num_processing_shards: usize,
     publisher_ttl: Option<Duration>,
+    recovery_delay: Duration,
+    max_recovery_attempts: u32,
     #[cfg(feature = "store")]
     store_key_prefix: Option<String>,
     #[cfg(feature = "store")]
@@ -173,13 +181,15 @@ impl EventBusConfigBuilder {
         Self {
             key_prefix: key_prefix.into(),
             codec: CodecFormat::default(),
-            cache_size: 10_000,
+            cache_size: 256,
             heartbeat: HeartbeatMode::Sporadic(Duration::from_secs(1)),
             congestion_control: CongestionControl::Block,
             recovery_mode: RecoveryMode::Both,
             history_on_subscribe: true,
             num_processing_shards: 1,
             publisher_ttl: None,
+            recovery_delay: Duration::from_millis(50),
+            max_recovery_attempts: 3,
             #[cfg(feature = "store")]
             store_key_prefix: None,
             #[cfg(feature = "store")]
@@ -252,6 +262,18 @@ impl EventBusConfigBuilder {
     /// (no eviction).
     pub fn publisher_ttl(mut self, ttl: Duration) -> Self {
         self.publisher_ttl = Some(ttl);
+        self
+    }
+
+    /// Delay before querying the store for gap recovery. Default: 50ms.
+    pub fn recovery_delay(mut self, delay: Duration) -> Self {
+        self.recovery_delay = delay;
+        self
+    }
+
+    /// Maximum store recovery attempts with exponential backoff. Default: 3.
+    pub fn max_recovery_attempts(mut self, attempts: u32) -> Self {
+        self.max_recovery_attempts = attempts;
         self
     }
 
@@ -350,6 +372,8 @@ impl EventBusConfigBuilder {
             history_on_subscribe: self.history_on_subscribe,
             num_processing_shards: self.num_processing_shards,
             publisher_ttl: self.publisher_ttl,
+            recovery_delay: self.recovery_delay,
+            max_recovery_attempts: self.max_recovery_attempts,
             #[cfg(feature = "store")]
             store_key_prefix: self.store_key_prefix,
             #[cfg(feature = "store")]
@@ -382,7 +406,7 @@ mod tests {
     fn builder_defaults() {
         let config = EventBusConfig::builder("test/events").build().unwrap();
         assert_eq!(config.key_prefix, "test/events");
-        assert_eq!(config.cache_size, 10_000);
+        assert_eq!(config.cache_size, 256);
         assert_eq!(
             config.heartbeat,
             HeartbeatMode::Sporadic(Duration::from_secs(1))

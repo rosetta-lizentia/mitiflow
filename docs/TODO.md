@@ -74,9 +74,9 @@ counter and watermark lookup need changes.
       the main task is single-threaded, send heartbeat beacons into a channel
       and process them inline as `&mut GapDetector`.
 
-- [ ] **Dead publisher eviction** — `HashMap<PublisherId, ...>` in the store
-      never shrinks. Track `last_activity: Instant` per publisher, evict after
-      a configurable TTL.
+- [x] **Dead publisher eviction** — superseded by publisher lifecycle protocol
+      (ACTIVE → SUSPECTED → DRAINING → ARCHIVED → GC).
+      See [08_replay_ordering.md](08_replay_ordering.md) § Publisher Lifecycle.
 
 - [ ] **Avoid full payload deser for metadata** — `extract_event_meta`
       deserializes the entire payload to get `id` + `timestamp`. Since these
@@ -138,6 +138,26 @@ hard requirement for users.
 
 ---
 
+## Deterministic Replay Ordering
+
+**Status:** Implemented
+**Ref:** [08_replay_ordering.md](08_replay_ordering.md)
+
+- [x] **HLC timestamp in EventMetadata** — store the Zenoh HLC timestamp
+      alongside each event for replica-independent ordering.
+- [x] **Replay index in FjallBackend** — secondary keyspace `replay` keyed by
+      `(hlc_physical, hlc_logical, publisher_id, seq)` for deterministic
+      ordered replay across replicas.
+- [x] **`query_replay()` on StorageBackend** — scan replay index with HLC
+      range filters, returning events in deterministic HLC order.
+- [x] **Publisher lifecycle state machine** — ACTIVE → SUSPECTED → DRAINING →
+      ARCHIVED → GC. Multi-signal liveness detection (liveliness token +
+      inactivity timeout) to avoid false eviction on network partition.
+- [x] **Watermark epoch** — `CommitWatermark` includes epoch counter;
+      only ACTIVE/SUSPECTED/DRAINING publishers included.
+
+---
+
 ## Testing Gaps
 
 Tests listed in [implementation_plan.md](implementation_plan.md) § 3 that don't
@@ -163,3 +183,5 @@ exist yet:
       per-partition sequences are implemented (currently shows per-publisher
       which is correct for now).
 - [ ] Add `ARCHITECTURE.md` at repo root as a quick-start pointer to the docs.
+- [x] Add [08_replay_ordering.md](08_replay_ordering.md) — deterministic replay
+      ordering via HLC and publisher lifecycle management.

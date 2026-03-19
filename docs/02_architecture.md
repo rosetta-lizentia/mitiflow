@@ -29,6 +29,7 @@ mitiflow/
 │   ├── store/                # feature = "store"
 │   │   ├── mod.rs            # EventStore (sidecar process)
 │   │   ├── backend.rs        # StorageBackend trait + FjallBackend
+│   │   ├── lifecycle.rs      # Publisher lifecycle state machine
 │   │   ├── query.rs          # Selector → QueryFilters parsing
 │   │   ├── runner.rs         # Background tasks (subscribe, queryable, watermark, gc)
 │   │   └── watermark.rs      # CommitWatermark + PublisherWatermark types

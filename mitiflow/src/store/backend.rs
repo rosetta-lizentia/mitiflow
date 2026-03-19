@@ -11,7 +11,7 @@ use crate::types::{EventId, PublisherId};
 #[cfg(feature = "store")]
 use crate::error::Error;
 
-use super::query::QueryFilters;
+use super::query::{QueryFilters, ReplayFilters};
 use super::watermark::PublisherWatermark;
 
 /// Metadata associated with a stored event.
@@ -22,6 +22,23 @@ pub struct EventMetadata {
     pub event_id: EventId,
     pub timestamp: DateTime<Utc>,
     pub key_expr: String,
+    /// Zenoh HLC timestamp for deterministic cross-replica replay ordering.
+    /// `None` if the source sample had no HLC timestamp (fallback to `timestamp`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hlc_timestamp: Option<HlcTimestamp>,
+}
+
+/// Serializable representation of a Zenoh Hybrid Logical Clock timestamp.
+///
+/// Used as the sort key for the replay index:
+/// `(physical_ns, logical, publisher_id, seq)` provides a deterministic
+/// total order that is the same on every replica.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct HlcTimestamp {
+    /// Physical time in nanoseconds since epoch.
+    pub physical_ns: u64,
+    /// Logical counter for events at the same physical time.
+    pub logical: u32,
 }
 
 /// An event as stored in the backend.
@@ -65,6 +82,13 @@ pub trait StorageBackend: Send + Sync {
     /// Query stored events matching the given filters.
     fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>>;
 
+    /// Query stored events in deterministic HLC replay order.
+    ///
+    /// Returns events sorted by `(hlc_timestamp, publisher_id, seq)`, which
+    /// produces the same ordering on any replica. Events without HLC timestamps
+    /// are ordered by `(timestamp, publisher_id, seq)` as a fallback.
+    fn query_replay(&self, filters: &ReplayFilters) -> Result<Vec<StoredEvent>>;
+
     /// Return per-publisher durability progress (committed_seq + gaps).
     fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark>;
 
@@ -102,6 +126,38 @@ mod fjall_impl {
         let publisher_id = PublisherId::from_bytes(pub_bytes);
         let seq = u64::from_be_bytes(key[16..24].try_into().ok()?);
         Some((publisher_id, seq))
+    }
+
+    /// Replay index key encoding: 36 bytes.
+    /// `[hlc_physical_ns: 8 BE][hlc_logical: 4 BE][publisher_id: 16][seq: 8 BE]`
+    ///
+    /// This key order ensures deterministic replay: events are sorted by
+    /// approximately-physical time, then by publisher, then by sequence.
+    /// Because the HLC timestamp is intrinsic to the event (assigned by the
+    /// publisher's Zenoh session), this ordering is identical on every replica.
+    fn encode_replay_key(hlc: &HlcTimestamp, publisher_id: &PublisherId, seq: u64) -> [u8; 36] {
+        let mut buf = [0u8; 36];
+        buf[..8].copy_from_slice(&hlc.physical_ns.to_be_bytes());
+        buf[8..12].copy_from_slice(&hlc.logical.to_be_bytes());
+        buf[12..28].copy_from_slice(&publisher_id.to_bytes());
+        buf[28..36].copy_from_slice(&seq.to_be_bytes());
+        buf
+    }
+
+    fn decode_replay_key(key: &[u8]) -> Option<(HlcTimestamp, PublisherId, u64)> {
+        if key.len() < 36 {
+            return None;
+        }
+        let physical_ns = u64::from_be_bytes(key[..8].try_into().ok()?);
+        let logical = u32::from_be_bytes(key[8..12].try_into().ok()?);
+        let pub_bytes: [u8; 16] = key[12..28].try_into().ok()?;
+        let publisher_id = PublisherId::from_bytes(pub_bytes);
+        let seq = u64::from_be_bytes(key[28..36].try_into().ok()?);
+        Some((
+            HlcTimestamp { physical_ns, logical },
+            publisher_id,
+            seq,
+        ))
     }
 
     /// Persistent event value: metadata JSON + raw payload bytes.
@@ -150,15 +206,17 @@ mod fjall_impl {
 
     /// LSM-tree backed storage using the `fjall` crate.
     ///
-    /// Each instance owns exactly one partition. Uses three keyspaces:
+    /// Each instance owns exactly one partition. Uses four keyspaces:
     /// - `events`   — primary event data, keyed by `(publisher_id, seq)`
     /// - `metadata` — watermark state (per-publisher `committed_seq`)
     /// - `keys`     — key_expr → event key mapping for compaction
+    /// - `replay`   — HLC-ordered replay index for deterministic cross-replica replay
     pub struct FjallBackend {
         db: fjall::Database,
         events: fjall::Keyspace,
         metadata: fjall::Keyspace,
         keys: fjall::Keyspace,
+        replay: fjall::Keyspace,
         /// Partition id this backend is responsible for.
         partition: u32,
         /// Per-publisher gap tracking. Updated incrementally on each `store()`
@@ -192,6 +250,10 @@ mod fjall_impl {
             let keys = db
                 .keyspace("keys", fjall::KeyspaceCreateOptions::default)
                 .map_err(|e| Error::StoreError(format!("failed to open keys keyspace: {e}")))?;
+
+            let replay = db
+                .keyspace("replay", fjall::KeyspaceCreateOptions::default)
+                .map_err(|e| Error::StoreError(format!("failed to open replay keyspace: {e}")))?;
 
             // One-time scan to rebuild per-publisher gap state from existing data.
             let mut states: HashMap<PublisherId, PublisherSeqState> = HashMap::new();
@@ -234,6 +296,7 @@ mod fjall_impl {
                 events,
                 metadata,
                 keys,
+                replay,
                 partition,
                 publisher_states,
             })
@@ -252,8 +315,14 @@ mod fjall_impl {
             let event_value = encode_event_value(&metadata, event);
 
             let mut batch = self.db.batch();
-            batch.insert(&self.events, event_key, event_value);
+            batch.insert(&self.events, event_key, &event_value);
             batch.insert(&self.keys, key.as_bytes(), event_key);
+
+            // Write to HLC replay index if HLC timestamp is available.
+            if let Some(hlc) = &metadata.hlc_timestamp {
+                let replay_key = encode_replay_key(hlc, &pub_id, seq);
+                batch.insert(&self.replay, replay_key, event_key);
+            }
 
             // --- Incremental per-publisher gap tracking ---
             let mut entry = match self.publisher_states.entry_sync(pub_id) {
@@ -322,6 +391,12 @@ mod fjall_impl {
                 batch.insert(&self.events, event_key, event_value);
                 batch.insert(&self.keys, key.as_bytes(), event_key);
 
+                // Write to HLC replay index if HLC timestamp is available.
+                if let Some(hlc) = &metadata.hlc_timestamp {
+                    let replay_key = encode_replay_key(hlc, &pub_id, seq);
+                    batch.insert(&self.replay, replay_key, event_key);
+                }
+
                 // --- Incremental per-publisher gap tracking ---
                 let mut entry = match self.publisher_states.entry_sync(pub_id) {
                     scc::hash_map::Entry::Occupied(o) => o,
@@ -378,9 +453,16 @@ mod fjall_impl {
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("scan error: {e}")))?;
 
-                let Some((_, seq)) = decode_event_key(&kv.0) else {
+                let Some((pub_id, seq)) = decode_event_key(&kv.0) else {
                     continue;
                 };
+
+                // Apply publisher_id filter early (before decoding value).
+                if let Some(ref filter_pub_id) = filters.publisher_id {
+                    if pub_id != *filter_pub_id {
+                        continue;
+                    }
+                }
 
                 // Apply sequence filters.
                 if let Some(after) = filters.after_seq {
@@ -424,6 +506,59 @@ mod fjall_impl {
             Ok(results)
         }
 
+        fn query_replay(&self, filters: &ReplayFilters) -> Result<Vec<StoredEvent>> {
+            let mut results = Vec::new();
+
+            for guard in self.replay.iter() {
+                let kv = guard
+                    .into_inner()
+                    .map_err(|e| Error::StoreError(format!("replay scan error: {e}")))?;
+
+                let Some((hlc, _pub_id, _seq)) = decode_replay_key(&kv.0) else {
+                    continue;
+                };
+
+                // Apply HLC range filters.
+                if let Some(ref after) = filters.after_hlc {
+                    if hlc <= *after {
+                        continue;
+                    }
+                }
+                if let Some(ref before) = filters.before_hlc {
+                    if hlc >= *before {
+                        break; // replay keys are sorted, no more matches
+                    }
+                }
+
+                // Look up full event from primary index.
+                let event_key_bytes = kv.1.to_vec();
+                let event_value = self
+                    .events
+                    .get(&event_key_bytes)
+                    .map_err(|e| Error::StoreError(format!("replay lookup error: {e}")))?;
+
+                let Some(event_value) = event_value else {
+                    continue; // event was GC'd but replay entry lingers
+                };
+
+                let (meta, payload) = decode_event_value(&event_value)?;
+
+                results.push(StoredEvent {
+                    key: meta.key_expr.clone(),
+                    payload,
+                    metadata: meta,
+                });
+
+                if let Some(limit) = filters.limit {
+                    if results.len() >= limit {
+                        break;
+                    }
+                }
+            }
+
+            Ok(results)
+        }
+
         fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark> {
             let mut result = HashMap::new();
             self.publisher_states.iter_sync(|pub_id, state| {
@@ -439,7 +574,7 @@ mod fjall_impl {
 
         fn gc(&self, older_than: DateTime<Utc>) -> Result<usize> {
             let mut removed = 0usize;
-            let mut to_remove = Vec::new();
+            let mut to_remove: Vec<(Vec<u8>, String, Option<HlcTimestamp>)> = Vec::new();
 
             for guard in self.events.iter() {
                 let kv = guard
@@ -448,14 +583,21 @@ mod fjall_impl {
 
                 let (meta, _) = decode_event_value(&kv.1)?;
                 if meta.timestamp < older_than {
-                    to_remove.push((kv.0.to_vec(), meta.key_expr.clone()));
+                    to_remove.push((kv.0.to_vec(), meta.key_expr.clone(), meta.hlc_timestamp));
                 }
             }
 
-            for (event_key, key_expr) in &to_remove {
+            for (event_key, key_expr, hlc_ts) in &to_remove {
                 let mut batch = self.db.batch();
                 batch.remove(&self.events, event_key.as_slice());
                 batch.remove(&self.keys, key_expr.as_bytes());
+                // Clean up replay index entry using the stored HLC timestamp.
+                if let (Some(hlc), Some((pub_id, seq))) =
+                    (hlc_ts, decode_event_key(event_key))
+                {
+                    let replay_key = encode_replay_key(hlc, &pub_id, seq);
+                    batch.remove(&self.replay, replay_key);
+                }
                 batch
                     .commit()
                     .map_err(|e| Error::StoreError(format!("gc batch commit failed: {e}")))?;

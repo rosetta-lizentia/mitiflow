@@ -102,10 +102,14 @@ pub struct PublisherWatermark {
 /// Commit watermark broadcast by the Event Store.
 ///
 /// Published periodically on `{key_prefix}/_watermark`.
+/// Only includes publishers in ACTIVE, SUSPECTED, or DRAINING lifecycle state.
+/// See [08_replay_ordering.md](08_replay_ordering.md) § Publisher Lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitWatermark {
-    /// Per-publisher durability progress.
+    /// Per-publisher durability progress (only active/suspected/draining).
     pub publishers: HashMap<PublisherId, PublisherWatermark>,
+    /// Epoch counter — increments on publisher state transitions.
+    pub epoch: u64,
     /// Event Store wall-clock time.
     pub timestamp: DateTime<Utc>,
 }

@@ -40,6 +40,11 @@ pub struct CommitWatermark {
     pub publishers: HashMap<PublisherId, PublisherWatermark>,
     /// Event Store wall-clock time when this watermark was generated.
     pub timestamp: DateTime<Utc>,
+    /// Lifecycle epoch — increments on each publisher state transition.
+    /// Consumers compare this to their last-seen epoch to detect publisher
+    /// set changes (e.g., a publisher being archived).
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 impl CommitWatermark {
@@ -62,7 +67,7 @@ mod tests {
         for (id, committed, gaps) in entries {
             publishers.insert(id, PublisherWatermark { committed_seq: committed, gaps });
         }
-        CommitWatermark { partition: 0, publishers, timestamp: Utc::now() }
+        CommitWatermark { partition: 0, publishers, timestamp: Utc::now(), epoch: 0 }
     }
 
     #[test]

@@ -51,5 +51,6 @@ fjall = "3.1.2"
 # Testing
 tokio-test = "0.4"
 tempfile = "3"
+rand = "=0.8"
 
-scc = "3.6.10"
+scc = "3.6"

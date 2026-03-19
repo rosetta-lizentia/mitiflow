@@ -44,10 +44,15 @@ use mitiflow::{EventBusConfig, HeartbeatMode};
 use mitiflow_bench::kafka_topic;
 use mitiflow_bench::transport;
 use mitiflow_bench::{DurablePubSubCli, DurableTransport, zenoh_config};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    lightbench::logging::init_default().ok();
+    
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("lightbench=info".parse().unwrap()))
+        .with_ansi(false)
+        .init();
     let cli = DurablePubSubCli::parse();
     let topic = cli.topic.clone();
     let payload_size = cli.payload_size;
@@ -83,17 +88,22 @@ async fn main() {
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             let producer = transport::mitiflow::MitiflowDurableProducer {
-                session: pub_session,
+                session: pub_session.clone(),
                 topic: topic.clone(),
                 payload_size,
                 config: config.clone(),
             };
             let consumer = transport::mitiflow::MitiflowConsumer {
-                session: sub_session,
+                session: sub_session.clone(),
                 topic,
                 config,
             };
             run_durable_pubsub(cli.bench, producer, consumer, consumers).await;
+
+            // Graceful shutdown: store first, then sessions.
+            store.shutdown_gracefully().await;
+            let _ = pub_session.close().await;
+            let _ = sub_session.close().await;
 
             // Cleanup temp dir.
             let _ = std::fs::remove_dir_all(&tmp_dir);

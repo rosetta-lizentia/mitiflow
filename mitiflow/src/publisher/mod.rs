@@ -1,13 +1,13 @@
 //! Event publisher with sequencing, caching, and heartbeat.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 use zenoh::Session;
+use zenoh::bytes::ZBytes;
 use zenoh::handlers::FifoChannelHandler;
 use zenoh::pubsub::Publisher;
 use zenoh::qos::CongestionControl;
@@ -19,17 +19,21 @@ use crate::config::{EventBusConfig, HeartbeatMode};
 use crate::error::Error;
 use crate::error::Result;
 use crate::event::Event;
-use crate::types::{EventId, PublisherId};
+use crate::types::PublisherId;
 
 /// A sample cached in the publisher's recovery buffer.
-#[derive(Debug, Clone)]
+///
+/// Uses [`ZBytes`] for zero-copy payload sharing: the same ref-counted buffer
+/// is shared between the cache and the Zenoh `put()` call. Cloning is an
+/// atomic increment — no memcpy.
+#[derive(Clone)]
 pub struct CachedSample {
     pub seq: u64,
     pub key_expr: String,
-    /// Encoded payload of the user's `T` (no `Event<T>` wrapper).
-    pub payload: Vec<u8>,
-    pub event_id: EventId,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Encoded payload as Zenoh's native ref-counted bytes (zero-copy clone).
+    pub payload: ZBytes,
+    /// Pre-encoded metadata attachment (zero-copy clone on cache reply).
+    pub attachment: ZBytes,
 }
 
 /// Heartbeat beacon published periodically so subscribers can detect stale connections.
@@ -112,7 +116,6 @@ async fn run_heartbeat_task(
 /// Serve cache recovery queries until cancelled.
 async fn run_cache_queryable_task(
     cache: Arc<RwLock<VecDeque<CachedSample>>>,
-    pub_id: PublisherId,
     queryable: zenoh::query::Queryable<FifoChannelHandler<zenoh::query::Query>>,
     cancel: CancellationToken,
 ) {
@@ -128,22 +131,23 @@ async fn run_cache_queryable_task(
                             .and_then(|v| v.parse().ok())
                             .unwrap_or(0);
 
-                        let cache_read = cache.read().await;
-                        for sample in cache_read.iter() {
-                            if sample.seq >= after_seq {
-                                if let Err(e) = query
-                                    .reply(&sample.key_expr, sample.payload.clone())
-                                    .attachment(encode_metadata(
-                                        &pub_id,
-                                        sample.seq,
-                                        &sample.event_id,
-                                        &sample.timestamp,
-                                        NO_URGENCY,
-                                    ))
-                                    .await
-                                {
-                                    trace!("cache query reply failed: {e}");
-                                }
+                        // Snapshot under std::sync::RwLock — non-blocking, fast.
+                        // Collect matching samples first, then reply outside the lock.
+                        let snapshot: Vec<CachedSample> = {
+                            let cache_read = cache.read().unwrap_or_else(|e| e.into_inner());
+                            cache_read.iter()
+                                .filter(|s| s.seq >= after_seq)
+                                .cloned()
+                                .collect()
+                        };
+
+                        for sample in &snapshot {
+                            if let Err(e) = query
+                                .reply(&sample.key_expr, sample.payload.clone())
+                                .attachment(sample.attachment.clone())
+                                .await
+                            {
+                                trace!("cache query reply failed: {e}");
                             }
                         }
                     }
@@ -221,7 +225,6 @@ impl EventPublisher {
                 .await?;
             tasks.push(tokio::spawn(run_cache_queryable_task(
                 Arc::clone(&cache),
-                publisher_id,
                 queryable,
                 cancel.clone(),
             )));
@@ -416,25 +419,26 @@ impl EventPublisher {
         urgency_ms: u16,
     ) -> Result<()> {
         let attachment = encode_metadata(&self.publisher_id, seq, &event_id, &timestamp, urgency_ms);
+        let zbytes_payload = ZBytes::from(payload);  // takes ownership, no copy
 
         // Insert into bounded cache (evict oldest if full).
-        // Skip entirely when cache_size == 0 to avoid the async RwLock and payload clone.
+        // Skip entirely when cache_size == 0 to avoid lock acquisition.
+        // ZBytes::clone() is an atomic ref-count increment — no memcpy.
         if self.config.cache_size > 0 {
-            let mut cache = self.cache.write().await;
+            let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
             if cache.len() >= self.config.cache_size {
                 cache.pop_front();
             }
             cache.push_back(CachedSample {
                 seq,
                 key_expr: key.to_string(),
-                payload: payload.clone(),
-                event_id,
-                timestamp,
+                payload: zbytes_payload.clone(),
+                attachment: attachment.clone(),
             });
         }
 
         self.session
-            .put(key, payload)
+            .put(key, zbytes_payload)
             .attachment(attachment)
             .congestion_control(self.config.congestion_control)
             .await?;
@@ -485,6 +489,16 @@ impl EventPublisher {
     /// Configuration snapshot.
     pub fn config(&self) -> &EventBusConfig {
         &self.config
+    }
+
+    /// Gracefully shut down the publisher: cancel all background tasks and
+    /// await their completion. Consumes `self` so `Drop` does not run.
+    pub async fn shutdown(mut self) {
+        self.cancel.cancel();
+        let tasks = std::mem::take(&mut self._tasks);
+        for handle in tasks {
+            let _ = handle.await;
+        }
     }
 }
 

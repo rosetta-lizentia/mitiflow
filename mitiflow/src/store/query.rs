@@ -3,6 +3,9 @@
 use chrono::{DateTime, Utc};
 
 use crate::error::{Error, Result};
+use crate::types::PublisherId;
+
+use super::backend::HlcTimestamp;
 
 /// Structured filters for querying the event store.
 ///
@@ -18,6 +21,8 @@ pub struct QueryFilters {
     pub after_time: Option<DateTime<Utc>>,
     /// Only return events with timestamp before this.
     pub before_time: Option<DateTime<Utc>>,
+    /// Only return events from this publisher.
+    pub publisher_id: Option<PublisherId>,
     /// Maximum number of results.
     pub limit: Option<usize>,
 }
@@ -65,12 +70,32 @@ impl QueryFilters {
                                 Error::InvalidConfig(format!("invalid limit: {e}"))
                             })?);
                     }
+                    "publisher_id" => {
+                        let uuid = uuid::Uuid::parse_str(value.trim()).map_err(|e| {
+                            Error::InvalidConfig(format!("invalid publisher_id: {e}"))
+                        })?;
+                        filters.publisher_id = Some(PublisherId::from_uuid(uuid));
+                    }
                     _ => { /* ignore unknown parameters */ }
                 }
             }
         }
         Ok(filters)
     }
+}
+
+/// Filters for HLC-ordered replay queries.
+///
+/// Returns events sorted by `(hlc_timestamp, publisher_id, seq)` for
+/// deterministic cross-replica replay.
+#[derive(Debug, Clone, Default)]
+pub struct ReplayFilters {
+    /// Only return events with HLC timestamp strictly after this value.
+    pub after_hlc: Option<HlcTimestamp>,
+    /// Only return events with HLC timestamp strictly before this value.
+    pub before_hlc: Option<HlcTimestamp>,
+    /// Maximum number of results.
+    pub limit: Option<usize>,
 }
 
 #[cfg(test)]

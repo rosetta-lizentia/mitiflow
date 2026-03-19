@@ -3,11 +3,12 @@
 //! This module is gated behind the `store` feature flag.
 
 pub mod backend;
+pub mod lifecycle;
 pub mod query;
 pub mod watermark;
 
-pub use backend::{CompactionStats, EventMetadata, StorageBackend, StoredEvent};
-pub use query::QueryFilters;
+pub use backend::{CompactionStats, EventMetadata, HlcTimestamp, StorageBackend, StoredEvent};
+pub use query::{QueryFilters, ReplayFilters};
 pub use watermark::{CommitWatermark, PublisherWatermark};
 
 #[cfg(feature = "store")]

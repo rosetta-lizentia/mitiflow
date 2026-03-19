@@ -5,6 +5,11 @@ pub mod gap_detector;
 #[cfg(feature = "store")]
 pub mod checkpoint;
 
+use std::collections::HashSet;
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
@@ -36,6 +41,63 @@ fn shard_for(pub_id: &PublisherId, num_shards: usize) -> usize {
     let bytes = pub_id.to_bytes();
     let n = u128::from_le_bytes(bytes);
     (n % num_shards as u128) as usize
+}
+
+/// Internal recovery configuration extracted from [`EventBusConfig`].
+struct RecoveryConfig {
+    key_prefix: String,
+    store_key_prefix: Option<String>,
+    recovery_delay: Duration,
+    max_recovery_attempts: u32,
+}
+
+impl RecoveryConfig {
+    fn from_bus_config(config: &EventBusConfig) -> Self {
+        #[cfg(feature = "store")]
+        let store_key_prefix = Some(config.resolved_store_key_prefix());
+        #[cfg(not(feature = "store"))]
+        let store_key_prefix = None;
+
+        Self {
+            key_prefix: config.key_prefix.clone(),
+            store_key_prefix,
+            recovery_delay: config.recovery_delay,
+            max_recovery_attempts: config.max_recovery_attempts,
+        }
+    }
+}
+
+/// Tracks which sequences in a gap have been recovered.
+struct RecoveryTracker {
+    expected: Range<u64>,
+    recovered: HashSet<u64>,
+}
+
+impl RecoveryTracker {
+    fn new(missed: Range<u64>) -> Self {
+        let cap = (missed.end - missed.start) as usize;
+        Self {
+            expected: missed,
+            recovered: HashSet::with_capacity(cap),
+        }
+    }
+
+    fn record(&mut self, seq: u64) {
+        if self.expected.contains(&seq) {
+            self.recovered.insert(seq);
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.recovered.len() as u64 == (self.expected.end - self.expected.start)
+    }
+
+    fn remaining(&self) -> Vec<u64> {
+        self.expected
+            .clone()
+            .filter(|s| !self.recovered.contains(s))
+            .collect()
+    }
 }
 
 /// Try to decode a data sample into metadata + payload, filtering out
@@ -88,7 +150,7 @@ fn handle_sample_result(
     payload: &[u8],
     tx: &flume::Sender<RawEvent>,
     session: &Session,
-    prefix: &str,
+    recovery_config: &Arc<RecoveryConfig>,
 ) {
     match result {
         SampleResult::Deliver => {
@@ -99,7 +161,7 @@ fn handle_sample_result(
         }
         SampleResult::Gap(miss) => {
             deliver_event(tx, meta.pub_id, meta.seq, key, payload, meta.event_id, meta.timestamp);
-            spawn_recovery(session.clone(), prefix.to_string(), miss, tx.clone());
+            spawn_recovery(session.clone(), Arc::clone(recovery_config), miss, tx.clone());
         }
     }
 }
@@ -108,23 +170,23 @@ fn handle_sample_result(
 fn handle_heartbeat_gaps(
     misses: Vec<MissInfo>,
     session: &Session,
-    prefix: &str,
+    recovery_config: &Arc<RecoveryConfig>,
     tx: &flume::Sender<RawEvent>,
 ) {
     for miss in misses {
-        spawn_recovery(session.clone(), prefix.to_string(), miss, tx.clone());
+        spawn_recovery(session.clone(), Arc::clone(recovery_config), miss, tx.clone());
     }
 }
 
-/// Spawn a background task to recover missed events from the publisher cache.
+/// Spawn a background task to recover missed events using tiered recovery.
 fn spawn_recovery(
     session: Session,
-    prefix: String,
+    recovery_config: Arc<RecoveryConfig>,
     miss: MissInfo,
     tx: flume::Sender<RawEvent>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = recover_gap(&session, &prefix, &miss, &tx).await {
+        if let Err(e) = recover_gap(&session, &recovery_config, &miss, &tx).await {
             warn!("gap recovery failed: {e}");
         }
     });
@@ -185,7 +247,7 @@ impl EventSubscriber {
             let cancel_clone = cancel.clone();
             let tx = event_tx.clone();
             let sess = session.clone();
-            let prefix = config.key_prefix.clone();
+            let rc = Arc::new(RecoveryConfig::from_bus_config(&config));
             let hb_sub = if config.heartbeat != HeartbeatMode::Disabled {
                 Some(
                     session
@@ -210,7 +272,7 @@ impl EventSubscriber {
                                     if let Some((meta, key, payload)) = decode_sample(&sample) {
                                         let partition = crate::attachment::extract_partition(&key);
                                         let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
-                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &prefix);
+                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &rc);
                                         sample_count += 1;
                                         maybe_evict(&mut gd, sample_count, publisher_ttl);
                                     }
@@ -224,7 +286,7 @@ impl EventSubscriber {
                                     if let Some(beacon) = decode_heartbeat(&sample) {
                                         if recovery_enabled {
                                             let misses = gd.on_heartbeat(&beacon.pub_id, &beacon.partition_seqs);
-                                            handle_heartbeat_gaps(misses, &sess, &prefix, &tx);
+                                            handle_heartbeat_gaps(misses, &sess, &rc, &tx);
                                         }
                                     }
                                 }
@@ -251,7 +313,7 @@ impl EventSubscriber {
             for shard_rx in shard_rxs {
                 let tx = event_tx.clone();
                 let sess = session.clone();
-                let prefix = config.key_prefix.clone();
+                let rc = Arc::new(RecoveryConfig::from_bus_config(&config));
                 let cancel_clone = cancel.clone();
 
                 let handle = tokio::spawn(async move {
@@ -266,14 +328,14 @@ impl EventSubscriber {
                                     Ok(ShardMsg::Sample { meta, key, payload }) => {
                                         let partition = crate::attachment::extract_partition(&key);
                                         let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
-                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &prefix);
+                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &rc);
                                         sample_count += 1;
                                         maybe_evict(&mut gd, sample_count, publisher_ttl);
                                     }
                                     Ok(ShardMsg::Heartbeat(beacon)) => {
                                         if recovery_enabled {
                                             let misses = gd.on_heartbeat(&beacon.pub_id, &beacon.partition_seqs);
-                                            handle_heartbeat_gaps(misses, &sess, &prefix, &tx);
+                                            handle_heartbeat_gaps(misses, &sess, &rc, &tx);
                                         }
                                     }
                                     Err(_) => break,
@@ -379,6 +441,16 @@ impl EventSubscriber {
     pub fn config(&self) -> &EventBusConfig {
         &self.config
     }
+
+    /// Gracefully shut down the subscriber: cancel all background tasks and
+    /// await their completion. Consumes `self` so `Drop` does not run.
+    pub async fn shutdown(mut self) {
+        self.cancel.cancel();
+        let tasks = std::mem::take(&mut self._tasks);
+        for handle in tasks {
+            let _ = handle.await;
+        }
+    }
 }
 
 impl Drop for EventSubscriber {
@@ -411,67 +483,148 @@ fn deliver_event(
     }
 }
 
-/// Attempt to recover missed events by querying the publisher's cache.
-async fn recover_gap(
-    session: &Session,
-    key_prefix: &str,
+/// Build the store recovery query selector.
+///
+/// Partition is encoded as a path segment (`{store_prefix}/{partition}`) so
+/// Zenoh can route the query to the correct partition-specific queryable.
+fn store_recovery_selector(
+    store_prefix: &str,
     miss: &MissInfo,
-    tx: &flume::Sender<RawEvent>,
-) -> Result<()> {
-    let cache_key = format!(
-        "{key_prefix}/_cache/{}?after_seq={}",
-        miss.source, miss.missed.start
-    );
-    debug!(
-        publisher = %miss.source,
-        missed = ?miss.missed,
-        "recovering gap via cache query"
-    );
+) -> String {
+    format!(
+        "{}/{}?publisher_id={}&after_seq={}&before_seq={}",
+        store_prefix,
+        miss.partition,
+        miss.source,
+        miss.missed.start.saturating_sub(1),
+        miss.missed.end,
+    )
+}
 
-    let replies = session.get(&cache_key).await?;
-    let mut recovered = 0u64;
+/// Query a Zenoh queryable and deliver any matching events, tracking recovery.
+async fn query_and_deliver(
+    session: &Session,
+    selector: &str,
+    tx: &flume::Sender<RawEvent>,
+    tracker: &mut RecoveryTracker,
+) {
+    let replies = match session.get(selector).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("recovery query failed: {e}");
+            return;
+        }
+    };
 
     while let Ok(reply) = replies.recv_async().await {
         match reply.result() {
             Ok(sample) => {
-                let key = sample.key_expr().as_str();
-                let payload_bytes = sample.payload().to_bytes().to_vec();
-
-                // All metadata comes from the attachment.
+                // Decode metadata first — defer payload copy until we confirm
+                // the seq is within range and not already recovered.
                 match sample.attachment().and_then(|a| decode_metadata(a).ok()) {
-                    Some(meta) => {
-                        deliver_event(tx, meta.pub_id, meta.seq, key, &payload_bytes, meta.event_id, meta.timestamp);
+                    Some(meta) if tracker.expected.contains(&meta.seq) => {
+                        if tracker.recovered.contains(&meta.seq) {
+                            trace!(seq = meta.seq, "already recovered, skipping");
+                            continue;
+                        }
+                        let key = sample.key_expr().as_str();
+                        let payload_bytes = sample.payload().to_bytes().to_vec();
+                        deliver_event(
+                            tx,
+                            meta.pub_id,
+                            meta.seq,
+                            key,
+                            &payload_bytes,
+                            meta.event_id,
+                            meta.timestamp,
+                        );
+                        tracker.record(meta.seq);
+                    }
+                    Some(_) => {
+                        // seq outside the gap range — ignore
                     }
                     None => {
-                        // Fallback: attachment missing or wrong format; use source pub_id
-                        // and a best-guess seq. This should not happen with current publishers.
-                        let seq = miss.missed.start + recovered;
-                        deliver_event(tx, miss.source, seq, key, &payload_bytes, EventId::new(), chrono::Utc::now());
+                        warn!("recovery reply without valid attachment, skipping");
                     }
                 }
-                recovered += 1;
             }
             Err(err) => {
                 warn!(
-                    "cache query reply error from {}: {}",
-                    miss.source,
+                    "recovery reply error: {}",
                     err.payload().try_to_string().unwrap_or_default()
                 );
             }
         }
     }
+}
 
-    if recovered == 0 {
-        return Err(Error::GapRecoveryFailed {
-            publisher_id: miss.source,
-            missed: miss.missed.clone(),
-        });
-    }
+/// Attempt to recover missed events using tiered sources.
+///
+/// Order: EventStore → Publisher Cache → Retry Store (with backoff).
+/// Recovered events are delivered through `tx` as they arrive.
+async fn recover_gap(
+    session: &Session,
+    config: &RecoveryConfig,
+    miss: &MissInfo,
+    tx: &flume::Sender<RawEvent>,
+) -> Result<()> {
+    let mut tracker = RecoveryTracker::new(miss.missed.clone());
 
     debug!(
         publisher = %miss.source,
-        recovered,
-        "gap recovery complete"
+        missed = ?miss.missed,
+        "recovering gap via tiered recovery"
     );
-    Ok(())
+
+    // ── Step 1: Query EventStore (if available) ──
+    if let Some(store_prefix) = &config.store_key_prefix {
+        tokio::time::sleep(config.recovery_delay).await;
+
+        let selector = store_recovery_selector(store_prefix, miss);
+        query_and_deliver(session, &selector, tx, &mut tracker).await;
+        if tracker.is_complete() {
+            debug!(publisher = %miss.source, "gap recovery complete (store)");
+            return Ok(());
+        }
+    }
+
+    // ── Step 2: Query Publisher Cache ──
+    let cache_key = format!(
+        "{}/_cache/{}?after_seq={}",
+        config.key_prefix, miss.source, miss.missed.start
+    );
+    query_and_deliver(session, &cache_key, tx, &mut tracker).await;
+    if tracker.is_complete() {
+        debug!(publisher = %miss.source, "gap recovery complete (cache)");
+        return Ok(());
+    }
+
+    // ── Step 3: Retry Store with exponential backoff ──
+    if let Some(store_prefix) = &config.store_key_prefix {
+        for attempt in 1..config.max_recovery_attempts {
+            let backoff = config.recovery_delay * 2u32.pow(attempt);
+            tokio::time::sleep(backoff).await;
+
+            let selector = store_recovery_selector(store_prefix, miss);
+            query_and_deliver(session, &selector, tx, &mut tracker).await;
+            if tracker.is_complete() {
+                debug!(publisher = %miss.source, attempt, "gap recovery complete (store retry)");
+                return Ok(());
+            }
+        }
+    }
+
+    // ── Step 4: Irrecoverable ──
+    let remaining = tracker.remaining();
+    warn!(
+        publisher = %miss.source,
+        partition = miss.partition,
+        remaining = ?remaining,
+        "irrecoverable gap — {} events lost",
+        remaining.len()
+    );
+    Err(Error::GapRecoveryFailed {
+        publisher_id: miss.source,
+        missed: miss.missed.clone(),
+    })
 }

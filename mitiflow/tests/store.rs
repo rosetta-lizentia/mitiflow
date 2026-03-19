@@ -7,8 +7,8 @@ use std::time::Duration;
 use chrono::Utc;
 
 use mitiflow::store::FjallBackend;
-use mitiflow::store::backend::{EventMetadata, StorageBackend};
-use mitiflow::store::query::QueryFilters;
+use mitiflow::store::backend::{EventMetadata, HlcTimestamp, StorageBackend};
+use mitiflow::store::query::{QueryFilters, ReplayFilters};
 use mitiflow::types::{EventId, PublisherId};
 use mitiflow::{Event, EventBusConfig, EventPublisher, EventStore, HeartbeatMode};
 
@@ -37,6 +37,7 @@ fn fjall_store_and_query() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
     }
@@ -80,6 +81,7 @@ fn fjall_committed_seq_contiguous() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
     }
@@ -103,6 +105,7 @@ fn fjall_gaps_detected() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
     }
@@ -132,6 +135,7 @@ fn fjall_gc_removes_old_events() {
                 event_id: EventId::new(),
                 timestamp: old_time,
                 key_expr: "test/old".to_string(),
+                hlc_timestamp: None,
             },
         )
         .unwrap();
@@ -147,6 +151,7 @@ fn fjall_gc_removes_old_events() {
                 event_id: EventId::new(),
                 timestamp: new_time,
                 key_expr: "test/new".to_string(),
+                hlc_timestamp: None,
             },
         )
         .unwrap();
@@ -180,6 +185,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
+                hlc_timestamp: None,
             },
         )
         .unwrap();
@@ -194,6 +200,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
+                hlc_timestamp: None,
             },
         )
         .unwrap();
@@ -209,6 +216,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/2".to_string(),
+                hlc_timestamp: None,
             },
         )
         .unwrap();
@@ -238,6 +246,7 @@ fn fjall_seq_filter_range() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
     }
@@ -330,4 +339,316 @@ async fn event_store_persists_and_publishes_watermark() {
     store.shutdown();
     drop(publisher);
     session.close().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// HLC Replay Ordering — deterministic ordering across replicated stores
+// ---------------------------------------------------------------------------
+
+/// Generate a list of (publisher_id, seq, hlc_timestamp) events.
+/// Simulates N publishers each producing `events_per_publisher` events
+/// with HLC timestamps that are interleaved across publishers.
+fn generate_interleaved_events(
+    num_publishers: usize,
+    events_per_publisher: u64,
+) -> Vec<(PublisherId, u64, HlcTimestamp)> {
+    let publishers: Vec<PublisherId> = (0..num_publishers).map(|_| PublisherId::new()).collect();
+    let mut events = Vec::new();
+
+    // Each publisher produces events, but their HLC timestamps interleave:
+    // pub_0 gets physical_ns 1000, 1003, 1006, ...
+    // pub_1 gets physical_ns 1001, 1004, 1007, ...
+    // pub_2 gets physical_ns 1002, 1005, 1008, ...
+    for seq in 0..events_per_publisher {
+        for (pub_idx, pub_id) in publishers.iter().enumerate() {
+            let physical_ns =
+                1_000_000_000 + seq * (num_publishers as u64) + pub_idx as u64;
+            let hlc = HlcTimestamp {
+                physical_ns,
+                logical: 0,
+            };
+            events.push((*pub_id, seq, hlc));
+        }
+    }
+
+    events
+}
+
+/// Store events into a FjallBackend in the given order and return the
+/// replay-ordered sequence of (publisher_id, seq) pairs.
+fn store_and_replay(
+    backend: &FjallBackend,
+    events: &[(PublisherId, u64, HlcTimestamp)],
+) -> Vec<(PublisherId, u64)> {
+    for (pub_id, seq, hlc) in events {
+        let key = format!("test/replay/{}", seq);
+        let meta = EventMetadata {
+            seq: *seq,
+            publisher_id: *pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: key.clone(),
+            hlc_timestamp: Some(*hlc),
+        };
+        backend.store(&key, b"{}", meta).unwrap();
+    }
+
+    let replayed = backend
+        .query_replay(&ReplayFilters::default())
+        .unwrap();
+
+    replayed
+        .iter()
+        .map(|e| (e.metadata.publisher_id, e.metadata.seq))
+        .collect()
+}
+
+/// Core property: two replicas receiving the SAME events in DIFFERENT arrival
+/// orders must produce IDENTICAL replay output.
+#[test]
+fn replay_order_deterministic_across_replicas() {
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+
+    let canonical_events = generate_interleaved_events(3, 10);
+
+    // Create several "replicas" with different randomized arrival orders.
+    let num_replicas = 5;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+
+    let mut replay_results = Vec::new();
+
+    for replica_id in 0..num_replicas {
+        let dir = temp_dir(&format!("replay_det_{replica_id}"));
+        let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+        // Shuffle the events to simulate different arrival orders.
+        let mut shuffled = canonical_events.clone();
+        shuffled.shuffle(&mut rng);
+
+        let replay = store_and_replay(&backend, &shuffled);
+        replay_results.push(replay);
+    }
+
+    // All replicas must produce the same replay order.
+    let reference = &replay_results[0];
+    for (i, replay) in replay_results.iter().enumerate().skip(1) {
+        assert_eq!(
+            reference, replay,
+            "replica {i} replay order differs from replica 0"
+        );
+    }
+
+    // Verify the order is actually sorted by HLC timestamp.
+    let dir = temp_dir("replay_det_verify");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+    let _ = store_and_replay(&backend, &canonical_events);
+
+    let replayed = backend
+        .query_replay(&ReplayFilters::default())
+        .unwrap();
+
+    let hlc_timestamps: Vec<HlcTimestamp> = replayed
+        .iter()
+        .map(|e| e.metadata.hlc_timestamp.unwrap())
+        .collect();
+
+    for pair in hlc_timestamps.windows(2) {
+        assert!(
+            pair[0] <= pair[1],
+            "replay not in HLC order: {:?} > {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
+
+/// Replay filters: after_hlc and before_hlc correctly bound the results.
+#[test]
+fn replay_hlc_range_filter() {
+    let dir = temp_dir("replay_filter");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let base_ns = 1_000_000_000u64;
+
+    for seq in 0..10u64 {
+        let hlc = HlcTimestamp {
+            physical_ns: base_ns + seq * 100,
+            logical: 0,
+        };
+        let key = format!("test/replay/{seq}");
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: key.clone(),
+            hlc_timestamp: Some(hlc),
+        };
+        backend.store(&key, b"{}", meta).unwrap();
+    }
+
+    // Filter: after seq 3 HLC (base+300), before seq 7 HLC (base+700).
+    let filtered = backend
+        .query_replay(&ReplayFilters {
+            after_hlc: Some(HlcTimestamp {
+                physical_ns: base_ns + 300,
+                logical: 0,
+            }),
+            before_hlc: Some(HlcTimestamp {
+                physical_ns: base_ns + 700,
+                logical: 0,
+            }),
+            limit: None,
+        })
+        .unwrap();
+
+    // Should get seq 4, 5, 6 (strictly after 300, strictly before 700).
+    let seqs: Vec<u64> = filtered.iter().map(|e| e.metadata.seq).collect();
+    assert_eq!(seqs, vec![4, 5, 6]);
+}
+
+/// Replay with limit.
+#[test]
+fn replay_limit() {
+    let dir = temp_dir("replay_limit");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    for seq in 0..20u64 {
+        let hlc = HlcTimestamp {
+            physical_ns: 1_000_000_000 + seq,
+            logical: 0,
+        };
+        let key = format!("test/replay/{seq}");
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: key.clone(),
+            hlc_timestamp: Some(hlc),
+        };
+        backend.store(&key, b"{}", meta).unwrap();
+    }
+
+    let limited = backend
+        .query_replay(&ReplayFilters {
+            limit: Some(5),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(limited.len(), 5);
+    // Should be the first 5 in HLC order.
+    for (i, event) in limited.iter().enumerate() {
+        assert_eq!(event.metadata.seq, i as u64);
+    }
+}
+
+/// GC removes replay index entries alongside primary events.
+#[test]
+fn gc_cleans_replay_index() {
+    let dir = temp_dir("gc_replay");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let old_time = Utc::now() - chrono::Duration::hours(2);
+    let new_time = Utc::now();
+
+    // Store an old event with HLC.
+    backend
+        .store(
+            "test/old",
+            b"{}",
+            EventMetadata {
+                seq: 0,
+                publisher_id: pub_id,
+                event_id: EventId::new(),
+                timestamp: old_time,
+                key_expr: "test/old".to_string(),
+                hlc_timestamp: Some(HlcTimestamp {
+                    physical_ns: 1_000,
+                    logical: 0,
+                }),
+            },
+        )
+        .unwrap();
+
+    // Store a new event with HLC.
+    backend
+        .store(
+            "test/new",
+            b"{}",
+            EventMetadata {
+                seq: 1,
+                publisher_id: pub_id,
+                event_id: EventId::new(),
+                timestamp: new_time,
+                key_expr: "test/new".to_string(),
+                hlc_timestamp: Some(HlcTimestamp {
+                    physical_ns: 2_000,
+                    logical: 0,
+                }),
+            },
+        )
+        .unwrap();
+
+    // Before GC: 2 events in replay index.
+    let before = backend
+        .query_replay(&ReplayFilters::default())
+        .unwrap();
+    assert_eq!(before.len(), 2);
+
+    // GC removes the old event.
+    let cutoff = Utc::now() - chrono::Duration::hours(1);
+    let removed = backend.gc(cutoff).unwrap();
+    assert_eq!(removed, 1);
+
+    // After GC: only 1 event in replay index.
+    let after = backend
+        .query_replay(&ReplayFilters::default())
+        .unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].metadata.seq, 1);
+}
+
+/// Stress test: 5 replicas, 4 publishers, 50 events each, random order.
+/// Verifies replay determinism at scale.
+#[test]
+fn replay_stress_many_publishers_many_replicas() {
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+
+    let canonical_events = generate_interleaved_events(4, 50);
+    let num_replicas = 5;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1337);
+
+    let mut replay_results = Vec::new();
+
+    for replica_id in 0..num_replicas {
+        let dir = temp_dir(&format!("replay_stress_{replica_id}"));
+        let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+        let mut shuffled = canonical_events.clone();
+        shuffled.shuffle(&mut rng);
+
+        let replay = store_and_replay(&backend, &shuffled);
+        replay_results.push(replay);
+    }
+
+    // All replicas must produce the same result.
+    let reference = &replay_results[0];
+    assert_eq!(
+        reference.len(),
+        canonical_events.len(),
+        "replay should contain all events"
+    );
+
+    for (i, replay) in replay_results.iter().enumerate().skip(1) {
+        assert_eq!(
+            reference, replay,
+            "stress: replica {i} replay order differs from replica 0"
+        );
+    }
 }

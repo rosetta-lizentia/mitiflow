@@ -44,6 +44,10 @@ impl ProducerWork for MitiflowProducer {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+
+    async fn cleanup(&self, state: Self::State) {
+        state.publisher.shutdown().await;
+    }
 }
 
 /// Mitiflow consumer.
@@ -83,6 +87,10 @@ impl ConsumerWork for MitiflowConsumer {
         }
         state
     }
+
+    async fn cleanup(&self, state: Self::State) {
+        state.shutdown().await;
+    }
 }
 
 /// Mitiflow durable producer (ProducerWork — calls publish_bytes_durable per item).
@@ -121,6 +129,10 @@ impl ProducerWork for MitiflowDurableProducer {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+
+    async fn cleanup(&self, state: Self::State) {
+        state.publisher.shutdown().await;
+    }
 }
 
 /// Mitiflow durable publish work (request pattern — publish_durable per iteration).
@@ -158,6 +170,10 @@ impl BenchmarkWork for MitiflowDurableWork {
             Ok(_) => WorkResult::success(now_unix_ns_estimate() - start),
             Err(e) => WorkResult::error(e.to_string()),
         }
+    }
+
+    async fn cleanup(&self, state: Self::State) {
+        state.publisher.shutdown().await;
     }
 }
 

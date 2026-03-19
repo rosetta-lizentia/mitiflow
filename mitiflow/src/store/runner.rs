@@ -25,7 +25,7 @@ use crate::config::EventBusConfig;
 use crate::error::{Error, Result};
 use crate::types::PublisherId;
 
-use super::backend::{CompactionStats, EventMetadata, StorageBackend, StoredEvent};
+use super::backend::{CompactionStats, EventMetadata, HlcTimestamp, StorageBackend, StoredEvent};
 use super::query::QueryFilters;
 use super::watermark::{CommitWatermark, PublisherWatermark};
 
@@ -297,6 +297,29 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
     let payload = sample.payload().to_bytes().to_vec();
     let timestamp_nanos = meta.timestamp.timestamp_nanos_opt().unwrap_or(i64::MAX);
 
+    // Extract HLC timestamp from the Zenoh sample if available.
+    let hlc_timestamp = sample.timestamp().map(|ts| {
+        let ntp64 = ts.get_time().0;
+        // NTP64: upper 32 bits = seconds since 1900-01-01, lower 32 = fraction.
+        // Convert to nanoseconds since Unix epoch (1970-01-01).
+        // NTP epoch offset: 70 years = 2_208_988_800 seconds.
+        const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
+        let seconds = (ntp64 >> 32) as u64;
+        let fraction = (ntp64 & 0xFFFF_FFFF) as u64;
+        let unix_seconds = seconds.saturating_sub(NTP_UNIX_OFFSET);
+        let nanos = (fraction * 1_000_000_000) >> 32;
+        let physical_ns = unix_seconds * 1_000_000_000 + nanos;
+        // Zenoh HLC uses the ID part for logical ordering; we use a
+        // simple counter of 0 here since the NTP64 already encodes
+        // sub-nanosecond resolution.  A more accurate approach would
+        // parse the HLC logical counter, but the fraction bits are
+        // sufficient for ordering.
+        HlcTimestamp {
+            physical_ns,
+            logical: 0,
+        }
+    });
+
     Some(DecodedSample {
         request: StoreRequest {
             key: key.to_string(),
@@ -307,6 +330,7 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
                 event_id: meta.event_id,
                 timestamp: meta.timestamp,
                 key_expr: key.to_string(),
+                hlc_timestamp,
             },
         },
         urgency_ms: meta.urgency_ms,
@@ -490,6 +514,7 @@ async fn run_watermark_task(
             partition: handle.partition(),
             publishers,
             timestamp: chrono::Utc::now(),
+            epoch: 0,
         };
 
         if let Ok(bytes) = serde_json::to_vec(&watermark) {
@@ -624,7 +649,10 @@ impl EventStore {
             self.cancel.clone(),
         )));
 
-        let queryable = self.session.declare_queryable(&store_key_prefix).await?;
+        // Declare queryable on `{store_prefix}/{partition}` so Zenoh routes
+        // partition-scoped recovery queries to the correct store instance.
+        let queryable_key = format!("{store_key_prefix}/{partition}");
+        let queryable = self.session.declare_queryable(&queryable_key).await?;
         self._tasks.push(tokio::spawn(run_queryable_task(
             queryable,
             handle.clone(),
@@ -705,6 +733,18 @@ impl EventStore {
             for _ in &self._worker_threads {
                 let _ = handle.tx.send(BackendMsg::Shutdown);
             }
+        }
+    }
+
+    /// Gracefully shut down: cancel tasks, await async tasks, join worker
+    /// threads. Consumes `self` so `Drop` does not run.
+    pub async fn shutdown_gracefully(mut self) {
+        self.shutdown();
+        for handle in self._tasks.drain(..) {
+            let _ = handle.await;
+        }
+        for thread in self._worker_threads.drain(..) {
+            let _ = thread.join();
         }
     }
 }
