@@ -78,7 +78,7 @@ Data sourced from published benchmarks ([zenoh.io 2023](https://zenoh.io/blog/20
 | **Consumer groups** | ⚠️ L3 (app-level) | ✅ Native | ⚠️ Competing consumers | ✅ Queue groups | ✅ Subscriptions | ✅ XREADGROUP |
 | **Partitioning** | ⚠️ L3 (hash ring) | ✅ Native (topic partitions) | ❌ | ❌ | ✅ Native | ❌ |
 | **Auto-rebalance** | ✅ Liveliness-driven | ✅ Coordinator | ❌ | ⚠️ Limited | ✅ | ❌ |
-| **Ordering guarantee** | Per-publisher | Per-partition | Per-queue | Per-subject | Per-partition | Per-stream |
+| **Ordering guarantee** | Per-(partition, publisher) | Per-partition | Per-queue | Per-subject | Per-partition | Per-stream |
 
 ### Operations & Deployment
 
@@ -164,32 +164,20 @@ EventStore-N: subscribes to "myapp/events/p{...}/**"   → watermark on "myapp/w
 
 This is **simpler** than Kafka's approach where partition reassignment requires broker coordination through the controller.
 
-### 5.2 Replication via Zenoh Fan-Out (Free)
+### 5.2 Replication via Pub/Sub Fan-Out
 
-In Kafka, replication requires followers to **fetch from the leader** (ISR protocol). In Zenoh, **all subscribers receive the same data simultaneously** because Zenoh delivers to every subscriber on a key expression:
+Multiple Event Store replicas subscribe to the same key expression and receive
+all events simultaneously via Zenoh's native fan-out. Publishers wait for a
+quorum of replica watermarks — no Raft, no leader election.
 
-```
-                    Zenoh Network
-                         │
-            subscribe("events/p0/**")
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-         Store-0a    Store-0b    Store-0c
-         (leader)    (replica)   (replica)
-              │
-              └─ publishes watermark for p0
-```
+See [05_replication.md](05_replication.md) for the full design, including
+recovery protocol, consistency guarantees, and failure modes.
 
-- All replicas get the same data at the same time — **near-zero replica lag**
-- Leader election via Zenoh liveliness tokens (not ZooKeeper/KRaft)
-- Only the leader publishes watermarks and answers queries
-- If leader dies, a replica takes over — it already has all the data
-
-| Aspect | Kafka ISR | Zenoh Fan-Out Replication |
+| Aspect | Kafka ISR | mitiflow Pub/Sub Replication |
 |--------|-----------|--------------------------|
 | **How replicas get data** | Followers fetch from leader | All replicas subscribe independently |
 | **Replica lag** | Fetch lag (milliseconds) | **Near-zero** (simultaneous delivery) |
-| **Leader election** | Via KRaft controller | Zenoh liveliness tokens |
+| **Consensus** | KRaft / ISR protocol | Not needed (per-publisher sequences) |
 | **Infrastructure** | ZooKeeper or KRaft cluster | Already part of Zenoh |
 | **Network cost** | Leader sends N copies | Zenoh multicast / routing handles it |
 
@@ -229,7 +217,7 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | Storage capacity | ✅ | Partitioned Event Stores, each with own DB |
 | Write throughput | ✅ | Parallel writes across partition stores |
 | Read throughput | ✅ | Replicas can serve reads |
-| Fault tolerance | ✅ | Replicas via Zenoh fan-out + liveliness failover |
+| Fault tolerance | ✅ | Replicas via Zenoh fan-out + quorum watermark |
 | Log compaction | ✅ | StorageBackend trait method |
 | Tiered storage | ✅ | Hot (fjall) → cold (S3) archive pipeline |
 | Geo-replication | ✅ | Zenoh router mesh + remote Event Stores |
@@ -281,7 +269,7 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | **Latency** | ✅ 10-16 µs (peer) | ❌ 1-50 ms |
 | **Throughput** | ✅ 67 Gbps (peer) | ⚠️ 5 Gbps (Kafka) |
 | **Scalability** | ✅ Partition + replicate Event Store | ✅ Native partitions + ISR |
-| **Replication cost** | ✅ Free (Zenoh fan-out) | ⚠️ Followers fetch from leader |
+| **Replication cost** | ✅ Free (Zenoh fan-out, quorum watermark) | ⚠️ Followers fetch from leader |
 | **Durability** | ✅ Event Store sidecar | ✅ Native |
 | **Consumer groups** | ⚠️ L3 (app-level) | ✅ Native |
 | **Ecosystem maturity** | ❌ Young (Rust-only) | ✅ Battle-tested, multi-language |
@@ -290,4 +278,4 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | **Broker dependency** | ✅ None | ❌ Always required |
 | **Custom queryable storage** | ✅ Full control | ⚠️ Limited |
 
-> **Bottom line:** Zenoh + `mitiflow` achieves Kafka-class reliability and scalability (partitioned + replicated Event Store with watermark-confirmed durability) at **100-1000x lower latency** and **without mandatory broker infrastructure**. The architectural gaps are ecosystem (tooling, connectors, multi-language SDKs) — not scalability or durability. For Rust-based systems where latency matters, this is the strictly better foundation.
+> **Bottom line:** Zenoh + `mitiflow` achieves Kafka-class reliability and scalability (partitioned + replicated Event Store with quorum-confirmed durability) at **100-1000x lower latency** and **without mandatory broker infrastructure**. The architectural gaps are ecosystem (tooling, connectors, multi-language SDKs) — not scalability or durability. For Rust-based systems where latency matters, this is the strictly better foundation.

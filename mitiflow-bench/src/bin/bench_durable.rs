@@ -69,6 +69,7 @@ async fn main() {
                 .heartbeat(mitiflow::HeartbeatMode::Disabled)
                 .watermark_interval(Duration::from_millis(10))
                 .durable_timeout(Duration::from_secs(1))
+                .durable_urgency(Duration::from_millis(1))
                 .build()
                 .expect("failed to build mitiflow config");
 
@@ -82,7 +83,7 @@ async fn main() {
             // Give the store time to initialize and emit its first watermark.
             tokio::time::sleep(Duration::from_millis(200)).await;
 
-            let work = transport::mitiflow_transport::MitiflowDurableWork {
+            let work = transport::mitiflow::MitiflowDurableWork {
                 session,
                 config,
                 topic,

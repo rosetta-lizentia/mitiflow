@@ -8,7 +8,7 @@ pub mod watermark;
 
 pub use backend::{CompactionStats, EventMetadata, StorageBackend, StoredEvent};
 pub use query::QueryFilters;
-pub use watermark::CommitWatermark;
+pub use watermark::{CommitWatermark, PublisherWatermark};
 
 #[cfg(feature = "store")]
 pub use backend::FjallBackend;

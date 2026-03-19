@@ -1,5 +1,7 @@
 //! Pluggable storage backend trait and fjall implementation.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +12,7 @@ use crate::types::{EventId, PublisherId};
 use crate::error::Error;
 
 use super::query::QueryFilters;
+use super::watermark::PublisherWatermark;
 
 /// Metadata associated with a stored event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,11 +50,8 @@ pub trait StorageBackend: Send + Sync {
     /// Query stored events matching the given filters.
     fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>>;
 
-    /// Return the highest contiguous sequence number that has been durably stored.
-    fn committed_seq(&self) -> u64;
-
-    /// Return sequence numbers below `committed_seq` that are still missing (gaps).
-    fn gap_sequences(&self) -> Vec<u64>;
+    /// Return per-publisher durability progress (committed_seq + gaps).
+    fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark>;
 
     /// Remove events older than the given timestamp. Returns number of events removed.
     fn gc(&self, older_than: DateTime<Utc>) -> Result<usize>;
@@ -67,24 +67,28 @@ pub trait StorageBackend: Send + Sync {
 #[cfg(feature = "store")]
 mod fjall_impl {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
 
-    /// Key encoding: 12 bytes = partition (4 BE) + seq (8 BE).
-    /// Big-endian ensures natural sort order = insertion order within a partition.
-    fn encode_event_key(partition: u32, seq: u64) -> [u8; 12] {
-        let mut buf = [0u8; 12];
+    /// Key encoding: 28 bytes = partition (4 BE) + publisher_id (16) + seq (8 BE).
+    /// Big-endian ensures natural sort order within each (partition, publisher) prefix.
+    fn encode_event_key(partition: u32, publisher_id: &PublisherId, seq: u64) -> [u8; 28] {
+        let mut buf = [0u8; 28];
         buf[..4].copy_from_slice(&partition.to_be_bytes());
-        buf[4..].copy_from_slice(&seq.to_be_bytes());
+        buf[4..20].copy_from_slice(&publisher_id.to_bytes());
+        buf[20..].copy_from_slice(&seq.to_be_bytes());
         buf
     }
 
-    fn decode_event_key(key: &[u8]) -> Option<(u32, u64)> {
-        if key.len() < 12 {
+    fn decode_event_key(key: &[u8]) -> Option<(u32, PublisherId, u64)> {
+        if key.len() < 28 {
             return None;
         }
         let partition = u32::from_be_bytes(key[..4].try_into().ok()?);
-        let seq = u64::from_be_bytes(key[4..12].try_into().ok()?);
-        Some((partition, seq))
+        let pub_bytes: [u8; 16] = key[4..20].try_into().ok()?;
+        let publisher_id = PublisherId::from_bytes(pub_bytes);
+        let seq = u64::from_be_bytes(key[20..28].try_into().ok()?);
+        Some((partition, publisher_id, seq))
     }
 
     /// Persistent event value: metadata JSON + raw payload bytes.
@@ -114,12 +118,29 @@ mod fjall_impl {
         Ok((meta, payload))
     }
 
+    /// Per-publisher sequence tracking state.
+    ///
+    /// Tracks only the **missing** sequences (gaps) per publisher, which is
+    /// optimal for stable networks where gaps are rare — the set stays near-empty.
+    /// A `BTreeSet<u64>` acts as a sparse bitset over the u64 sequence space:
+    /// O(1) memory when empty, O(log g) insert/remove/contains where g = gap count.
+    #[derive(Debug, Default)]
+    struct PublisherSeqState {
+        /// Highest sequence number ever seen from this publisher.
+        /// `None` means no events stored yet.
+        highest_seen: Option<u64>,
+        /// Highest contiguous sequence number durably stored.
+        committed_seq: u64,
+        /// Missing sequence numbers below `highest_seen` (the gaps).
+        gaps: BTreeSet<u64>,
+    }
+
     /// LSM-tree backed storage using the `fjall` crate.
     ///
     /// Uses three keyspaces:
-    /// - `events`   — primary event data, keyed by `(partition, seq)`
-    /// - `metadata` — watermark state (`committed_seq`, `gaps`)
-    /// - `keys`     — key_expr → `(partition, seq)` mapping for compaction
+    /// - `events`   — primary event data, keyed by `(partition, publisher_id, seq)`
+    /// - `metadata` — watermark state (per-publisher `committed_seq`)
+    /// - `keys`     — key_expr → event key mapping for compaction
     pub struct FjallBackend {
         db: fjall::Database,
         events: fjall::Keyspace,
@@ -127,8 +148,17 @@ mod fjall_impl {
         keys: fjall::Keyspace,
         /// Default partition id for non-partitioned mode.
         partition: u32,
-        /// Cached committed_seq for fast reads.
-        cached_committed_seq: AtomicU64,
+        /// Per-publisher gap tracking. Updated incrementally on each `store()`
+        /// to avoid O(N) scans in `publisher_watermarks()`.
+        publisher_states: Mutex<HashMap<PublisherId, PublisherSeqState>>,
+    }
+
+    /// Metadata key for a publisher's committed_seq in the metadata keyspace.
+    fn committed_seq_key(pub_id: &PublisherId) -> Vec<u8> {
+        let mut key = Vec::with_capacity(17);
+        key.push(b'c'); // prefix to distinguish from other metadata
+        key.extend_from_slice(&pub_id.to_bytes());
+        key
     }
 
     impl FjallBackend {
@@ -150,19 +180,37 @@ mod fjall_impl {
                 .keyspace("keys", fjall::KeyspaceCreateOptions::default)
                 .map_err(|e| Error::StoreError(format!("failed to open keys keyspace: {e}")))?;
 
-            // Load cached committed_seq from metadata if available.
-            let committed = metadata
-                .get("committed_seq")
-                .ok()
-                .flatten()
-                .and_then(|v| {
-                    if v.len() == 8 {
-                        Some(u64::from_le_bytes(v[..8].try_into().unwrap()))
-                    } else {
-                        None
+            // One-time scan to rebuild per-publisher gap state from existing data.
+            let prefix = partition.to_be_bytes();
+            let mut states: HashMap<PublisherId, PublisherSeqState> = HashMap::new();
+
+            for guard in events.prefix(prefix) {
+                let Ok(kv) = guard.into_inner() else { break };
+                if let Some((_, pub_id, seq)) = decode_event_key(&kv.0) {
+                    let state = states.entry(pub_id).or_default();
+                    let expected = state.highest_seen.map_or(0, |h| h + 1);
+                    // Record any gaps between expected and this seq.
+                    for gap_seq in expected..seq {
+                        state.gaps.insert(gap_seq);
                     }
-                })
-                .unwrap_or(0);
+                    state.highest_seen = Some(seq);
+                }
+            }
+
+            // Compute committed_seq for each publisher from gap state.
+            for state in states.values_mut() {
+                if let Some(highest) = state.highest_seen {
+                    let mut committed = 0u64;
+                    // Advance past filled positions.
+                    while committed < highest && !state.gaps.contains(&(committed + 1)) {
+                        committed += 1;
+                    }
+                    // Handle the case where seq 0 exists (committed should be at least 0).
+                    if !state.gaps.contains(&0) {
+                        state.committed_seq = committed;
+                    }
+                }
+            }
 
             Ok(Self {
                 db,
@@ -170,72 +218,63 @@ mod fjall_impl {
                 metadata,
                 keys,
                 partition,
-                cached_committed_seq: AtomicU64::new(committed),
+                publisher_states: Mutex::new(states),
             })
-        }
-
-        /// Recompute the committed_seq by scanning events for the highest contiguous sequence.
-        #[allow(dead_code)] // Used by EventStore::run() on startup
-        fn recompute_committed_seq(&self) -> u64 {
-            let prefix = self.partition.to_be_bytes();
-            let mut max_contiguous: u64 = 0;
-            let mut found_any = false;
-
-            for guard in self.events.prefix(prefix) {
-                let Ok(kv) = guard.into_inner() else {
-                    break;
-                };
-                if let Some((_, seq)) = decode_event_key(&kv.0) {
-                    if !found_any {
-                        max_contiguous = seq;
-                        found_any = true;
-                    } else if seq == max_contiguous + 1 {
-                        max_contiguous = seq;
-                    } else if seq > max_contiguous + 1 {
-                        // Gap found — stop at the last contiguous seq.
-                        break;
-                    }
-                }
-            }
-
-            if found_any {
-                // Store the computed value.
-                let _ = self
-                    .metadata
-                    .insert("committed_seq", max_contiguous.to_le_bytes());
-                self.cached_committed_seq
-                    .store(max_contiguous, Ordering::Release);
-            }
-            max_contiguous
         }
     }
 
     impl StorageBackend for FjallBackend {
         fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()> {
-            let event_key = encode_event_key(self.partition, metadata.seq);
+            let seq = metadata.seq;
+            let pub_id = metadata.publisher_id;
+            let event_key = encode_event_key(self.partition, &pub_id, seq);
             let event_value = encode_event_value(&metadata, event);
 
-            // Atomic batch: write event + key index + update metadata.
             let mut batch = self.db.batch();
             batch.insert(&self.events, event_key, event_value);
             batch.insert(&self.keys, key.as_bytes(), event_key);
 
-            // Update committed_seq if this event extends the contiguous range.
-            let current = self.cached_committed_seq.load(Ordering::Acquire);
-            if metadata.seq == 0 || metadata.seq == current + 1 {
-                let new_committed = metadata.seq;
-                batch.insert(&self.metadata, "committed_seq", new_committed.to_le_bytes());
-                // commit batch first, then update cache
-                batch
-                    .commit()
-                    .map_err(|e| Error::StoreError(format!("batch commit failed: {e}")))?;
-                self.cached_committed_seq
-                    .store(new_committed, Ordering::Release);
-            } else {
-                batch
-                    .commit()
-                    .map_err(|e| Error::StoreError(format!("batch commit failed: {e}")))?;
+            // --- Incremental per-publisher gap tracking ---
+            let mut states = self.publisher_states.lock().unwrap();
+            let state = states.entry(pub_id).or_default();
+
+            // Remove this seq from gaps (filling a gap, or no-op).
+            state.gaps.remove(&seq);
+
+            match state.highest_seen {
+                None => {
+                    // First event from this publisher — seqs 0..seq are gaps.
+                    for gap_seq in 0..seq {
+                        state.gaps.insert(gap_seq);
+                    }
+                    state.highest_seen = Some(seq);
+                }
+                Some(highest) if seq > highest => {
+                    // Extending beyond highest — seqs (highest+1)..seq are gaps.
+                    for gap_seq in (highest + 1)..seq {
+                        state.gaps.insert(gap_seq);
+                    }
+                    state.highest_seen = Some(seq);
+                }
+                _ => {} // seq <= highest, already tracked
             }
+
+            // Advance committed_seq past any filled positions.
+            if let Some(highest) = state.highest_seen {
+                while state.committed_seq < highest
+                    && !state.gaps.contains(&(state.committed_seq + 1))
+                {
+                    state.committed_seq += 1;
+                }
+            }
+
+            let committed = state.committed_seq;
+            let meta_key = committed_seq_key(&pub_id);
+            batch.insert(&self.metadata, meta_key, committed.to_le_bytes());
+
+            batch
+                .commit()
+                .map_err(|e| Error::StoreError(format!("batch commit failed: {e}")))?;
 
             Ok(())
         }
@@ -249,7 +288,7 @@ mod fjall_impl {
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("scan error: {e}")))?;
 
-                let Some((_, seq)) = decode_event_key(&kv.0) else {
+                let Some((_, _pub_id, seq)) = decode_event_key(&kv.0) else {
                     continue;
                 };
 
@@ -295,41 +334,18 @@ mod fjall_impl {
             Ok(results)
         }
 
-        fn committed_seq(&self) -> u64 {
-            self.cached_committed_seq.load(Ordering::Acquire)
-        }
-
-        fn gap_sequences(&self) -> Vec<u64> {
-            let prefix = self.partition.to_be_bytes();
-            let mut gaps = Vec::new();
-            let mut expected: Option<u64> = None;
-
-            for guard in self.events.prefix(prefix) {
-                let Ok(kv) = guard.into_inner() else {
-                    break;
-                };
-                let Some((_, seq)) = decode_event_key(&kv.0) else {
-                    continue;
-                };
-
-                match expected {
-                    None => {
-                        // First event — gaps before this are unknown (we start from 0).
-                        for gap_seq in 0..seq {
-                            gaps.push(gap_seq);
-                        }
-                        expected = Some(seq + 1);
-                    }
-                    Some(exp) => {
-                        for gap_seq in exp..seq {
-                            gaps.push(gap_seq);
-                        }
-                        expected = Some(seq + 1);
-                    }
-                }
-            }
-
-            gaps
+        fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark> {
+            let states = self.publisher_states.lock().unwrap();
+            states
+                .iter()
+                .map(|(pub_id, state)| {
+                    let pw = PublisherWatermark {
+                        committed_seq: state.committed_seq,
+                        gaps: state.gaps.iter().copied().collect(),
+                    };
+                    (*pub_id, pw)
+                })
+                .collect()
         }
 
         fn gc(&self, older_than: DateTime<Utc>) -> Result<usize> {
@@ -362,9 +378,6 @@ mod fjall_impl {
         }
 
         fn compact(&self) -> Result<CompactionStats> {
-            // Compaction: for each key_expr, keep only the event with the highest seq.
-            // Scan the events keyspace to find all event_key → key_expr mappings,
-            // tracking the latest seq per key_expr.
             let prefix = self.partition.to_be_bytes();
             let mut latest: std::collections::HashMap<String, (Vec<u8>, u64)> =
                 std::collections::HashMap::new();
@@ -374,7 +387,7 @@ mod fjall_impl {
                 let kv = guard
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("compact scan error: {e}")))?;
-                let Some((_, seq)) = decode_event_key(&kv.0) else {
+                let Some((_, _pub_id, seq)) = decode_event_key(&kv.0) else {
                     continue;
                 };
                 let (meta, _) = decode_event_value(&kv.1)?;

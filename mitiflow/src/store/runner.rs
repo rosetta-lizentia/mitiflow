@@ -2,15 +2,17 @@
 //! and serves stored events via queryable.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 use zenoh::Session;
 use zenoh::handlers::FifoChannelHandler;
 use zenoh::sample::{Sample, SampleKind};
 
-use crate::attachment::decode_metadata;
+use crate::attachment::{NO_URGENCY, decode_metadata};
 use crate::config::EventBusConfig;
 use crate::error::Result;
 
@@ -18,10 +20,19 @@ use super::backend::{EventMetadata, StorageBackend, StoredEvent};
 use super::query::QueryFilters;
 use super::watermark::CommitWatermark;
 
+/// Sentinel: no urgent deadline pending.
+const NO_DEADLINE: i64 = i64::MAX;
+
 /// Persist incoming events from the Zenoh subscriber into the storage backend.
+///
+/// When an event carries an urgency hint (`urgency_ms < NO_URGENCY`), computes
+/// the deadline and atomically updates `earliest_deadline` if this event's
+/// deadline is sooner, then wakes the watermark task via `urgency_notify`.
 async fn run_subscribe_task(
     subscriber: zenoh::pubsub::Subscriber<FifoChannelHandler<Sample>>,
     backend: Arc<dyn StorageBackend>,
+    earliest_deadline: Arc<AtomicI64>,
+    urgency_notify: Arc<Notify>,
     cancel: CancellationToken,
 ) {
     loop {
@@ -62,6 +73,29 @@ async fn run_subscribe_task(
                             warn!(seq = meta.seq, pub_id = %meta.pub_id, "failed to persist event: {e}");
                         } else {
                             trace!(seq = meta.seq, pub_id = %meta.pub_id, key, "persisted event");
+                        }
+
+                        // If the event carries urgency, update the earliest deadline
+                        // so the watermark task wakes early.
+                        if meta.urgency_ms != NO_URGENCY {
+                            let deadline_ns = meta
+                                .timestamp
+                                .timestamp_nanos_opt()
+                                .unwrap_or(i64::MAX)
+                                .saturating_add(meta.urgency_ms as i64 * 1_000_000);
+                            // Atomic min: only store if our deadline is earlier.
+                            let _ = earliest_deadline.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |current| {
+                                    if deadline_ns < current {
+                                        Some(deadline_ns)
+                                    } else {
+                                        None
+                                    }
+                                },
+                            );
+                            urgency_notify.notify_one();
                         }
                     }
                     Err(_) => break,
@@ -107,6 +141,7 @@ async fn run_queryable_task(
                                 event.metadata.seq,
                                 &event.metadata.event_id,
                                 &event.metadata.timestamp,
+                                crate::attachment::NO_URGENCY,
                             );
                             if let Err(e) = query
                                 .reply(&event.key, event.payload.clone())
@@ -125,31 +160,68 @@ async fn run_queryable_task(
     debug!("store queryable task stopped");
 }
 
-/// Periodically broadcast commit watermarks.
+/// Broadcast commit watermarks, adapting to urgency hints.
+///
+/// Normally fires every `interval_dur`. When the subscribe task stores an
+/// event with `urgency_ms < NO_URGENCY`, the watermark is broadcast as soon as
+/// the computed deadline arrives (or immediately for `urgency_ms == 0`).
 async fn run_watermark_task(
     session: Session,
     backend: Arc<dyn StorageBackend>,
     watermark_key: String,
     interval_dur: Duration,
+    earliest_deadline: Arc<AtomicI64>,
+    urgency_notify: Arc<Notify>,
     cancel: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(interval_dur);
 
     loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            _ = interval.tick() => {
-                let watermark = CommitWatermark {
-                    committed_seq: backend.committed_seq(),
-                    gaps: backend.gap_sequences(),
-                    timestamp: chrono::Utc::now(),
-                };
+        // Determine how long to sleep: the shorter of the next periodic tick
+        // and the earliest urgency deadline.
+        let deadline_ns = earliest_deadline.load(Ordering::Acquire);
 
-                if let Ok(bytes) = serde_json::to_vec(&watermark) {
-                    if let Err(e) = session.put(&watermark_key, bytes).await {
-                        warn!("watermark publish failed: {e}");
-                    }
+        if deadline_ns == NO_DEADLINE {
+            // No urgent events — wait for either the periodic tick or a new
+            // urgency notification.
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = interval.tick() => {}
+                _ = urgency_notify.notified() => {
+                    // Re-evaluate the deadline on the next loop iteration.
+                    continue;
                 }
+            }
+        } else {
+            // Compute tokio Instant from the nanos deadline.
+            let now_nanos = chrono::Utc::now()
+                .timestamp_nanos_opt()
+                .unwrap_or(0);
+            let remaining = Duration::from_nanos(
+                (deadline_ns - now_nanos).max(0) as u64,
+            );
+
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(remaining) => {}
+            }
+
+            // Reset the interval so the next periodic tick is a full interval
+            // from now, avoiding a burst of ticks after an early wake.
+            interval.reset();
+        }
+
+        // Clear the deadline — it will be re-set by the next urgent event.
+        earliest_deadline.store(NO_DEADLINE, Ordering::Release);
+
+        let watermark = CommitWatermark {
+            publishers: backend.publisher_watermarks(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        if let Ok(bytes) = serde_json::to_vec(&watermark) {
+            if let Err(e) = session.put(&watermark_key, bytes).await {
+                warn!("watermark publish failed: {e}");
             }
         }
     }
@@ -222,6 +294,10 @@ impl EventStore {
         let store_key_prefix = self.config.resolved_store_key_prefix();
         let watermark_key = self.config.resolved_watermark_key();
 
+        // Shared urgency state between subscribe and watermark tasks.
+        let earliest_deadline = Arc::new(AtomicI64::new(NO_DEADLINE));
+        let urgency_notify = Arc::new(Notify::new());
+
         let subscriber = self
             .session
             .declare_subscriber(format!("{key_prefix}/**"))
@@ -229,6 +305,8 @@ impl EventStore {
         self._tasks.push(tokio::spawn(run_subscribe_task(
             subscriber,
             Arc::clone(&self.backend),
+            Arc::clone(&earliest_deadline),
+            Arc::clone(&urgency_notify),
             self.cancel.clone(),
         )));
 
@@ -244,6 +322,8 @@ impl EventStore {
             Arc::clone(&self.backend),
             watermark_key,
             self.config.watermark_interval,
+            earliest_deadline,
+            urgency_notify,
             self.cancel.clone(),
         )));
 

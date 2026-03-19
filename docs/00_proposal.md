@@ -31,13 +31,20 @@ The key innovation is how durability confirmation works **without** per-event AC
 ```
 Producers → put(events/**) → Zenoh → Event Store subscribes → persists → every 100ms:
                                                                   publishes watermark:
-                                                                  { committed_seq: 1042, gaps: [1038] }
+                                                                  { publishers: {
+                                                                      "pub-A": { committed_seq: 1042, gaps: [] },
+                                                                      "pub-B": { committed_seq: 507, gaps: [499] }
+                                                                  }}
 
 All publishers subscribe to watermark stream:
-  → "my seq 1040, committed 1042, not in gaps → DURABLE ✓"
+  → "my pub_id=pub-A, seq 1040, committed 1042, not in gaps → DURABLE ✓"
 ```
 
 One batch broadcast serves all publishers. Cost is O(1) regardless of publisher count.
+
+With replicated stores, each replica publishes its own watermark. Publishers wait
+for a **quorum** of replicas to confirm — no Raft, no leader election, just Zenoh
+pub/sub fan-out as the replication transport.
 
 ## Architecture Overview
 
@@ -69,9 +76,11 @@ One batch broadcast serves all publishers. Cost is O(1) regardless of publisher 
 |----------|----------|
 | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) | Zenoh stable API foundation + what mitiflow builds on top |
 | [02_architecture.md](02_architecture.md) | Crate design, core types, feature flags, implementation phases |
-| [03_durability.md](03_durability.md) | Durability strategies, watermark stream protocol design |
-| [04_comparison.md](04_comparison.md) | Detailed comparison with Kafka, RabbitMQ, NATS, Pulsar, Redis Streams |
-| [05_kafka_compatibility.md](05_kafka_compatibility.md) | Kafka wire protocol gateway design, API mapping, implementation plan |
+| [03_durability.md](03_durability.md) | Durability strategies, watermark protocol, quorum confirmation |
+| [04_ordering.md](04_ordering.md) | Sequence ordering design: per-partition vs per-publisher vs per-(partition, publisher) |
+| [05_replication.md](05_replication.md) | Pub/sub-based storage replication without Raft |
+| [06_comparison.md](06_comparison.md) | Detailed comparison with Kafka, RabbitMQ, NATS, Pulsar, Redis Streams |
+| [07_kafka_compatibility.md](07_kafka_compatibility.md) | Kafka wire protocol gateway design, API mapping, implementation plan |
 
 ## Quick Start (Envisioned API)
 

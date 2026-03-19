@@ -95,13 +95,13 @@ async fn main() {
                 .heartbeat(HeartbeatMode::Disabled)
                 .build()
                 .expect("failed to build mitiflow config");
-            let producer = transport::mitiflow_transport::MitiflowProducer {
+            let producer = transport::mitiflow::MitiflowProducer {
                 session: pub_s,
                 topic: topic.clone(),
                 payload_size,
                 config: config.clone(),
             };
-            let consumer = transport::mitiflow_transport::MitiflowConsumer {
+            let consumer = transport::mitiflow::MitiflowConsumer {
                 session: sub_s,
                 topic,
                 config,

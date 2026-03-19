@@ -1,12 +1,15 @@
-# Durability Strategies
+# Durability & Watermark Protocol
 
-How `mitiflow` ensures events are never lost, without requiring every producer to maintain local storage.
+How mitiflow ensures events are never lost, without requiring every producer to
+maintain local storage.
 
 ---
 
 ## The Problem
 
-Zenoh's reliability pipeline is in-memory. If the producer process crashes after `put()` returns but before any subscriber has durably stored the event, the event is lost.
+Zenoh's reliability pipeline is in-memory. If the producer process crashes after
+`put()` returns but before any subscriber has durably stored the event, the event
+is lost.
 
 ```
 Producer                     Zenoh Transport              Event Store
@@ -37,71 +40,117 @@ Producer                     Zenoh Transport              Event Store
 
 Use `CongestionControl::Block` + publisher cache + Event Store recovery.
 
-The only loss scenario: **producer crash while Event Store is simultaneously unreachable**. The window is microseconds wide.
+The only loss scenario: **producer crash while Event Store is simultaneously
+unreachable**. The window is microseconds wide.
 
-**Use for:** UI updates, trace steps, status broadcasts, telemetry — any event where rare loss is acceptable.
+**Use for:** UI updates, trace steps, status broadcasts, telemetry — any event
+where rare loss is acceptable.
 
 ---
 
 ## Strategy B: Watermark Stream ⭐
 
-The primary innovation. The Event Store publishes batched commit progress; publishers subscribe and block until covered.
+The primary innovation. The Event Store publishes batched commit progress;
+publishers subscribe and block until covered.
+
+### Sequence Model
+
+Sequences are assigned **per (partition, publisher)** — each publisher maintains
+an independent monotonic counter for each partition it writes to. This ensures
+contiguous sequences within each stream without any coordination between
+publishers. See [04_ordering.md](04_ordering.md) for the design rationale.
 
 ### Protocol
 
 ```
 Time ──────────────────────────────────────────────────────>
 
-Producer        Event Store Watermark
-  │                  │
-  │ put(seq=100)     │
-  │─────────────────>│ persists seq 100
-  │                  │
-  │ put(seq=101)     │
-  │─────────────────>│ persists seq 101
-  │                  │
-  │                  │ [100ms tick]
-  │     watermark    │ put(watermark, {committed: 101, gaps: []})
-  │<─────────────────│
-  │                  │
-  │ "seq 100 ≤ 101   │
-  │  && 100 ∉ gaps"  │
-  │ → DURABLE ✓      │
+Publisher P1       Event Store
+  │                     │
+  │ put(seq=100)        │
+  │────────────────────>│ persists (p0, P1, 100)
+  │                     │
+  │ put(seq=101)        │
+  │────────────────────>│ persists (p0, P1, 101)
+  │                     │
+  │                     │ [100ms tick]
+  │     watermark       │ put(watermark, {
+  │<────────────────────│   publishers: {
+  │                     │     P1: { committed_seq: 101, gaps: [] },
+  │                     │     P2: { committed_seq: 42,  gaps: [38] }
+  │                     │   }
+  │                     │ })
+  │                     │
+  │ "my pub_id=P1,      │
+  │  seq 100 ≤ 101      │
+  │  && 100 ∉ gaps"     │
+  │ → DURABLE ✓         │
 ```
 
-### CommitWatermark Type
+### Watermark Types
 
 ```rust
+/// Per-publisher durability progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublisherWatermark {
+    /// Highest contiguous sequence durably stored for this publisher.
+    pub committed_seq: u64,
+    /// Sequence numbers below committed_seq that are still missing (gaps).
+    pub gaps: Vec<u64>,
+}
+
+/// Commit watermark broadcast by the Event Store.
+///
+/// Published periodically on `{key_prefix}/_watermark`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitWatermark {
-    /// Highest contiguous sequence durably stored
-    pub committed_seq: u64,
-    /// Sequences below committed_seq that are still missing
-    pub gaps: Vec<u64>,
-    /// Event Store wall-clock time
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Per-publisher durability progress.
+    pub publishers: HashMap<PublisherId, PublisherWatermark>,
+    /// Event Store wall-clock time.
+    pub timestamp: DateTime<Utc>,
+}
+
+impl CommitWatermark {
+    /// Check whether a specific sequence from a publisher is confirmed durable.
+    pub fn is_durable(&self, publisher_id: &PublisherId, seq: u64) -> bool {
+        self.publishers
+            .get(publisher_id)
+            .is_some_and(|pw| seq <= pw.committed_seq && !pw.gaps.contains(&seq))
+    }
 }
 ```
 
 ### Event Store Side
 
+The store tracks per-publisher gap state incrementally. On each `store()` call,
+it removes the seq from gaps (if present), extends the publisher's
+`highest_seen`, and advances `committed_seq` past any filled positions.
+
+Gaps are tracked using a `BTreeSet<u64>` per publisher — a sparse bitset that is
+O(1) memory when empty and O(log g) for insert/remove/contains where g is the
+gap count. In stable networks, gaps are rare, so the set stays near-empty.
+
 ```rust
-impl EventStore {
-    async fn watermark_loop(&self) {
-        let mut interval = tokio::time::interval(self.config.watermark_interval); // 100ms
-        loop {
-            interval.tick().await;
-            let wm = CommitWatermark {
-                committed_seq: self.backend.committed_seq(),
-                gaps: self.backend.gap_sequences(),
-                timestamp: chrono::Utc::now(),
-            };
-            self.session
-                .put(&self.watermark_key, serde_json::to_vec(&wm).unwrap())
-                .congestion_control(CongestionControl::Block)
-                .await
-                .ok();
-        }
+impl StorageBackend for FjallBackend {
+    fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark> {
+        // Returns current per-publisher committed_seq + gaps
+        // from incrementally-maintained in-memory state.
+    }
+}
+```
+
+The watermark task broadcasts every `watermark_interval` (default 100ms), or
+earlier if an event carries an urgency hint (`durable_urgency(0ms)` = immediate):
+
+```rust
+async fn run_watermark_task(...) {
+    loop {
+        // Wait for periodic tick or urgency deadline
+        let watermark = CommitWatermark {
+            publishers: backend.publisher_watermarks(),
+            timestamp: Utc::now(),
+        };
+        session.put(&watermark_key, serde_json::to_vec(&watermark)?).await?;
     }
 }
 ```
@@ -110,18 +159,22 @@ impl EventStore {
 
 ```rust
 impl EventPublisher {
-    pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<()> {
-        let seq = self.publish(event).await?;  // fast path
-        
-        tokio::time::timeout(self.config.durable_timeout, self.wait_for_watermark(seq))
-            .await
-            .map_err(|_| Error::DurabilityTimeout { seq })?
+    pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
+        let seq = self.publish(event).await?;
+
+        tokio::time::timeout(
+            self.config.durable_timeout,
+            self.wait_for_watermark(seq),
+        ).await.map_err(|_| Error::DurabilityTimeout { seq })??;
+
+        Ok(seq)
     }
-    
+
     async fn wait_for_watermark(&self, target: u64) -> Result<()> {
+        let my_id = &self.publisher_id;
         loop {
             let wm = self.watermark_rx.recv_async().await?;
-            if wm.committed_seq >= target && !wm.gaps.contains(&target) {
+            if wm.is_durable(my_id, target) {
                 return Ok(());
             }
         }
@@ -140,30 +193,80 @@ impl EventPublisher {
 
 ### Gap Handling
 
-If the Event Store's subscriber detects a missed sequence (via mitiflow's gap detector), it includes those in `gaps[]`. The publisher sees its sequence in the gap list and continues waiting. Once the Event Store recovers the gap (via `session.get()` to the publisher's cache queryable), the next watermark clears it.
+If the Event Store's subscriber detects a missed sequence (via mitiflow's gap
+detector), the gap appears in the publisher's `gaps` field. The publisher sees
+its sequence in the gap list and continues waiting. Once the Event Store
+recovers the gap (via `session.get()` to the publisher's cache queryable), the
+next watermark clears it.
 
-If the gap is **irrecoverable** (publisher cache evicted), the Event Store's miss handler can:
+If the gap is **irrecoverable** (publisher cache evicted), the Event Store's
+miss handler can:
 1. Log the gap via tracing
 2. Keep it in `gaps[]` permanently (publisher eventually times out with `DurabilityTimeout`)
 3. Optionally alert via a separate Zenoh topic
 
 ---
 
+## Quorum Watermarks (Replicated Stores)
+
+When multiple Event Store replicas subscribe to the same key expression (see
+[05_replication.md](05_replication.md)), each replica independently publishes its
+own watermark. The publisher waits for a **quorum** of replicas to confirm
+durability before considering an event durable.
+
+### Durability Levels
+
+| Level | Behavior | Equivalent |
+|-------|----------|------------|
+| `Durability::None` | Fire-and-forget, don't wait for any watermark | Kafka `acks=0` |
+| `Durability::One` | Wait for any 1 replica's watermark | Kafka `acks=1` |
+| `Durability::Quorum` | Wait for majority of replicas | Kafka `acks=all` + `min.insync.replicas` |
+| `Durability::All` | Wait for all known replicas | Strongest, highest latency |
+
+Each replica publishes its watermark on `{key_prefix}/_watermark/{replica_id}`.
+The publisher subscribes to `{key_prefix}/_watermark/*` and tracks the latest
+watermark from each replica:
+
+```rust
+struct QuorumTracker {
+    replicas: HashMap<ReplicaId, CommitWatermark>,
+    quorum: usize,
+}
+
+impl QuorumTracker {
+    fn is_durable(&self, publisher_id: &PublisherId, seq: u64) -> bool {
+        let confirmed = self.replicas.values()
+            .filter(|wm| wm.is_durable(publisher_id, seq))
+            .count();
+        confirmed >= self.quorum
+    }
+}
+```
+
+No Raft consensus, no leader election — just counting independent confirmations.
+See [05_replication.md](05_replication.md) for the full replication design,
+failure modes, and recovery protocol.
+
+---
+
 ## Strategy C: Inbox Pattern
 
-The producer writes to an inbox key expression that the Event Store subscribes to and persists **before** re-publishing to the main event stream.
+The producer writes to an inbox key expression that the Event Store subscribes
+to and persists **before** re-publishing to the main event stream.
 
 ```
 Producer → put("myapp/inbox/{event_id}", payload) → Event Store persists first
                                                    → Event Store re-publishes to "myapp/events/..."
 ```
 
-The Event Store becomes the authoritative publisher. Strongest guarantee, but changes the publish flow:
+The Event Store becomes the authoritative publisher. Strongest guarantee, but
+changes the publish flow:
 - Events go through store before consumers see them
 - Adds write latency
 - Event Store is on the critical path for all publishes
 
-**Use for:** financial transactions, audit trails — when zero loss is non-negotiable and the extra hop is acceptable.
+**Use for:** financial transactions, audit trails — when zero loss is
+non-negotiable and the extra hop is acceptable.
 
 ---
 
@@ -183,7 +286,7 @@ impl DurablePublisher {
         self.inner.publish(event).await?;      // to Zenoh
         Ok(())
     }
-    
+
     /// On startup, re-publish any events that weren't confirmed
     pub async fn recover(&self) -> Result<usize> {
         let unpublished = self.wal.replay_from(self.last_confirmed_seq()?)?;
@@ -207,6 +310,7 @@ Enabled via `feature = "wal"`.
 |-------------------|----------|--------|
 | Telemetry, UI updates | A (Accept gap) | `publisher.publish(&event)` |
 | Business events | B (Watermark) | `publisher.publish_durable(&event)` |
+| Business + HA | B + Quorum | `publisher.publish_durable_quorum(&event)` |
 | Financial / audit | C or D | Inbox or WAL |
 
 ---
@@ -217,5 +321,7 @@ Enabled via `feature = "wal"`.
 |-----------|---------|--------|
 | `watermark_interval` | 100ms | Lower = faster confirmation, more network traffic |
 | `durable_timeout` | 5s | How long `publish_durable()` waits before error |
+| `durable_urgency` | None | 0ms = immediate watermark on this event's arrival |
 | `cache_size` | 10,000 | Larger = longer recovery window, more memory |
 | `heartbeat` | Sporadic(1s) | Faster = quicker gap detection, more traffic |
+| `quorum` | 1 (single store) | Set to N/2+1 for replicated deployments |

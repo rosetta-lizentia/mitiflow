@@ -14,7 +14,7 @@ use zenoh::pubsub::Publisher;
 use zenoh::qos::CongestionControl;
 use zenoh::sample::Sample;
 
-use crate::attachment::encode_metadata;
+use crate::attachment::{NO_URGENCY, encode_metadata};
 use crate::config::{EventBusConfig, HeartbeatMode};
 #[cfg(feature = "store")]
 use crate::error::Error;
@@ -136,6 +136,7 @@ async fn run_cache_queryable_task(
                                         sample.seq,
                                         &sample.event_id,
                                         &sample.timestamp,
+                                        NO_URGENCY,
                                     ))
                                     .await
                                 {
@@ -270,7 +271,7 @@ impl EventPublisher {
         let key = format!("{}/{}", self.config.key_prefix, seq);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
-        self.put_payload(&key, bytes, seq, event_id, timestamp).await?;
+        self.put_payload(&key, bytes, seq, event_id, timestamp, NO_URGENCY).await?;
         Ok(seq)
     }
 
@@ -279,7 +280,7 @@ impl EventPublisher {
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
-        self.put_payload(key, bytes, seq, event_id, timestamp).await?;
+        self.put_payload(key, bytes, seq, event_id, timestamp, NO_URGENCY).await?;
         Ok(seq)
     }
 
@@ -288,7 +289,13 @@ impl EventPublisher {
     /// Raw-bytes variant of [`publish_durable`] — skips codec encoding.
     #[cfg(feature = "store")]
     pub async fn publish_bytes_durable(&self, bytes: Vec<u8>) -> Result<u64> {
-        let seq = self.publish_bytes(bytes).await?;
+        let urgency_ms = self.urgency_ms();
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let key = format!("{}/{}", self.config.key_prefix, seq);
+        let event_id = crate::types::EventId::new();
+        let timestamp = chrono::Utc::now();
+        self.put_payload(&key, bytes, seq, event_id, timestamp, urgency_ms)
+            .await?;
         self.wait_for_watermark(seq).await
     }
 
@@ -300,14 +307,14 @@ impl EventPublisher {
     pub async fn publish<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
         let key = format!("{}/{}", self.config.key_prefix, seq);
-        self.publish_inner(&key, event, seq).await?;
+        self.publish_inner(&key, event, seq, NO_URGENCY).await?;
         Ok(seq)
     }
 
     /// Publish an event to an explicit key expression (e.g., a partition key).
     pub async fn publish_to<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64> {
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        self.publish_inner(key, event, seq).await?;
+        self.publish_inner(key, event, seq, NO_URGENCY).await?;
         Ok(seq)
     }
 
@@ -324,11 +331,14 @@ impl EventPublisher {
     /// [`EventStore`]: crate::store::EventStore
     #[cfg(feature = "store")]
     pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
-        let seq = self.publish(event).await?;
+        let urgency_ms = self.urgency_ms();
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let key = format!("{}/{}", self.config.key_prefix, seq);
+        self.publish_inner(&key, event, seq, urgency_ms).await?;
         self.wait_for_watermark(seq).await
     }
 
-    /// Wait until the Event Store's watermark covers `seq`.
+    /// Wait until the Event Store's watermark covers `seq` for this publisher.
     #[cfg(feature = "store")]
     async fn wait_for_watermark(&self, seq: u64) -> Result<u64> {
         let watermark_tx = self
@@ -338,12 +348,13 @@ impl EventPublisher {
         // Subscribe before waiting — each caller gets its own receiver.
         let mut rx = watermark_tx.subscribe();
         let timeout_dur = self.config.durable_timeout;
+        let my_id = self.publisher_id;
 
         let result = tokio::time::timeout(timeout_dur, async {
             loop {
                 match rx.recv().await {
                     Ok(wm) => {
-                        if wm.is_durable(seq) {
+                        if wm.is_durable(&my_id, seq) {
                             return Ok(seq);
                         }
                     }
@@ -371,10 +382,11 @@ impl EventPublisher {
         key: &str,
         event: &Event<T>,
         seq: u64,
+        urgency_ms: u16,
     ) -> Result<()> {
         // Encode only the user payload — metadata travels in the attachment.
         let payload = self.config.codec.encode(&event.payload)?;
-        self.put_payload(key, payload, seq, event.id, event.timestamp).await
+        self.put_payload(key, payload, seq, event.id, event.timestamp, urgency_ms).await
     }
 
     /// Shared inner: attach metadata, cache, and put to Zenoh.
@@ -386,8 +398,9 @@ impl EventPublisher {
         seq: u64,
         event_id: crate::types::EventId,
         timestamp: chrono::DateTime<chrono::Utc>,
+        urgency_ms: u16,
     ) -> Result<()> {
-        let attachment = encode_metadata(&self.publisher_id, seq, &event_id, &timestamp);
+        let attachment = encode_metadata(&self.publisher_id, seq, &event_id, &timestamp, urgency_ms);
 
         // Insert into bounded cache (evict oldest if full).
         // Skip entirely when cache_size == 0 to avoid the async RwLock and payload clone.
@@ -413,6 +426,15 @@ impl EventPublisher {
 
         trace!(seq, publisher_id = %self.publisher_id, key, "published event");
         Ok(())
+    }
+
+    /// Compute urgency_ms from the configured `durable_urgency` duration.
+    /// Clamped to `NO_URGENCY - 1` (65 534 ms) because `NO_URGENCY` (0xFFFF)
+    /// is the sentinel for "no urgency".
+    #[cfg(feature = "store")]
+    fn urgency_ms(&self) -> u16 {
+        let ms = self.config.durable_urgency.as_millis();
+        ms.min((NO_URGENCY - 1) as u128) as u16
     }
 
     /// Access the Zenoh session (for advanced use cases like durable publish).

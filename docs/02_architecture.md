@@ -14,10 +14,12 @@ mitiflow/
 │   ├── config.rs             # EventBusConfig (builder pattern)
 │   ├── event.rs              # Event<T> envelope
 │   ├── error.rs              # Error types
+│   ├── types.rs              # PublisherId, EventId
+│   ├── codec.rs              # Pluggable serialization (JSON, bincode, etc.)
+│   ├── attachment.rs          # Binary metadata encoding for Zenoh attachments
 │   │
 │   ├── publisher/
-│   │   ├── mod.rs            # EventPublisher (publisher + seq + cache queryable)
-│   │   └── durable.rs        # DurablePublisher (feature = "wal")
+│   │   └── mod.rs            # EventPublisher (publisher + seq + cache queryable)
 │   │
 │   ├── subscriber/
 │   │   ├── mod.rs            # EventSubscriber (subscriber + gap detection)
@@ -26,9 +28,10 @@ mitiflow/
 │   │
 │   ├── store/                # feature = "store"
 │   │   ├── mod.rs            # EventStore (sidecar process)
-│   │   ├── backend.rs        # StorageBackend trait + fjall impl
+│   │   ├── backend.rs        # StorageBackend trait + FjallBackend
 │   │   ├── query.rs          # Selector → QueryFilters parsing
-│   │   └── watermark.rs      # CommitWatermark type + broadcast logic
+│   │   ├── runner.rs         # Background tasks (subscribe, queryable, watermark, gc)
+│   │   └── watermark.rs      # CommitWatermark + PublisherWatermark types
 │   │
 │   ├── partition/            # feature = "partition"
 │   │   ├── mod.rs            # PartitionManager
@@ -39,15 +42,17 @@ mitiflow/
 │
 ├── examples/
 │   ├── basic_pubsub.rs       # Minimal publish + subscribe
-│   ├── event_store.rs        # Running the Event Store sidecar
+│   ├── consumer_groups.rs    # Consumer group with rebalancing
+│   ├── dead_letter_queue.rs  # DLQ poison message handling
 │   ├── durable_publish.rs    # Watermark-confirmed publish
-│   └── partitioned.rs        # Consumer group with rebalancing
+│   └── event_store.rs        # Running the Event Store sidecar
 │
 └── tests/
+    ├── dedup.rs              # Deduplication
+    ├── dlq.rs                # Dead letter queue
+    ├── partition.rs          # Rebalance on join/leave
     ├── reliability.rs        # Ordering + gap recovery
-    ├── store.rs              # Persistence + query
-    ├── watermark.rs          # Durable publish ACK flow
-    └── partition.rs          # Rebalance on join/leave
+    └── store.rs              # Persistence + query + watermark
 ```
 
 ## 2. Feature Flags
@@ -121,7 +126,7 @@ pub struct EventBusConfig {
     // Store (feature = "store")
     pub store_key_prefix: Option<String>,            // default: "{key_prefix}/store"
     pub store_path: Option<PathBuf>,                 // fjall directory path
-    pub watermark_key: Option<String>,               // default: "{key_prefix}/$watermark"
+    pub watermark_key: Option<String>,               // default: "{key_prefix}/_watermark"
     pub watermark_interval: Duration,                // default: 100ms
     pub durable_timeout: Duration,                   // default: 5s
 
@@ -187,16 +192,17 @@ impl EventSubscriber {
 ```rust
 pub struct EventStore {
     session: Session,
-    backend: Box<dyn StorageBackend>,
+    backend: Arc<dyn StorageBackend>,
     config: EventBusConfig,
+    cancel: CancellationToken,
 }
 
 pub trait StorageBackend: Send + Sync {
     fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()>;
-    fn query(&self, filters: QueryFilters) -> Result<Vec<StoredEvent>>;
-    fn committed_seq(&self) -> u64;
-    fn gap_sequences(&self) -> Vec<u64>;
+    fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>>;
+    fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark>;
     fn gc(&self, older_than: chrono::DateTime<chrono::Utc>) -> Result<usize>;
+    fn compact(&self) -> Result<CompactionStats>;
 }
 
 impl EventStore {
@@ -243,7 +249,7 @@ impl PartitionManager {
 - Example: `basic_pubsub.rs`
 
 ### Phase 2: Event Store + Watermark
-- `StorageBackend` trait with `committed_seq()` / `gap_sequences()`
+- `StorageBackend` trait with `publisher_watermarks()`
 - `FjallBackend` implementation
 - `CommitWatermark` type
 - `EventStore`: subscribe + queryable + watermark loops

@@ -79,6 +79,12 @@ pub struct EventBusConfig {
     /// How long `publish_durable()` waits for watermark confirmation.
     #[cfg(feature = "store")]
     pub durable_timeout: Duration,
+    /// Latency budget for durable publishes. The Event Store will try to
+    /// broadcast a watermark within this duration of receiving an urgent event.
+    /// `Duration::ZERO` means broadcast immediately. Defaults to
+    /// `watermark_interval` (no acceleration).
+    #[cfg(feature = "store")]
+    pub durable_urgency: Duration,
 
     // -- Partition (feature = "partition") --
     /// Number of partitions for the hash ring.
@@ -145,6 +151,8 @@ pub struct EventBusConfigBuilder {
     watermark_interval: Duration,
     #[cfg(feature = "store")]
     durable_timeout: Duration,
+    #[cfg(feature = "store")]
+    durable_urgency: Duration,
     #[cfg(feature = "partition")]
     num_partitions: u32,
     #[cfg(feature = "partition")]
@@ -175,6 +183,8 @@ impl EventBusConfigBuilder {
             watermark_interval: Duration::from_millis(100),
             #[cfg(feature = "store")]
             durable_timeout: Duration::from_secs(5),
+            #[cfg(feature = "store")]
+            durable_urgency: Duration::from_millis(100),
             #[cfg(feature = "partition")]
             num_partitions: 64,
             #[cfg(feature = "partition")]
@@ -266,6 +276,19 @@ impl EventBusConfigBuilder {
         self
     }
 
+    /// Set the latency budget for durable publishes.
+    ///
+    /// The Event Store will try to broadcast a watermark within this duration
+    /// of receiving an urgent event, rather than waiting for the next periodic
+    /// tick. Clamped to 65 535 ms (≈ 65 s) on the wire.
+    ///
+    /// Defaults to `watermark_interval`.
+    #[cfg(feature = "store")]
+    pub fn durable_urgency(mut self, urgency: Duration) -> Self {
+        self.durable_urgency = urgency;
+        self
+    }
+
     #[cfg(feature = "partition")]
     pub fn num_partitions(mut self, n: u32) -> Self {
         self.num_partitions = n;
@@ -317,6 +340,8 @@ impl EventBusConfigBuilder {
             watermark_interval: self.watermark_interval,
             #[cfg(feature = "store")]
             durable_timeout: self.durable_timeout,
+            #[cfg(feature = "store")]
+            durable_urgency: self.durable_urgency,
             #[cfg(feature = "partition")]
             num_partitions: self.num_partitions,
             #[cfg(feature = "partition")]

@@ -140,11 +140,14 @@ fn run_store_queries(store: &EventStore) -> mitiflow::Result<()> {
 
 /// Phase 6-7: Watermark, compaction, and GC.
 fn run_maintenance(store: &EventStore) -> mitiflow::Result<()> {
-    println!(
-        "\nWatermark: committed_seq={}  gaps={:?}",
-        store.backend().committed_seq(),
-        store.backend().gap_sequences()
-    );
+    let wms = store.backend().publisher_watermarks();
+    println!("\nWatermarks ({} publishers):", wms.len());
+    for (pub_id, pw) in &wms {
+        println!(
+            "  {pub_id}: committed_seq={}  gaps={:?}",
+            pw.committed_seq, pw.gaps
+        );
+    }
 
     let stats = store.backend().compact()?;
     println!(

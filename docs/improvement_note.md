@@ -15,24 +15,6 @@
 
 4. **`extract_event_meta` on every delivery** — full payload deserialization just to extract `id` + `timestamp`. Fix: either embed a fixed header (like the 24-byte transport pattern in FastBench) or accept that `id`/`timestamp` come from the attachment instead of inside the payload.
 
-## Partition-Level Ordering (multi-server / Kafka compat)
+## Partition-Level Ordering
 
-**Problem:** mitiflow sequences are per-publisher, not per-partition. If two servers both write to `myapp/events/p0`, there is no total order across their events (subscriber sees two independent seq streams). Kafka's partition ordering is maintained by the broker, not producers.
-
-**Three approaches:**
-
-1. **Gateway as broker (Kafka compat — current shape is already correct)**
-   - `mitiflow-gateway` owns one `EventPublisher` per partition, serializing writes from multiple Kafka clients.
-   - Achieves partition-level total order because there is a single `AtomicU64` per partition in the gateway process.
-   - For HA: need partition leader election across gateway instances (Zenoh liveliness is suitable). Without this, only one gateway instance may own a given partition.
-
-2. **Single publisher per partition (native multi-server)**
-   - Extend `PartitionManager` to the producer side: each server claims partitions via liveliness and creates one `EventPublisher` per owned partition.
-   - At most one server writes to each partition at any time — partition-level ordering holds.
-   - Rebalancing on server join/leave re-assigns partitions (liveliness already handles this).
-
-3. **Event Store as offset assigner (long-term)**
-   - Decouple per-publisher seq (gap detection only) from consumer-visible offset (per-partition, assigned by Event Store on persist).
-   - Matches Kafka's model exactly: producer seq = idempotency key, broker (Event Store) assigns partition offset.
-   - Consumers query Event Store by partition offset; watermark carries partition offsets, not publisher seqs.
-   - Higher complexity but enables true multi-writer partition ordering without routing constraints.
+See [04_ordering.md](04_ordering.md) for the full design discussion and recommendation (Approach C: per-(partition, publisher) sequences).

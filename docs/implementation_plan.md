@@ -2,7 +2,7 @@
 
 Detailed implementation plan for the `mitiflow` crate, with test validation and benchmark strategies.
 
-> **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, and [05_kafka_compatibility.md](05_kafka_compatibility.md) for the gateway design.
+> **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_ordering.md](04_ordering.md) for sequence design, and [07_kafka_compatibility.md](07_kafka_compatibility.md) for the gateway design.
 
 ---
 
@@ -97,7 +97,7 @@ Core publisher combining sequencing, caching, and heartbeat. Implements the patt
 | Component | Responsibility | Reference |
 |-----------|---------------|-----------|
 | `Publisher` (Zenoh) | Core `put()` with `CongestionControl::Block` | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.1 |
-| `AtomicU64 next_seq` | Monotonic per-publisher sequence counter | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.1 |
+| `HashMap<u32, AtomicU64>` partition_seqs | Per-partition monotonic sequence counter (see [04_ordering.md](04_ordering.md) Approach C) | — |
 | `VecDeque<CachedSample>` | Bounded in-memory cache for recovery | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.3 |
 | `Queryable` (cache) | Answers `session.get()` from subscribers on gap | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.3 |
 | Heartbeat loop | Periodic sequence beacon for stale connection detection | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.4 |
@@ -114,8 +114,15 @@ EventPublisher::new() spawns:
 
 **Public API:**
 - `publish(&self, event: &Event<T>) -> Result<u64>` — fast path, returns assigned seq
-- `publish_to(&self, key: &str, event: &Event<T>) -> Result<u64>` — explicit partition key
+- `publish_to(&self, key: &str, event: &Event<T>) -> Result<u64>` — explicit partition key (seq is per this partition)
 - `publish_durable(&self, event: &Event<T>) -> Result<()>` — added in Phase 2
+
+> **Current state:** The publisher still uses a single global `AtomicU64` counter
+> instead of per-partition counters. This works as long as each publisher writes
+> to one partition, but breaks with multi-partition publishing (phantom gaps in
+> watermark tracking). See [04_ordering.md](04_ordering.md) for the full
+> analysis. Migration to per-partition counters is tracked in
+> [TODO.md](TODO.md).
 
 #### 2.1.5 EventSubscriber — `src/subscriber/mod.rs`
 
@@ -175,8 +182,7 @@ Pluggable storage interface. Design from [02_architecture.md](02_architecture.md
 pub trait StorageBackend: Send + Sync {
     fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()>;
     fn query(&self, filters: QueryFilters) -> Result<Vec<StoredEvent>>;
-    fn committed_seq(&self) -> u64;
-    fn gap_sequences(&self) -> Vec<u64>;
+    fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark>;
     fn gc(&self, older_than: DateTime<Utc>) -> Result<usize>;
     fn compact(&self) -> Result<CompactionStats>;
 }
@@ -186,8 +192,8 @@ pub trait StorageBackend: Send + Sync {
 
 | Partition (fjall) | Key | Value | Purpose |
 |-------------------|-----|-------|---------|
-| `events` | `(partition: u32, seq: u64)` | `StoredEvent` bytes | Primary event storage |
-| `metadata` | `"committed_seq"` / `"gaps"` | `u64` / `Vec<u64>` | Watermark state |
+| `events` | `(partition: u32, publisher_id: Uuid, seq: u64)` — 28 bytes | `StoredEvent` bytes | Primary event storage |
+| `metadata` | `"wm:{publisher_id}"` | `PublisherWatermark` (committed_seq + gaps) | Per-publisher watermark state |
 | `keys` | `key_expr: &str` | `(partition, seq)` | Key → event lookup (for compaction) |
 
 fjall uses a WAL + LSM-tree with configurable `flush_workers` and `compaction_workers`. Writes are durable after WAL append. Its LSM compaction runs in the background, giving consistently high write throughput compared to B-tree stores.
@@ -198,15 +204,21 @@ Watermark type and broadcast logic. Protocol from [03_durability.md](03_durabili
 
 ```rust
 pub struct CommitWatermark {
-    pub committed_seq: u64,     // highest contiguous seq durably stored
-    pub gaps: Vec<u64>,          // seqs below committed_seq still missing
+    pub publishers: HashMap<PublisherId, PublisherWatermark>,
     pub timestamp: DateTime<Utc>,
+}
+
+pub struct PublisherWatermark {
+    pub committed_seq: u64,     // highest contiguous seq durably stored for this publisher
+    pub gaps: Vec<u64>,          // seqs below committed_seq still missing
 }
 ```
 
+Watermarks are tracked per publisher — see [03_durability.md](03_durability.md) and [04_ordering.md](04_ordering.md) for the design rationale.
+
 **Broadcast loop** (runs inside EventStore):
 1. Every `watermark_interval` (default 100ms), compute `CommitWatermark` from backend state
-2. Publish to `{key_prefix}/$watermark` via Zenoh `put()` with `CongestionControl::Block`
+2. Publish to `{key_prefix}/_watermark` via Zenoh `put()` with `CongestionControl::Block`
 3. All publishers subscribe to this key and check if their pending seqs are covered
 
 **Why watermark > per-event ACK:** See [03_durability.md](03_durability.md) § B "Why Watermark > Per-Event ACK" — O(1) network cost regardless of publisher count vs O(N × event_rate) for per-event queries.
@@ -239,7 +251,7 @@ Supported filters:
 - `limit` — max results
 - Custom payload field filters (app-specific, via `run_with_filter()`)
 
-This is a differentiating feature vs Kafka — see [04_comparison.md](04_comparison.md) § 3 "App-specific queries" row.
+This is a differentiating feature vs Kafka — see [06_comparison.md](06_comparison.md) § 3 "App-specific queries" row.
 
 #### 2.2.5 Durable Publish — `src/publisher/mod.rs` (modification)
 
@@ -307,7 +319,7 @@ On membership change (worker join or leave detected via liveliness):
 5. Update Zenoh subscriber key expression to match new assignment
 ```
 
-**Cooperative rebalance:** Only affected partitions pause — other partitions continue processing. This is an improvement over Kafka's "stop the world" rebalance (see [05_kafka_compatibility.md](05_kafka_compatibility.md) § 6).
+**Cooperative rebalance:** Only affected partitions pause — other partitions continue processing. This is an improvement over Kafka's "stop the world" rebalance (see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 6).
 
 ---
 
@@ -364,11 +376,20 @@ DLQ events are stored as regular events in a separate key-space, queryable by th
 
 > Kafka wire protocol compatibility layer.
 >
-> **Foundation:** Full design in [05_kafka_compatibility.md](05_kafka_compatibility.md). This is a **separate binary crate** (`mitiflow-gateway`), not part of the core library.
+> **Foundation:** Full design in [07_kafka_compatibility.md](07_kafka_compatibility.md). This is a **separate binary crate** (`mitiflow-gateway`), not part of the core library.
+>
+> **Architectural note:** The gateway acts as a Kafka-compatible broker — it
+> serializes writes per partition to assign monotonic offsets, which is
+> inherently brokered coordination. This is a conscious trade-off: native
+> mitiflow clients bypass the gateway entirely and benefit from the brokerless
+> per-(partition, publisher) model, while Kafka clients get the familiar
+> offset-based API through the gateway at the cost of a serialization point.
+> See [04_ordering.md](04_ordering.md) § "The Brokerless Constraint" for why
+> total partition order cannot be achieved without coordination.
 
 #### 2.5.1 Gateway Architecture
 
-As specified in [05_kafka_compatibility.md](05_kafka_compatibility.md) § 2:
+As specified in [07_kafka_compatibility.md](07_kafka_compatibility.md) § 2:
 
 ```
 mitiflow-gateway/
@@ -391,13 +412,13 @@ mitiflow-gateway/
 
 **Phase 5a: Read/Write (MVP)**
 - 6 API keys: Produce, Fetch, Metadata, OffsetCommit, OffsetFetch, ListOffsets
-- acks mapping: `acks=0` → fire-and-forget, `acks=1` → Block, `acks=all` → `publish_durable()` — see [05_kafka_compatibility.md](05_kafka_compatibility.md) § 4
-- Fetch: live stream via `EventSubscriber` + historical replay via Event Store queryable — see [05_kafka_compatibility.md](05_kafka_compatibility.md) § 5
+- acks mapping: `acks=0` → fire-and-forget, `acks=1` → Block, `acks=all` → `publish_durable()` — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 4
+- Fetch: live stream via `EventSubscriber` + historical replay via Event Store queryable — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 5
 - Validation: `rdkafka` Rust client smoke test
 
 **Phase 5b: Consumer Groups**
 - 5 API keys: FindCoordinator, JoinGroup, SyncGroup, Heartbeat, LeaveGroup
-- Maps to `PartitionManager` — see [05_kafka_compatibility.md](05_kafka_compatibility.md) § 6
+- Maps to `PartitionManager` — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 6
 - Validation: `kafka-console-consumer` with `--group`
 
 **Phase 5c: Admin + Polish**
@@ -433,8 +454,8 @@ Located in `mitiflow/tests/`, run with `cargo test -p mitiflow`:
 |------|----------|
 | `test_fjall_store_and_query` | Store event → query by seq range → returns correct events |
 | `test_fjall_query_by_time` | Store events with different timestamps → query by time range |
-| `test_fjall_committed_seq` | `committed_seq()` returns highest contiguous stored seq |
-| `test_fjall_gap_sequences` | Missing seqs appear in `gap_sequences()` |
+| `test_fjall_committed_seq` | `publisher_watermarks()` returns correct per-publisher committed_seq |
+| `test_fjall_gap_sequences` | Missing seqs appear in per-publisher gaps |
 | `test_fjall_gc` | GC removes events older than threshold |
 | `test_fjall_compact` | Compaction keeps only latest event per key |
 | `test_query_filters_parsing` | Zenoh selector string → `QueryFilters` struct |
@@ -562,7 +583,7 @@ mitiflow-bench/
 | `bench_mitiflow_vs_kafka_throughput` | 64B payload, 10s sustained | msgs/s side-by-side |
 | `bench_mitiflow_vs_kafka_durable` | `acks=all` / `publish_durable()` | confirmed events/s |
 
-Expected results based on benchmarks cited in [04_comparison.md](04_comparison.md) § 2:
+Expected results based on benchmarks cited in [06_comparison.md](06_comparison.md) § 2:
 - **Latency:** mitiflow 100-1000× lower (µs vs ms)
 - **Throughput:** mitiflow 5-10× higher (peer mode) for small payloads
 - **Durable latency:** mitiflow dominated by `watermark_interval` (~100ms) vs Kafka ISR (~5-50ms with replication)

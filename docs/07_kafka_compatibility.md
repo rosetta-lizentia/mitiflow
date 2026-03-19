@@ -68,9 +68,9 @@ The gateway is a **separate binary** (`mitiflow-gateway`), not part of the core 
 | **Producer** | `EventPublisher` |
 | **Consumer** | `EventSubscriber` |
 | **Consumer Group** | `PartitionManager` (L3) |
-| **Offset** | Event Store sequence number |
-| **ISR / Replication** | Zenoh fan-out to Event Store replicas |
-| **Committed Offset** | `CommitWatermark.committed_seq` |
+| **Offset** | Per-(partition, publisher) sequence number; gateway can assign per-partition total order (see [04_ordering.md](04_ordering.md)) |
+| **ISR / Replication** | Zenoh pub/sub fan-out to store replicas (see [05_replication.md](05_replication.md)) |
+| **Committed Offset** | `CommitWatermark.publishers[id].committed_seq` (per-publisher; see [03_durability.md](03_durability.md)) |
 | **Log Compaction** | `StorageBackend::compact()` |
 
 ### 3.2 API Key Coverage (Priority Order)
@@ -158,7 +158,7 @@ Kafka Client                  Gateway                       mitiflow
 | `acks=1` | `CongestionControl::Block`, wait for Zenoh acceptance | At-least-once (in-network) |
 | `acks=all` | `publish_durable()` — wait for watermark | Confirmed durable |
 
-This mapping is natural: `acks=all` in Kafka means "wait until all ISR replicas have the data." In mitiflow, `publish_durable()` means "wait until Event Store confirmed persistence via watermark." Same semantics, different mechanism.
+This mapping is natural: `acks=all` in Kafka means "wait until all ISR replicas have the data." In mitiflow, `publish_durable()` means "wait until Event Store confirmed persistence via watermark." With quorum watermarks (see [03_durability.md](03_durability.md)), this extends to multi-replica durability — same semantics, different mechanism.
 
 ---
 
@@ -185,11 +185,11 @@ Kafka Client                  Gateway                       mitiflow
     │  high_watermark}           │                              │
     │<───────────────────────────│                              │
     │                            │  high_watermark =            │
-    │                            │    CommitWatermark            │
-    │                            │      .committed_seq          │
+    │                            │    min(publishers[*]          │
+    │                            │      .committed_seq)         │
 ```
 
-**High Watermark mapping:** Kafka's `high_watermark` in FetchResponse = mitiflow's `CommitWatermark.committed_seq`. This is a direct semantic match — both mean "the highest offset confirmed durable."
+**High Watermark mapping:** Kafka exposes a single `high_watermark` per partition. mitiflow tracks `committed_seq` per publisher (see [03_durability.md](03_durability.md)). The gateway derives the partition-level high watermark as the minimum `committed_seq` across all publishers for that partition — guaranteeing all events up to that offset are durable. When the gateway itself is the sole publisher per partition (see § 2 architecture), this simplifies to a single sequence and the mapping is 1:1.
 
 ---
 
@@ -290,13 +290,49 @@ kafka-topics --bootstrap-server mitiflow-gateway:9092 \
 
 Under the hood:
 - `--topic orders` → key expression `app/events/orders/p{0..15}`
-- `--replication-factor 3` → 3 Event Store replicas subscribing per partition
+- `--replication-factor 3` → 3 Event Store replicas subscribing per partition (see [05_replication.md](05_replication.md))
 - `--from-beginning` → Event Store query from seq 0
 - Consumer group → liveliness-driven PartitionManager
 
 ---
 
-## 9. Limitations & Honest Gaps
+## 9. The Broker Trade-Off
+
+The gateway is, architecturally, a **broker**. It serializes writes per partition
+to assign monotonic Kafka-compatible offsets — the same coordination that Kafka
+partition leaders perform. This is an inherent requirement: Kafka clients expect
+a single offset space per partition, and producing that requires a serialization
+point (see [04_ordering.md](04_ordering.md) § "The Brokerless Constraint").
+
+This means the gateway does **not** share mitiflow's core brokerless property.
+Native mitiflow clients bypass the gateway and get zero-coordination
+per-(partition, publisher) sequences. Kafka clients get familiar offset semantics
+at the cost of a centralized write path through the gateway.
+
+**What you gain:**
+- Ecosystem access (Kafka Connect, ksqlDB, any `librdkafka` client)
+- Migration path for teams already on Kafka
+- Multi-language support without writing native mitiflow SDKs
+
+**What you lose:**
+- The gateway becomes a SPOF per partition (needs leader election for HA — same problem as Kafka)
+- Write latency increases (client → gateway → Zenoh, vs client → Zenoh directly)
+- Throughput bottlenecked by gateway's per-partition serialization
+
+**When to skip the gateway:**
+- Green-field projects that can use the native Rust/Zenoh API
+- Ultra-low-latency paths where the gateway hop is unacceptable
+- Deployments where per-publisher ordering is sufficient (most event sourcing, IoT, telemetry)
+
+The gateway is an **interop layer**, not the primary API. Investing heavily in
+gateway HA (leader election, partition failover) essentially rebuilds Kafka's
+coordination plane. For most mitiflow deployments, the native API is the right
+choice, and the gateway exists for the cases where Kafka client compatibility
+is a hard requirement.
+
+---
+
+## 10. Limitations & Honest Gaps
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -314,7 +350,7 @@ Under the hood:
 
 ---
 
-## 10. Prior Art
+## 11. Prior Art
 
 | Project | Language | Storage | Kafka Compatibility |
 |---------|----------|---------|-------------------|

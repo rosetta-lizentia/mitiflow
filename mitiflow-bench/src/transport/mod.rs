@@ -2,7 +2,7 @@
 
 pub mod zenoh_raw;
 pub mod zenoh_advanced;
-pub mod mitiflow_transport;
+pub mod mitiflow;
 
 #[cfg(feature = "kafka")]
 pub mod kafka;

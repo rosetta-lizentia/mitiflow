@@ -85,7 +85,7 @@ fn fjall_committed_seq_contiguous() {
         backend.store(&key, &payload, meta).unwrap();
     }
 
-    assert_eq!(backend.committed_seq(), 2);
+    assert_eq!(backend.publisher_watermarks()[&pub_id].committed_seq, 2);
 }
 
 #[test]
@@ -108,8 +108,9 @@ fn fjall_gaps_detected() {
         backend.store(&key, &payload, meta).unwrap();
     }
 
-    let gaps = backend.gap_sequences();
-    assert_eq!(gaps, vec![2]);
+    let wms = backend.publisher_watermarks();
+    let pw = &wms[&pub_id];
+    assert_eq!(pw.gaps, vec![2]);
 }
 
 #[test]
@@ -293,11 +294,17 @@ async fn event_store_persists_and_publishes_watermark() {
     // Wait for the store to persist and publish a watermark.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // The store's backend should have committed_seq >= some value.
-    let committed = store.backend().committed_seq();
+    // The store's backend should have committed some events for the publisher.
+    let wms = store.backend().publisher_watermarks();
     assert!(
-        committed >= 1,
-        "store should have committed some events, got {committed}"
+        !wms.is_empty(),
+        "store should have tracked at least one publisher"
+    );
+    // At least one publisher should have committed_seq >= 1.
+    let max_committed = wms.values().map(|pw| pw.committed_seq).max().unwrap_or(0);
+    assert!(
+        max_committed >= 1,
+        "store should have committed some events, got {max_committed}"
     );
 
     let stored = store.backend().query(&QueryFilters::default()).unwrap();
@@ -318,7 +325,8 @@ async fn event_store_persists_and_publishes_watermark() {
 
     let wm: mitiflow::store::CommitWatermark =
         serde_json::from_slice(&wm_sample.payload().to_bytes()).unwrap();
-    assert!(wm.committed_seq >= 1, "watermark should cover events");
+    let max_committed = wm.publishers.values().map(|pw| pw.committed_seq).max().unwrap_or(0);
+    assert!(max_committed >= 1, "watermark should cover events");
 
     store.shutdown();
     drop(publisher);
