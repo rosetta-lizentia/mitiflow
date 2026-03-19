@@ -61,30 +61,6 @@ counter and watermark lookup need changes.
 
 ---
 
-## Scalability Improvements
-
-**Ref:** [improvement_note.md](improvement_note.md)
-
-- [ ] **Shard event processing** — the store's single `tokio::spawn` loop
-      serializes all publishers' samples. Shard by `pub_id % N` into N worker
-      tasks, each owning its own `GapDetector` slice.
-
-- [ ] **Eliminate per-sample write lock** — `GapDetector` is behind
-      `Arc<RwLock>` shared between the main task and the heartbeat task. Since
-      the main task is single-threaded, send heartbeat beacons into a channel
-      and process them inline as `&mut GapDetector`.
-
-- [x] **Dead publisher eviction** — superseded by publisher lifecycle protocol
-      (ACTIVE → SUSPECTED → DRAINING → ARCHIVED → GC).
-      See [08_replay_ordering.md](08_replay_ordering.md) § Publisher Lifecycle.
-
-- [ ] **Avoid full payload deser for metadata** — `extract_event_meta`
-      deserializes the entire payload to get `id` + `timestamp`. Since these
-      already travel in the Zenoh attachment, stop deserializing the payload in
-      the store's hot path.
-
----
-
 ## Kafka Gateway
 
 **Status:** Stub only (`main.rs` prints "not yet implemented")
