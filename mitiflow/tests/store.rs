@@ -1,5 +1,7 @@
 //! Integration tests for the FjallBackend and EventStore.
 
+mod common;
+
 use std::time::Duration;
 
 use chrono::Utc;
@@ -8,19 +10,13 @@ use serde::{Deserialize, Serialize};
 use mitiflow::store::FjallBackend;
 use mitiflow::store::backend::{EventMetadata, StorageBackend};
 use mitiflow::store::query::QueryFilters;
-use mitiflow::types::PublisherId;
+use mitiflow::types::{EventId, PublisherId};
 use mitiflow::{Event, EventBusConfig, EventPublisher, EventStore, HeartbeatMode};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-struct TestPayload {
-    value: u64,
-}
+use common::TestPayload;
 
 fn temp_dir(name: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(&format!("mitiflow_test_{name}_"))
-        .tempdir()
-        .expect("failed to create temp dir")
+    common::temp_dir(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -39,6 +35,7 @@ fn fjall_store_and_query() {
         let meta = EventMetadata {
             seq,
             publisher_id: pub_id,
+            event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
         };
@@ -81,6 +78,7 @@ fn fjall_committed_seq_contiguous() {
         let meta = EventMetadata {
             seq,
             publisher_id: pub_id,
+            event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
         };
@@ -103,6 +101,7 @@ fn fjall_gaps_detected() {
         let meta = EventMetadata {
             seq,
             publisher_id: pub_id,
+            event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
         };
@@ -130,6 +129,7 @@ fn fjall_gc_removes_old_events() {
             EventMetadata {
                 seq: 0,
                 publisher_id: pub_id,
+                event_id: EventId::new(),
                 timestamp: old_time,
                 key_expr: "test/old".to_string(),
             },
@@ -144,6 +144,7 @@ fn fjall_gc_removes_old_events() {
             EventMetadata {
                 seq: 1,
                 publisher_id: pub_id,
+                event_id: EventId::new(),
                 timestamp: new_time,
                 key_expr: "test/new".to_string(),
             },
@@ -176,6 +177,7 @@ fn fjall_compact_keeps_latest_per_key() {
             EventMetadata {
                 seq: 0,
                 publisher_id: pub_id,
+                event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
             },
@@ -189,6 +191,7 @@ fn fjall_compact_keeps_latest_per_key() {
             EventMetadata {
                 seq: 1,
                 publisher_id: pub_id,
+                event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
             },
@@ -203,6 +206,7 @@ fn fjall_compact_keeps_latest_per_key() {
             EventMetadata {
                 seq: 2,
                 publisher_id: pub_id,
+                event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/2".to_string(),
             },
@@ -231,6 +235,7 @@ fn fjall_seq_filter_range() {
         let meta = EventMetadata {
             seq,
             publisher_id: pub_id,
+            event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
         };

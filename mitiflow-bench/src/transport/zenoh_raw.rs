@@ -1,7 +1,5 @@
 //! Raw Zenoh pub/sub transport (best-effort, no sequencing).
 
-use std::sync::Arc;
-
 use lightbench::{ConsumerRecorder, ConsumerWork, ProducerWork, now_unix_ns_estimate};
 use zenoh::Session;
 use zenoh::qos::CongestionControl;
@@ -14,13 +12,13 @@ use crate::{build_payload, extract_timestamp};
 /// Raw Zenoh producer.
 #[derive(Clone)]
 pub struct ZenohProducer {
-    pub session: Arc<Session>,
+    pub session: Session,
     pub topic: String,
     pub payload_size: usize,
 }
 
 pub struct ZenohProducerState {
-    session: Arc<Session>,
+    session: Session,
     topic: String,
     payload_size: usize,
 }
@@ -50,7 +48,7 @@ impl ProducerWork for ZenohProducer {
 /// Raw Zenoh consumer.
 #[derive(Clone)]
 pub struct ZenohConsumer {
-    pub session: Arc<Session>,
+    pub session: Session,
     pub topic: String,
 }
 

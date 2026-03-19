@@ -92,17 +92,7 @@ async fn main() {
         }
 
         #[cfg(feature = "kafka")]
-        Transport::Kafka => {
-            let work = transport::kafka::KafkaDurableWork {
-                broker: cli.kafka_broker.clone(),
-                topic: Arc::new(kafka_topic(&topic)),
-                payload_size,
-            };
-            run_durable(cli.bench, work).await;
-        }
-
-        #[cfg(feature = "kafka")]
-        Transport::Redpanda => {
+        Transport::Kafka | Transport::Redpanda => {
             let work = transport::kafka::KafkaDurableWork {
                 broker: cli.kafka_broker.clone(),
                 topic: Arc::new(kafka_topic(&topic)),

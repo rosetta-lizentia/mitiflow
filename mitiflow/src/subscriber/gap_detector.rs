@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use crate::types::PublisherId;
 
@@ -54,12 +55,15 @@ pub trait SequenceTracker: Send + Sync {
 pub struct GapDetector {
     /// Maps publisher ID → last delivered sequence number.
     last_seen: HashMap<PublisherId, u64>,
+    /// Maps publisher ID → wall-clock time of last activity (sample or heartbeat).
+    last_activity: HashMap<PublisherId, Instant>,
 }
 
 impl GapDetector {
     pub fn new() -> Self {
         Self {
             last_seen: HashMap::new(),
+            last_activity: HashMap::new(),
         }
     }
 
@@ -71,7 +75,27 @@ impl GapDetector {
     pub fn with_checkpoints(checkpoints: HashMap<PublisherId, u64>) -> Self {
         Self {
             last_seen: checkpoints,
+            last_activity: HashMap::new(),
         }
+    }
+
+    /// Remove tracking state for publishers whose last activity is older than `age`.
+    ///
+    /// Returns the number of publishers evicted.
+    pub fn evict_older_than(&mut self, age: Duration) -> usize {
+        let now = Instant::now();
+        let stale: Vec<PublisherId> = self
+            .last_activity
+            .iter()
+            .filter(|(_, t)| now.duration_since(**t) > age)
+            .map(|(id, _)| *id)
+            .collect();
+        let count = stale.len();
+        for id in stale {
+            self.last_seen.remove(&id);
+            self.last_activity.remove(&id);
+        }
+        count
     }
 }
 
@@ -84,6 +108,7 @@ impl Default for GapDetector {
 impl SequenceTracker for GapDetector {
     fn on_sample(&mut self, pub_id: &PublisherId, seq: u64) -> SampleResult {
         let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
+        self.last_activity.insert(*pub_id, Instant::now());
 
         if seq == expected {
             // Normal: exactly the next expected sequence.
@@ -104,6 +129,7 @@ impl SequenceTracker for GapDetector {
 
     fn on_heartbeat(&mut self, pub_id: &PublisherId, current_seq: u64) -> Vec<MissInfo> {
         let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
+        self.last_activity.insert(*pub_id, Instant::now());
 
         if current_seq >= expected {
             let next = current_seq + 1;

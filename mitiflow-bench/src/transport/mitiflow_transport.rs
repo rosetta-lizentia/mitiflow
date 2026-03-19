@@ -1,29 +1,20 @@
 //! Mitiflow EventPublisher/EventSubscriber transport.
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use lightbench::{
     BenchmarkWork, ConsumerRecorder, ConsumerWork, ProducerWork, WorkResult, now_unix_ns_estimate,
 };
-use mitiflow::{Event, EventBusConfig, EventPublisher, EventSubscriber, HeartbeatMode};
-use serde::{Deserialize, Serialize};
+use mitiflow::{EventBusConfig, EventPublisher, EventSubscriber};
 use zenoh::Session;
 
 use crate::{build_payload, extract_timestamp};
 
-/// Wrapper payload that carries raw bytes through mitiflow's serialization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BenchPayload {
-    pub data: Vec<u8>,
-}
-
 /// Mitiflow producer.
 #[derive(Clone)]
 pub struct MitiflowProducer {
-    pub session: Arc<Session>,
+    pub session: Session,
     pub topic: String,
     pub payload_size: usize,
+    pub config: EventBusConfig,
 }
 
 pub struct MitiflowProducerState {
@@ -35,12 +26,7 @@ impl ProducerWork for MitiflowProducer {
     type State = MitiflowProducerState;
 
     async fn init(&self) -> Self::State {
-        let config = EventBusConfig::builder(&self.topic)
-            .cache_size(10_000)
-            .heartbeat(HeartbeatMode::Disabled)
-            .build()
-            .expect("failed to build mitiflow config");
-        let publisher = EventPublisher::new(&self.session, config)
+        let publisher = EventPublisher::new(&self.session, self.config.clone())
             .await
             .expect("failed to create mitiflow publisher");
         MitiflowProducerState {
@@ -51,10 +37,9 @@ impl ProducerWork for MitiflowProducer {
 
     async fn produce(&self, state: &mut Self::State) -> Result<(), String> {
         let data = build_payload(state.payload_size, now_unix_ns_estimate());
-        let event = Event::new(BenchPayload { data });
         state
             .publisher
-            .publish(&event)
+            .publish_bytes(data)
             .await
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -64,20 +49,16 @@ impl ProducerWork for MitiflowProducer {
 /// Mitiflow consumer.
 #[derive(Clone)]
 pub struct MitiflowConsumer {
-    pub session: Arc<Session>,
+    pub session: Session,
     pub topic: String,
+    pub config: EventBusConfig,
 }
 
 impl ConsumerWork for MitiflowConsumer {
     type State = EventSubscriber;
 
     async fn init(&self) -> Self::State {
-        let config = EventBusConfig::builder(&self.topic)
-            .cache_size(10_000)
-            .heartbeat(HeartbeatMode::Disabled)
-            .build()
-            .expect("failed to build mitiflow config");
-        EventSubscriber::new(&self.session, config)
+        EventSubscriber::new(&self.session, self.config.clone())
             .await
             .expect("failed to create mitiflow subscriber")
     }
@@ -85,11 +66,11 @@ impl ConsumerWork for MitiflowConsumer {
     async fn run(&self, state: Self::State, recorder: ConsumerRecorder) -> Self::State {
         loop {
             tokio::select! {
-                result = state.recv::<BenchPayload>() => {
+                result = state.recv_raw() => {
                     match result {
-                        Ok(event) => {
+                        Ok(raw) => {
                             let now = now_unix_ns_estimate();
-                            let sent_ts = extract_timestamp(&event.payload.data);
+                            let sent_ts = extract_timestamp(&raw.payload);
                             recorder.record(now.saturating_sub(sent_ts)).await;
                         }
                         Err(_) => {
@@ -122,11 +103,6 @@ impl BenchmarkWork for MitiflowDurableWork {
     type State = MitiflowDurableState;
 
     async fn init(&self) -> Self::State {
-
-        // Start the EventStore sidecar and keep it alive in the state so its
-        // Drop impl (which cancels background tasks) is not triggered early.
-        
-
         let publisher = EventPublisher::new(&self.session, self.config.clone())
             .await
             .expect("failed to create mitiflow publisher");
@@ -140,8 +116,7 @@ impl BenchmarkWork for MitiflowDurableWork {
     async fn work(&self, state: &mut Self::State) -> WorkResult {
         let start = now_unix_ns_estimate();
         let data = build_payload(state.payload_size, start);
-        let event = Event::new(BenchPayload { data });
-        match state.publisher.publish_durable(&event).await {
+        match state.publisher.publish_bytes_durable(data).await {
             Ok(_) => WorkResult::success(now_unix_ns_estimate() - start),
             Err(e) => WorkResult::error(e.to_string()),
         }

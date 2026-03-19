@@ -110,28 +110,21 @@ impl PartitionManager {
 
         // Spawn the membership watcher task.
         let task = {
-            let sess = session.clone();
+            let ctx = rebalance::MembershipContext {
+                session: session.clone(),
+                liveliness_prefix: liveliness_prefix.clone(),
+                my_id: worker_id.clone(),
+                num_partitions,
+                my_partitions: Arc::clone(&my_partitions),
+                workers: Arc::clone(&workers),
+                rebalance_cb: Arc::clone(&rebalance_cb),
+                cancel: cancel.clone(),
+                _token,
+            };
             let wid = worker_id.clone();
-            let parts = Arc::clone(&my_partitions);
-            let wkrs = Arc::clone(&workers);
-            let cb = Arc::clone(&rebalance_cb);
-            let task_cancel = cancel.clone();
-            let prefix = liveliness_prefix.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = rebalance::membership_watcher(
-                    &sess,
-                    &prefix,
-                    &wid,
-                    num_partitions,
-                    &parts,
-                    &wkrs,
-                    &cb,
-                    task_cancel,
-                    _token,
-                )
-                .await
-                {
+                if let Err(e) = rebalance::membership_watcher(ctx).await {
                     warn!("membership watcher exited with error: {e}");
                 }
                 debug!("partition manager background task stopped for {wid}");

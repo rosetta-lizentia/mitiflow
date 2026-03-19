@@ -4,111 +4,83 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Unique identity for a publisher instance.
-///
-/// Wraps a UUID v7 to provide type safety — prevents accidentally mixing up
-/// publisher IDs with event IDs or other UUIDs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PublisherId(Uuid);
+/// Generate a UUID-based newtype with standard conversions.
+macro_rules! uuid_wrapper {
+    (
+        $(#[$meta:meta])*
+        $name:ident
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        pub struct $name(Uuid);
 
-impl PublisherId {
-    /// Create a new random publisher ID (UUID v7 — time-ordered).
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
+        impl $name {
+            /// Create a new ID (UUID v7 — time-ordered).
+            pub fn new() -> Self {
+                Self(Uuid::now_v7())
+            }
 
-    /// Create from an existing UUID.
-    pub fn from_uuid(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
+            /// Create from an existing UUID.
+            pub fn from_uuid(uuid: Uuid) -> Self {
+                Self(uuid)
+            }
 
-    /// Get the inner UUID.
-    pub fn as_uuid(&self) -> &Uuid {
-        &self.0
-    }
+            /// Get the inner UUID.
+            pub fn as_uuid(&self) -> &Uuid {
+                &self.0
+            }
 
-    /// Encode as 16-byte big-endian representation for Zenoh attachments.
-    pub fn to_bytes(&self) -> [u8; 16] {
-        *self.0.as_bytes()
-    }
+            /// Encode as 16-byte big-endian representation.
+            pub fn to_bytes(&self) -> [u8; 16] {
+                *self.0.as_bytes()
+            }
 
-    /// Decode from 16-byte representation.
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self(Uuid::from_bytes(bytes))
-    }
+            /// Decode from 16-byte representation.
+            pub fn from_bytes(bytes: [u8; 16]) -> Self {
+                Self(Uuid::from_bytes(bytes))
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = uuid::Error;
+            fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+                Ok(Self(Uuid::parse_str(s)?))
+            }
+        }
+
+        impl From<Uuid> for $name {
+            fn from(uuid: Uuid) -> Self {
+                Self(uuid)
+            }
+        }
+    };
 }
 
-impl Default for PublisherId {
-    fn default() -> Self {
-        Self::new()
-    }
+uuid_wrapper! {
+    /// Unique identity for a publisher instance.
+    ///
+    /// Wraps a UUID v7 to provide type safety — prevents accidentally mixing up
+    /// publisher IDs with event IDs or other UUIDs.
+    PublisherId
 }
 
-impl fmt::Display for PublisherId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl FromStr for PublisherId {
-    type Err = uuid::Error;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self(Uuid::parse_str(s)?))
-    }
-}
-
-impl From<Uuid> for PublisherId {
-    fn from(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
-}
-
-/// Unique identity for an event.
-///
-/// Wraps a UUID v7 (time-ordered, globally unique).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EventId(Uuid);
-
-impl EventId {
-    /// Create a new event ID (UUID v7).
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-
-    /// Create from an existing UUID.
-    pub fn from_uuid(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
-
-    /// Get the inner UUID.
-    pub fn as_uuid(&self) -> &Uuid {
-        &self.0
-    }
-}
-
-impl Default for EventId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Display for EventId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl FromStr for EventId {
-    type Err = uuid::Error;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self(Uuid::parse_str(s)?))
-    }
-}
-
-impl From<Uuid> for EventId {
-    fn from(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
+uuid_wrapper! {
+    /// Unique identity for an event.
+    ///
+    /// Wraps a UUID v7 (time-ordered, globally unique).
+    EventId
 }
 
 #[cfg(test)]

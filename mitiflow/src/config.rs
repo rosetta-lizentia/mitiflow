@@ -56,6 +56,12 @@ pub struct EventBusConfig {
     pub recovery_mode: RecoveryMode,
     /// Whether to fetch history from the event store on subscribe.
     pub history_on_subscribe: bool,
+    /// Number of independent processing shards (each owns a GapDetector, no locks).
+    /// Sharding by publisher ID provides parallelism across publishers. Defaults to 1.
+    pub num_processing_shards: usize,
+    /// Evict tracking state for publishers silent longer than this duration.
+    /// `None` disables eviction (the default).
+    pub publisher_ttl: Option<Duration>,
 
     // -- Store (feature = "store") --
     /// Key prefix for the event store queryable. Defaults to `"{key_prefix}/_store"`.
@@ -92,28 +98,29 @@ impl EventBusConfig {
         EventBusConfigBuilder::new(key_prefix)
     }
 
-    /// Resolve the store key prefix, falling back to `"{key_prefix}/$store"`.
+    /// Resolve an optional override key, falling back to `"{key_prefix}/{suffix}"`.
+    fn resolve_key(&self, specific: &Option<String>, suffix: &str) -> String {
+        specific
+            .clone()
+            .unwrap_or_else(|| format!("{}/{suffix}", self.key_prefix))
+    }
+
+    /// Resolve the store key prefix, falling back to `"{key_prefix}/_store"`.
     #[cfg(feature = "store")]
     pub fn resolved_store_key_prefix(&self) -> String {
-        self.store_key_prefix
-            .clone()
-            .unwrap_or_else(|| format!("{}/_store", self.key_prefix))
+        self.resolve_key(&self.store_key_prefix, "_store")
     }
 
-    /// Resolve the watermark key, falling back to `"{key_prefix}/$watermark"`.
+    /// Resolve the watermark key, falling back to `"{key_prefix}/_watermark"`.
     #[cfg(feature = "store")]
     pub fn resolved_watermark_key(&self) -> String {
-        self.watermark_key
-            .clone()
-            .unwrap_or_else(|| format!("{}/_watermark", self.key_prefix))
+        self.resolve_key(&self.watermark_key, "_watermark")
     }
 
-    /// Resolve the worker liveliness prefix, falling back to `"{key_prefix}/$workers"`.
+    /// Resolve the worker liveliness prefix, falling back to `"{key_prefix}/_workers"`.
     #[cfg(feature = "partition")]
     pub fn resolved_worker_liveliness_prefix(&self) -> String {
-        self.worker_liveliness_prefix
-            .clone()
-            .unwrap_or_else(|| format!("{}/_workers", self.key_prefix))
+        self.resolve_key(&self.worker_liveliness_prefix, "_workers")
     }
 }
 
@@ -126,6 +133,8 @@ pub struct EventBusConfigBuilder {
     congestion_control: CongestionControl,
     recovery_mode: RecoveryMode,
     history_on_subscribe: bool,
+    num_processing_shards: usize,
+    publisher_ttl: Option<Duration>,
     #[cfg(feature = "store")]
     store_key_prefix: Option<String>,
     #[cfg(feature = "store")]
@@ -154,6 +163,8 @@ impl EventBusConfigBuilder {
             congestion_control: CongestionControl::Block,
             recovery_mode: RecoveryMode::Both,
             history_on_subscribe: true,
+            num_processing_shards: 1,
+            publisher_ttl: None,
             #[cfg(feature = "store")]
             store_key_prefix: None,
             #[cfg(feature = "store")]
@@ -203,6 +214,25 @@ impl EventBusConfigBuilder {
 
     pub fn history_on_subscribe(mut self, enable: bool) -> Self {
         self.history_on_subscribe = enable;
+        self
+    }
+
+    /// Set the number of parallel event-processing shards.
+    ///
+    /// Each shard owns its own [`GapDetector`] and processes a disjoint subset
+    /// of publishers (routed by `pub_id % N`). Higher values increase CPU
+    /// parallelism at the cost of slightly more memory. Defaults to `1`.
+    pub fn num_processing_shards(mut self, n: usize) -> Self {
+        self.num_processing_shards = n.max(1);
+        self
+    }
+
+    /// Evict tracking state for publishers that have been silent longer than `ttl`.
+    ///
+    /// Prevents unbounded growth of the per-publisher `HashMap`. Defaults to `None`
+    /// (no eviction).
+    pub fn publisher_ttl(mut self, ttl: Duration) -> Self {
+        self.publisher_ttl = Some(ttl);
         self
     }
 
@@ -261,11 +291,11 @@ impl EventBusConfigBuilder {
                 "key_prefix must not be empty".to_string(),
             ));
         }
-        if self.cache_size == 0 {
-            return Err(Error::InvalidConfig(
-                "cache_size must be greater than 0".to_string(),
-            ));
-        }
+        // if self.cache_size == 0 {
+        //     return Err(Error::InvalidConfig(
+        //         "cache_size must be greater than 0".to_string(),
+        //     ));
+        // }
 
         Ok(EventBusConfig {
             key_prefix: self.key_prefix,
@@ -275,6 +305,8 @@ impl EventBusConfigBuilder {
             congestion_control: self.congestion_control,
             recovery_mode: self.recovery_mode,
             history_on_subscribe: self.history_on_subscribe,
+            num_processing_shards: self.num_processing_shards,
+            publisher_ttl: self.publisher_ttl,
             #[cfg(feature = "store")]
             store_key_prefix: self.store_key_prefix,
             #[cfg(feature = "store")]
@@ -341,8 +373,9 @@ mod tests {
     }
 
     #[test]
-    fn zero_cache_rejected() {
+    fn zero_cache_allowed() {
+        // cache_size=0 disables the publisher history cache (valid for benchmarks).
         let result = EventBusConfig::builder("x").cache_size(0).build();
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 }

@@ -110,7 +110,7 @@ impl BenchmarkWork for NatsDurableWork {
         let js = jetstream::new(client);
 
         // Ensure the stream exists for this subject.
-        let stream_name = self.topic.replace('.', "_").replace('/', "_");
+        let stream_name = self.topic.replace(['.', '/'], "_");
         let _ = js
             .get_or_create_stream(jetstream::stream::Config {
                 name: stream_name,

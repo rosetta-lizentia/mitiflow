@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::types::PublisherId;
+use crate::types::{EventId, PublisherId};
 
 #[cfg(feature = "store")]
 use crate::error::Error;
@@ -16,6 +16,7 @@ use super::query::QueryFilters;
 pub struct EventMetadata {
     pub seq: u64,
     pub publisher_id: PublisherId,
+    pub event_id: EventId,
     pub timestamp: DateTime<Utc>,
     pub key_expr: String,
 }

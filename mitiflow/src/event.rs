@@ -80,13 +80,21 @@ impl RawEvent {
     }
 
     /// Deserialize the payload into a typed `Event<T>` using the given codec.
+    ///
+    /// The payload bytes contain only the serialized `T` — all envelope
+    /// metadata (`id`, `timestamp`, `seq`, `key_expr`) is taken from the
+    /// `RawEvent` fields that were populated from the Zenoh attachment.
     pub fn deserialize_with<T: Serialize + DeserializeOwned>(
         &self,
         codec: crate::codec::CodecFormat,
     ) -> crate::Result<Event<T>> {
-        let mut event: Event<T> = codec.decode(&self.payload)?;
-        event.seq = Some(self.seq);
-        event.key_expr = Some(self.key_expr.clone());
-        Ok(event)
+        let payload: T = codec.decode(&self.payload)?;
+        Ok(Event {
+            id: self.id,
+            timestamp: self.timestamp,
+            seq: Some(self.seq),
+            payload,
+            key_expr: Some(self.key_expr.clone()),
+        })
     }
 }

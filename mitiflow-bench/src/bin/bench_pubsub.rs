@@ -32,14 +32,24 @@
 //!   --transport redis --duration 10
 //! ```
 
-use std::sync::Arc;
-
 use clap::Parser;
 use lightbench::ProducerConsumerBenchmark;
-use mitiflow_bench::transport;
-use mitiflow_bench::{PubSubCli, Transport, zenoh_config};
+use mitiflow::{EventBusConfig, HeartbeatMode};
 #[cfg(feature = "kafka")]
 use mitiflow_bench::kafka_topic;
+use mitiflow_bench::transport;
+use mitiflow_bench::{PubSubCli, Transport, zenoh_config};
+
+/// Open a pair of Zenoh sessions for producer and consumer roles.
+async fn open_zenoh_sessions(connect: Option<&str>) -> (zenoh::Session, zenoh::Session) {
+    let pub_session = zenoh::open(zenoh_config(connect))
+        .await
+        .expect("failed to open zenoh publisher session");
+    let sub_session = zenoh::open(zenoh_config(connect))
+        .await
+        .expect("failed to open zenoh subscriber session");
+    (pub_session, sub_session)
+}
 
 #[tokio::main]
 async fn main() {
@@ -51,85 +61,56 @@ async fn main() {
 
     match cli.transport {
         Transport::Zenoh => {
-            let zenoh_connect = cli.zenoh_connect.as_deref();
-            let pub_session = Arc::new(
-                zenoh::open(zenoh_config(zenoh_connect))
-                    .await
-                    .expect("failed to open zenoh publisher session"),
-            );
-            let sub_session = Arc::new(
-                zenoh::open(zenoh_config(zenoh_connect))
-                    .await
-                    .expect("failed to open zenoh subscriber session"),
-            );
+            let (pub_s, sub_s) = open_zenoh_sessions(cli.zenoh_connect.as_deref()).await;
             let producer = transport::zenoh_raw::ZenohProducer {
-                session: pub_session,
+                session: pub_s,
                 topic: topic.clone(),
                 payload_size,
             };
             let consumer = transport::zenoh_raw::ZenohConsumer {
-                session: sub_session,
+                session: sub_s,
                 topic,
             };
             run_pubsub(cli.bench, producer, consumer, consumers).await;
         }
 
         Transport::ZenohAdvanced => {
-            let zenoh_connect = cli.zenoh_connect.as_deref();
-            let pub_session = Arc::new(
-                zenoh::open(zenoh_config(zenoh_connect))
-                    .await
-                    .expect("failed to open zenoh publisher session"),
-            );
-            let sub_session = Arc::new(
-                zenoh::open(zenoh_config(zenoh_connect))
-                    .await
-                    .expect("failed to open zenoh subscriber session"),
-            );
+            let (pub_s, sub_s) = open_zenoh_sessions(cli.zenoh_connect.as_deref()).await;
             let producer = transport::zenoh_advanced::ZenohAdvancedProducer {
-                session: pub_session,
+                session: pub_s,
                 topic: topic.clone(),
                 payload_size,
             };
             let consumer = transport::zenoh_advanced::ZenohAdvancedConsumer {
-                session: sub_session,
+                session: sub_s,
                 topic,
             };
             run_pubsub(cli.bench, producer, consumer, consumers).await;
         }
 
         Transport::Mitiflow => {
-            let zenoh_connect = cli.zenoh_connect.as_deref();
-            let pub_session = Arc::new(
-                zenoh::open(zenoh_config(zenoh_connect))
-                    .await
-                    .expect("failed to open zenoh publisher session"),
-            );
-            let sub_session = Arc::new(
-                zenoh::open(zenoh_config(zenoh_connect))
-                    .await
-                    .expect("failed to open zenoh subscriber session"),
-            );
+            let (pub_s, sub_s) = open_zenoh_sessions(cli.zenoh_connect.as_deref()).await;
+            let config = EventBusConfig::builder(topic.clone())
+                .cache_size(0)
+                .heartbeat(HeartbeatMode::Disabled)
+                .build()
+                .expect("failed to build mitiflow config");
             let producer = transport::mitiflow_transport::MitiflowProducer {
-                session: pub_session,
+                session: pub_s,
                 topic: topic.clone(),
                 payload_size,
+                config: config.clone(),
             };
             let consumer = transport::mitiflow_transport::MitiflowConsumer {
-                session: sub_session,
+                session: sub_s,
                 topic,
+                config,
             };
             run_pubsub(cli.bench, producer, consumer, consumers).await;
         }
 
         #[cfg(feature = "kafka")]
-        Transport::Kafka => {
-            let broker = cli.kafka_broker.clone();
-            run_kafka(cli.bench, broker, topic, payload_size, consumers).await;
-        }
-
-        #[cfg(feature = "kafka")]
-        Transport::Redpanda => {
+        Transport::Kafka | Transport::Redpanda => {
             let broker = cli.kafka_broker.clone();
             run_kafka(cli.bench, broker, topic, payload_size, consumers).await;
         }
@@ -142,10 +123,7 @@ async fn main() {
                 topic: topic.clone(),
                 payload_size,
             };
-            let consumer = transport::nats::NatsConsumer {
-                url,
-                topic,
-            };
+            let consumer = transport::nats::NatsConsumer { url, topic };
             run_pubsub(cli.bench, producer, consumer, consumers).await;
         }
 
@@ -182,8 +160,10 @@ async fn run_pubsub<P, C>(
         .burst_factor(config.burst_factor)
         .drain_timeout(None)
         .progress(!config.no_progress)
+        .rate(0f64) // Start with unlimited rate, override below if specified
         .show_ramp_progress(!config.hide_ramp_progress);
 
+    println!("Running benchmark with config: {:#?}", config);
     if let Some(rate) = config.rate {
         bench = bench.rate(rate);
     } else if let Some(rate) = config.rate_per_worker {
@@ -198,11 +178,7 @@ async fn run_pubsub<P, C>(
         bench = bench.csv(csv_path);
     }
 
-    let results = bench
-        .producer(producer)
-        .consumer(consumer)
-        .run()
-        .await;
+    let results = bench.producer(producer).consumer(consumer).run().await;
     results.print_summary();
 }
 
@@ -218,7 +194,7 @@ async fn run_kafka(
     let group_id = format!("bench-{}", rand::random::<u32>());
     let producer = transport::kafka::KafkaProducer {
         broker: broker.clone(),
-        topic: Arc::new(topic.clone()),
+        topic: std::sync::Arc::new(topic.clone()),
         payload_size,
     };
     let consumer = transport::kafka::KafkaConsumer {

@@ -98,7 +98,7 @@ impl ConsumerWork for KafkaConsumer {
         // StreamConsumer runs a background event thread that drives the group
         // join protocol. Wait here until partition assignment is complete so that
         // run() starts ready to receive messages produced by the benchmark producers.
-        let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
                 match consumer.assignment() {
                     Ok(tpl) if tpl.count() > 0 => break,
@@ -107,7 +107,6 @@ impl ConsumerWork for KafkaConsumer {
             }
         })
         .await;
-        eprintln!("[kafka debug] warmup result: {:?}, assignment: {:?}", result.is_ok(), consumer.assignment().map(|a| a.count()));
         consumer
     }
 

@@ -5,24 +5,142 @@ pub mod gap_detector;
 #[cfg(feature = "store")]
 pub mod checkpoint;
 
-use std::sync::Arc;
-
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 use zenoh::Session;
-use zenoh::sample::SampleKind;
+use zenoh::sample::{Sample, SampleKind};
 
-use crate::attachment::decode_metadata;
-use crate::codec::CodecFormat;
-use crate::config::{EventBusConfig, RecoveryMode};
+use crate::attachment::{EventMeta, decode_metadata};
+use crate::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
 use crate::error::{Error, Result};
 use crate::event::{Event, RawEvent};
 use crate::publisher::HeartbeatBeacon;
-use crate::types::PublisherId;
+use crate::types::{EventId, PublisherId};
 use gap_detector::{GapDetector, MissInfo, SampleResult, SequenceTracker};
+
+/// Message routed to a specific processing shard.
+enum ShardMsg {
+    Sample {
+        meta: crate::attachment::EventMeta,
+        key: String,
+        payload: Vec<u8>,
+    },
+    Heartbeat(HeartbeatBeacon),
+}
+
+/// Route a publisher ID to the owning shard index.
+#[inline]
+fn shard_for(pub_id: &PublisherId, num_shards: usize) -> usize {
+    let bytes = pub_id.to_bytes();
+    let n = u128::from_le_bytes(bytes);
+    (n % num_shards as u128) as usize
+}
+
+/// Try to decode a data sample into metadata + payload, filtering out
+/// non-Put samples, internal keys, and samples without valid attachments.
+/// Returns `None` for samples that should be skipped.
+fn decode_sample(sample: &Sample) -> Option<(EventMeta, String, Vec<u8>)> {
+    if sample.kind() != SampleKind::Put {
+        return None;
+    }
+    let key = sample.key_expr().as_str();
+    if key.contains("/_") {
+        return None;
+    }
+    let attachment = match sample.attachment() {
+        Some(a) => a,
+        None => {
+            trace!("sample without attachment on {key}, skipping");
+            return None;
+        }
+    };
+    let meta = match decode_metadata(attachment) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("failed to decode attachment on {key}: {e}");
+            return None;
+        }
+    };
+    let payload = sample.payload().to_bytes().to_vec();
+    Some((meta, key.to_string(), payload))
+}
+
+/// Parse a heartbeat beacon from a Zenoh sample payload.
+fn decode_heartbeat(sample: &Sample) -> Option<HeartbeatBeacon> {
+    let bytes = sample.payload().to_bytes();
+    match serde_json::from_slice(&bytes) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            trace!("invalid heartbeat: {e}");
+            None
+        }
+    }
+}
+
+/// Process a gap detection result: deliver the current event and spawn
+/// recovery for any detected gap.
+fn handle_sample_result(
+    result: SampleResult,
+    meta: &EventMeta,
+    key: &str,
+    payload: &[u8],
+    tx: &flume::Sender<RawEvent>,
+    session: &Session,
+    prefix: &str,
+) {
+    match result {
+        SampleResult::Deliver => {
+            deliver_event(tx, meta.pub_id, meta.seq, key, payload, meta.event_id, meta.timestamp);
+        }
+        SampleResult::Duplicate => {
+            trace!(seq = meta.seq, pub_id = %meta.pub_id, "duplicate, dropping");
+        }
+        SampleResult::Gap(miss) => {
+            deliver_event(tx, meta.pub_id, meta.seq, key, payload, meta.event_id, meta.timestamp);
+            spawn_recovery(session.clone(), prefix.to_string(), miss, tx.clone());
+        }
+    }
+}
+
+/// Spawn heartbeat-triggered gap recovery for all detected misses.
+fn handle_heartbeat_gaps(
+    misses: Vec<MissInfo>,
+    session: &Session,
+    prefix: &str,
+    tx: &flume::Sender<RawEvent>,
+) {
+    for miss in misses {
+        spawn_recovery(session.clone(), prefix.to_string(), miss, tx.clone());
+    }
+}
+
+/// Spawn a background task to recover missed events from the publisher cache.
+fn spawn_recovery(
+    session: Session,
+    prefix: String,
+    miss: MissInfo,
+    tx: flume::Sender<RawEvent>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = recover_gap(&session, &prefix, &miss, &tx).await {
+            warn!("gap recovery failed: {e}");
+        }
+    });
+}
+
+/// Periodically evict stale publisher entries from the gap detector.
+fn maybe_evict(gd: &mut GapDetector, sample_count: u64, publisher_ttl: Option<std::time::Duration>) {
+    if let Some(ttl) = publisher_ttl {
+        if sample_count % 10_000 == 0 {
+            let evicted = gd.evict_older_than(ttl);
+            if evicted > 0 {
+                debug!(shard_evicted = evicted, "evicted stale publisher entries");
+            }
+        }
+    }
+}
 
 /// Subscribes to events with gap detection, automatic recovery, and dedup.
 ///
@@ -31,8 +149,6 @@ use gap_detector::{GapDetector, MissInfo, SampleResult, SequenceTracker};
 pub struct EventSubscriber {
     /// Channel receiver for ordered event delivery.
     event_rx: flume::Receiver<RawEvent>,
-    /// Gap detector (shared with background task for heartbeat updates).
-    _gap_detector: Arc<RwLock<GapDetector>>,
     /// Configuration snapshot.
     config: EventBusConfig,
     /// Token to cancel background tasks.
@@ -52,149 +168,63 @@ impl EventSubscriber {
             .declare_subscriber(format!("{key_prefix}/**"))
             .await?;
 
-        let gap_detector = Arc::new(RwLock::new(GapDetector::new()));
         let cancel = CancellationToken::new();
         let (event_tx, event_rx) = flume::unbounded::<RawEvent>();
         let mut tasks = Vec::new();
 
-        // -- Main event processing task --
-        {
-            let gd = Arc::clone(&gap_detector);
+        let num_shards = config.num_processing_shards;
+        let publisher_ttl = config.publisher_ttl;
+        let recovery_enabled = matches!(
+            config.recovery_mode,
+            RecoveryMode::Heartbeat | RecoveryMode::Both
+        );
+
+        if num_shards == 1 {
+            // Fast path: collapse dispatcher + shard worker into a single task,
+            // eliminating one flume channel hop and one Tokio context switch per message.
+            let cancel_clone = cancel.clone();
             let tx = event_tx.clone();
             let sess = session.clone();
-            let cancel_clone = cancel.clone();
             let prefix = config.key_prefix.clone();
-            let codec = config.codec;
+            let hb_sub = if config.heartbeat != HeartbeatMode::Disabled {
+                Some(
+                    session
+                        .declare_subscriber(format!("{key_prefix}/_heartbeat/*"))
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let has_hb = hb_sub.is_some();
 
             let handle = tokio::spawn(async move {
+                let mut gd = GapDetector::new();
+                let mut sample_count = 0u64;
+
                 loop {
                     tokio::select! {
                         _ = cancel_clone.cancelled() => break,
                         sample_result = subscriber.recv_async() => {
                             match sample_result {
                                 Ok(sample) => {
-                                    if sample.kind() != SampleKind::Put {
-                                        continue;
-                                    }
-
-                                    // Skip internal keys (_heartbeat, _cache, _watermark, etc.)
-                                    let key = sample.key_expr().as_str();
-                                    if key.contains("/_") {
-                                        continue;
-                                    }
-
-                                    // Decode metadata from attachment.
-                                    let attachment = match sample.attachment() {
-                                        Some(a) => a,
-                                        None => {
-                                            trace!("sample without attachment on {key}, skipping");
-                                            continue;
-                                        }
-                                    };
-                                    let (pub_id, seq) = match decode_metadata(attachment) {
-                                        Ok(m) => m,
-                                        Err(e) => {
-                                            warn!("failed to decode attachment on {key}: {e}");
-                                            continue;
-                                        }
-                                    };
-
-                                    // Run gap detection.
-                                    let result = {
-                                        let mut gd = gd.write().await;
-                                        gd.on_sample(&pub_id, seq)
-                                    };
-
-                                    match result {
-                                        SampleResult::Deliver => {
-                                            let payload_bytes = sample.payload().to_bytes().to_vec();
-                                            deliver_event(&tx, pub_id, seq, key, &payload_bytes, codec);
-                                        }
-                                        SampleResult::Duplicate => {
-                                            trace!(seq, %pub_id, "duplicate, dropping");
-                                        }
-                                        SampleResult::Gap(miss) => {
-                                            // Deliver current sample (it's valid, just out of order).
-                                            let payload_bytes = sample.payload().to_bytes().to_vec();
-                                            deliver_event(&tx, pub_id, seq, key, &payload_bytes, codec);
-
-                                            // Spawn async recovery for the gap.
-                                            let recovery_sess = sess.clone();
-                                            let recovery_tx = tx.clone();
-                                            let recovery_prefix = prefix.clone();
-                                            tokio::spawn(async move {
-                                                if let Err(e) = recover_gap(
-                                                    &recovery_sess,
-                                                    &recovery_prefix,
-                                                    &miss,
-                                                    &recovery_tx,
-                                                    codec,
-                                                ).await {
-                                                    warn!("gap recovery failed: {e}");
-                                                }
-                                            });
-                                        }
+                                    if let Some((meta, key, payload)) = decode_sample(&sample) {
+                                        let result = gd.on_sample(&meta.pub_id, meta.seq);
+                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &prefix);
+                                        sample_count += 1;
+                                        maybe_evict(&mut gd, sample_count, publisher_ttl);
                                     }
                                 }
-                                Err(_) => break, // subscriber dropped
+                                Err(_) => break,
                             }
                         }
-                    }
-                }
-                debug!("event processing task stopped");
-            });
-            tasks.push(handle);
-        }
-
-        // -- Heartbeat listener task --
-        {
-            let hb_subscriber = session
-                .declare_subscriber(format!("{key_prefix}/_heartbeat/*"))
-                .await?;
-            let gd = Arc::clone(&gap_detector);
-            let hb_cancel = cancel.clone();
-            let hb_sess = session.clone();
-            let hb_tx = event_tx.clone();
-            let hb_prefix = config.key_prefix.clone();
-            let hb_codec = config.codec;
-            let recovery_enabled = matches!(
-                config.recovery_mode,
-                RecoveryMode::Heartbeat | RecoveryMode::Both
-            );
-
-            let handle = tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = hb_cancel.cancelled() => break,
-                        sample_result = hb_subscriber.recv_async() => {
-                            match sample_result {
+                        hb_result = async { hb_sub.as_ref().unwrap().recv_async().await }, if has_hb => {
+                            match hb_result {
                                 Ok(sample) => {
-                                    if !recovery_enabled {
-                                        continue;
-                                    }
-                                    let bytes = sample.payload().to_bytes();
-                                    let beacon: HeartbeatBeacon = match serde_json::from_slice(&bytes) {
-                                        Ok(b) => b,
-                                        Err(e) => {
-                                            trace!("invalid heartbeat: {e}");
-                                            continue;
+                                    if let Some(beacon) = decode_heartbeat(&sample) {
+                                        if recovery_enabled {
+                                            let misses = gd.on_heartbeat(&beacon.pub_id, beacon.current_seq);
+                                            handle_heartbeat_gaps(misses, &sess, &prefix, &tx);
                                         }
-                                    };
-
-                                    let misses = {
-                                        let mut gd = gd.write().await;
-                                        gd.on_heartbeat(&beacon.pub_id, beacon.current_seq)
-                                    };
-
-                                    for miss in misses {
-                                        let sess = hb_sess.clone();
-                                        let tx = hb_tx.clone();
-                                        let prefix = hb_prefix.clone();
-                                        tokio::spawn(async move {
-                                            if let Err(e) = recover_gap(&sess, &prefix, &miss, &tx, hb_codec).await {
-                                                warn!("heartbeat-triggered recovery failed: {e}");
-                                            }
-                                        });
                                     }
                                 }
                                 Err(_) => break,
@@ -202,14 +232,122 @@ impl EventSubscriber {
                         }
                     }
                 }
-                debug!("heartbeat listener task stopped");
+                debug!("combined dispatcher/shard task stopped");
             });
             tasks.push(handle);
+        } else {
+            // Multi-shard path: one GapDetector per shard, connected via channels.
+            let mut shard_txs: Vec<flume::Sender<ShardMsg>> = Vec::with_capacity(num_shards);
+            let mut shard_rxs: Vec<flume::Receiver<ShardMsg>> = Vec::with_capacity(num_shards);
+            for _ in 0..num_shards {
+                let (tx, rx) = flume::unbounded();
+                shard_txs.push(tx);
+                shard_rxs.push(rx);
+            }
+
+            // -- Spawn shard worker tasks --
+            // Each shard owns its GapDetector exclusively — no locks needed.
+            for shard_rx in shard_rxs {
+                let tx = event_tx.clone();
+                let sess = session.clone();
+                let prefix = config.key_prefix.clone();
+                let cancel_clone = cancel.clone();
+
+                let handle = tokio::spawn(async move {
+                    let mut gd = GapDetector::new();
+                    let mut sample_count = 0u64;
+
+                    loop {
+                        tokio::select! {
+                            _ = cancel_clone.cancelled() => break,
+                            msg = shard_rx.recv_async() => {
+                                match msg {
+                                    Ok(ShardMsg::Sample { meta, key, payload }) => {
+                                        let result = gd.on_sample(&meta.pub_id, meta.seq);
+                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &prefix);
+                                        sample_count += 1;
+                                        maybe_evict(&mut gd, sample_count, publisher_ttl);
+                                    }
+                                    Ok(ShardMsg::Heartbeat(beacon)) => {
+                                        if recovery_enabled {
+                                            let misses = gd.on_heartbeat(&beacon.pub_id, beacon.current_seq);
+                                            handle_heartbeat_gaps(misses, &sess, &prefix, &tx);
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    }
+                    debug!("shard worker stopped");
+                });
+                tasks.push(handle);
+            }
+
+            // -- Dispatcher task: Zenoh samples → shard channels --
+            {
+                let dispatchers_tx = shard_txs.clone();
+                let cancel_clone = cancel.clone();
+
+                let handle = tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = cancel_clone.cancelled() => break,
+                            sample_result = subscriber.recv_async() => {
+                                match sample_result {
+                                    Ok(sample) => {
+                                        if let Some((meta, key, payload)) = decode_sample(&sample) {
+                                            let shard_idx = shard_for(&meta.pub_id, num_shards);
+                                            let _ = dispatchers_tx[shard_idx].send(ShardMsg::Sample {
+                                                meta,
+                                                key,
+                                                payload,
+                                            });
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    }
+                    debug!("sample dispatcher stopped");
+                });
+                tasks.push(handle);
+            }
+
+            // -- Heartbeat dispatcher task (only when heartbeats are enabled) --
+            if config.heartbeat != HeartbeatMode::Disabled {
+                let hb_subscriber = session
+                    .declare_subscriber(format!("{key_prefix}/_heartbeat/*"))
+                    .await?;
+                let hb_shard_txs = shard_txs.clone();
+                let hb_cancel = cancel.clone();
+
+                let handle = tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = hb_cancel.cancelled() => break,
+                            sample_result = hb_subscriber.recv_async() => {
+                                match sample_result {
+                                    Ok(sample) => {
+                                        if let Some(beacon) = decode_heartbeat(&sample) {
+                                            let shard_idx = shard_for(&beacon.pub_id, num_shards);
+                                            let _ = hb_shard_txs[shard_idx].send(ShardMsg::Heartbeat(beacon));
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    }
+                    debug!("heartbeat dispatcher stopped");
+                });
+                tasks.push(handle);
+            }
         }
 
         Ok(Self {
             event_rx,
-            _gap_detector: gap_detector,
             config,
             cancel,
             _tasks: tasks,
@@ -248,21 +386,18 @@ impl Drop for EventSubscriber {
 }
 
 /// Construct and send a `RawEvent` through the delivery channel.
+/// All metadata comes from the attachment — no payload decode required.
 fn deliver_event(
     tx: &flume::Sender<RawEvent>,
     pub_id: PublisherId,
     seq: u64,
     key: &str,
     payload: &[u8],
-    codec: CodecFormat,
+    event_id: EventId,
+    timestamp: chrono::DateTime<chrono::Utc>,
 ) {
-    // Best-effort extraction of event ID and timestamp from the encoded payload.
-    // If the payload can't be decoded or doesn't have the expected fields,
-    // we still deliver with defaults.
-    let (id, timestamp) = extract_event_meta(payload, codec);
-
     let raw = RawEvent {
-        id,
+        id: event_id,
         seq,
         publisher_id: pub_id,
         key_expr: key.to_string(),
@@ -274,29 +409,12 @@ fn deliver_event(
     }
 }
 
-/// Extract `id` and `timestamp` from the serialized event payload.
-fn extract_event_meta(
-    payload: &[u8],
-    codec: CodecFormat,
-) -> (crate::types::EventId, chrono::DateTime<chrono::Utc>) {
-    #[derive(serde::Deserialize)]
-    struct Envelope {
-        id: crate::types::EventId,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    }
-    match codec.decode::<Envelope>(payload) {
-        Ok(env) => (env.id, env.timestamp),
-        Err(_) => (crate::types::EventId::new(), chrono::Utc::now()),
-    }
-}
-
 /// Attempt to recover missed events by querying the publisher's cache.
 async fn recover_gap(
     session: &Session,
     key_prefix: &str,
     miss: &MissInfo,
     tx: &flume::Sender<RawEvent>,
-    codec: CodecFormat,
 ) -> Result<()> {
     let cache_key = format!(
         "{key_prefix}/_cache/{}?after_seq={}",
@@ -317,14 +435,18 @@ async fn recover_gap(
                 let key = sample.key_expr().as_str();
                 let payload_bytes = sample.payload().to_bytes().to_vec();
 
-                // Decode seq from attachment if present.
-                let seq = sample
-                    .attachment()
-                    .and_then(|a| decode_metadata(a).ok())
-                    .map(|(_, s)| s)
-                    .unwrap_or(miss.missed.start + recovered);
-
-                deliver_event(tx, miss.source, seq, key, &payload_bytes, codec);
+                // All metadata comes from the attachment.
+                match sample.attachment().and_then(|a| decode_metadata(a).ok()) {
+                    Some(meta) => {
+                        deliver_event(tx, meta.pub_id, meta.seq, key, &payload_bytes, meta.event_id, meta.timestamp);
+                    }
+                    None => {
+                        // Fallback: attachment missing or wrong format; use source pub_id
+                        // and a best-guess seq. This should not happen with current publishers.
+                        let seq = miss.missed.start + recovered;
+                        deliver_event(tx, miss.source, seq, key, &payload_bytes, EventId::new(), chrono::Utc::now());
+                    }
+                }
                 recovered += 1;
             }
             Err(err) => {

@@ -12,51 +12,48 @@ use zenoh::Session;
 
 use super::{hash_ring, RebalanceCb};
 
+/// Shared state and configuration for the membership watcher.
+pub struct MembershipContext {
+    pub session: Session,
+    pub liveliness_prefix: String,
+    pub my_id: String,
+    pub num_partitions: u32,
+    pub my_partitions: Arc<RwLock<Vec<u32>>>,
+    pub workers: Arc<RwLock<Vec<String>>>,
+    pub rebalance_cb: RebalanceCb,
+    pub cancel: CancellationToken,
+    /// Kept alive to maintain presence — dropped when the task ends.
+    pub _token: zenoh::liveliness::LivelinessToken,
+}
+
 /// Run the membership watcher loop.
 ///
 /// This function is spawned as a background task by [`PartitionManager::new()`].
 /// It subscribes to liveliness events for workers, and on any change
 /// recomputes the HRW assignment and updates the shared state.
-///
-/// The `_token` parameter keeps the liveliness token alive as long as this task runs.
-#[allow(clippy::too_many_arguments)]
-pub async fn membership_watcher(
-    session: &Session,
-    liveliness_prefix: &str,
-    my_id: &str,
-    num_partitions: u32,
-    my_partitions: &Arc<RwLock<Vec<u32>>>,
-    workers: &Arc<RwLock<Vec<String>>>,
-    rebalance_cb: &RebalanceCb,
-    cancel: CancellationToken,
-    _token: zenoh::liveliness::LivelinessToken,
-) -> crate::error::Result<()> {
-    // history(true): receive currently-alive tokens on subscription so we don't
-    // miss tokens that were declared between PartitionManager::new() returning
-    // and this background task actually starting.
-    let subscriber = session
+pub async fn membership_watcher(ctx: MembershipContext) -> crate::error::Result<()> {
+    let subscriber = ctx.session
         .liveliness()
-        .declare_subscriber(format!("{liveliness_prefix}/*"))
+        .declare_subscriber(format!("{}/*", ctx.liveliness_prefix))
         .history(true)
         .await?;
 
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => break,
+            _ = ctx.cancel.cancelled() => break,
             sample_result = subscriber.recv_async() => {
                 match sample_result {
                     Ok(sample) => {
                         let key = sample.key_expr().as_str();
-                        let worker_id = match key.strip_prefix(&format!("{liveliness_prefix}/")) {
+                        let worker_id = match key.strip_prefix(&format!("{}/", ctx.liveliness_prefix)) {
                             Some(wid) => wid.to_string(),
                             None => continue,
                         };
 
                         let is_join = sample.kind() == zenoh::sample::SampleKind::Put;
 
-                        // Update the workers list.
                         let new_workers = {
-                            let mut wkrs = workers.write().await;
+                            let mut wkrs = ctx.workers.write().await;
                             if is_join {
                                 if !wkrs.contains(&worker_id) {
                                     wkrs.push(worker_id.clone());
@@ -70,13 +67,12 @@ pub async fn membership_watcher(
                             wkrs.clone()
                         };
 
-                        // Recompute assignments.
                         rebalance(
-                            my_id,
-                            num_partitions,
+                            &ctx.my_id,
+                            ctx.num_partitions,
                             &new_workers,
-                            my_partitions,
-                            rebalance_cb,
+                            &ctx.my_partitions,
+                            &ctx.rebalance_cb,
                         )
                         .await;
                     }
