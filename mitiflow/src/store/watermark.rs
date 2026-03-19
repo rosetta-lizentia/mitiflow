@@ -34,6 +34,8 @@ impl PublisherWatermark {
 /// See [03_durability.md](../../docs/03_durability.md) § B for the full protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitWatermark {
+    /// Partition this watermark covers.
+    pub partition: u32,
     /// Per-publisher durability progress.
     pub publishers: HashMap<PublisherId, PublisherWatermark>,
     /// Event Store wall-clock time when this watermark was generated.
@@ -60,7 +62,7 @@ mod tests {
         for (id, committed, gaps) in entries {
             publishers.insert(id, PublisherWatermark { committed_seq: committed, gaps });
         }
-        CommitWatermark { publishers, timestamp: Utc::now() }
+        CommitWatermark { partition: 0, publishers, timestamp: Utc::now() }
     }
 
     #[test]

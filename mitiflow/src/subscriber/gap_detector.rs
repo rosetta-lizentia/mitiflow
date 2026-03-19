@@ -20,11 +20,13 @@ pub enum SampleResult {
     Gap(MissInfo),
 }
 
-/// Describes a set of missed sequence numbers from a single publisher.
+/// Describes a set of missed sequence numbers from a single publisher on a partition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissInfo {
     /// The publisher that produced the missed events.
     pub source: PublisherId,
+    /// The partition where the gap was detected.
+    pub partition: u32,
     /// Half-open range `[start..end)` of missed sequence numbers.
     pub missed: Range<u64>,
 }
@@ -37,14 +39,15 @@ pub struct MissInfo {
 pub trait SequenceTracker: Send + Sync {
     /// Record an incoming sample and determine whether it should be delivered,
     /// dropped as a duplicate, or flagged as a gap.
-    fn on_sample(&mut self, pub_id: &PublisherId, seq: u64) -> SampleResult;
+    fn on_sample(&mut self, pub_id: &PublisherId, partition: u32, seq: u64) -> SampleResult;
 
-    /// Process a heartbeat beacon from a publisher. If the publisher's advertised
-    /// `current_seq` is ahead of our last-seen value, return the missing ranges.
-    fn on_heartbeat(&mut self, pub_id: &PublisherId, current_seq: u64) -> Vec<MissInfo>;
+    /// Process a heartbeat beacon from a publisher. For each partition the publisher
+    /// has written to, if the advertised seq is ahead of our last-seen value,
+    /// return the missing ranges.
+    fn on_heartbeat(&mut self, pub_id: &PublisherId, partition_seqs: &HashMap<u32, u64>) -> Vec<MissInfo>;
 
-    /// Return the last sequence number seen from the given publisher, if any.
-    fn last_seen(&self, pub_id: &PublisherId) -> Option<u64>;
+    /// Return the last sequence number seen from the given publisher on a partition, if any.
+    fn last_seen(&self, pub_id: &PublisherId, partition: u32) -> Option<u64>;
 }
 
 /// Default in-memory gap detector using a per-publisher sequence counter.
@@ -53,10 +56,10 @@ pub trait SequenceTracker: Send + Sync {
 /// arrives with `seq > expected`, the gap `[expected..seq)` is reported.
 /// Samples with `seq < expected` are treated as duplicates.
 pub struct GapDetector {
-    /// Maps publisher ID → last delivered sequence number.
-    last_seen: HashMap<PublisherId, u64>,
-    /// Maps publisher ID → wall-clock time of last activity (sample or heartbeat).
-    last_activity: HashMap<PublisherId, Instant>,
+    /// Maps (publisher ID, partition) → last delivered sequence number.
+    last_seen: HashMap<(PublisherId, u32), u64>,
+    /// Maps (publisher ID, partition) → wall-clock time of last activity.
+    last_activity: HashMap<(PublisherId, u32), Instant>,
 }
 
 impl GapDetector {
@@ -72,7 +75,7 @@ impl GapDetector {
     /// Used for cross-restart recovery: the subscriber loads persisted
     /// checkpoints and injects them so that events at or below the
     /// checkpoint are treated as duplicates.
-    pub fn with_checkpoints(checkpoints: HashMap<PublisherId, u64>) -> Self {
+    pub fn with_checkpoints(checkpoints: HashMap<(PublisherId, u32), u64>) -> Self {
         Self {
             last_seen: checkpoints,
             last_activity: HashMap::new(),
@@ -81,19 +84,19 @@ impl GapDetector {
 
     /// Remove tracking state for publishers whose last activity is older than `age`.
     ///
-    /// Returns the number of publishers evicted.
+    /// Returns the number of entries evicted.
     pub fn evict_older_than(&mut self, age: Duration) -> usize {
         let now = Instant::now();
-        let stale: Vec<PublisherId> = self
+        let stale: Vec<(PublisherId, u32)> = self
             .last_activity
             .iter()
             .filter(|(_, t)| now.duration_since(**t) > age)
-            .map(|(id, _)| *id)
+            .map(|(key, _)| *key)
             .collect();
         let count = stale.len();
-        for id in stale {
-            self.last_seen.remove(&id);
-            self.last_activity.remove(&id);
+        for key in stale {
+            self.last_seen.remove(&key);
+            self.last_activity.remove(&key);
         }
         count
     }
@@ -106,45 +109,49 @@ impl Default for GapDetector {
 }
 
 impl SequenceTracker for GapDetector {
-    fn on_sample(&mut self, pub_id: &PublisherId, seq: u64) -> SampleResult {
-        let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
-        self.last_activity.insert(*pub_id, Instant::now());
+    fn on_sample(&mut self, pub_id: &PublisherId, partition: u32, seq: u64) -> SampleResult {
+        let key = (*pub_id, partition);
+        let expected = self.last_seen.get(&key).map(|last| last + 1).unwrap_or(0);
+        self.last_activity.insert(key, Instant::now());
 
         if seq == expected {
-            // Normal: exactly the next expected sequence.
-            self.last_seen.insert(*pub_id, seq);
+            self.last_seen.insert(key, seq);
             SampleResult::Deliver
         } else if seq > expected {
-            // Gap: we missed [expected..seq).
-            self.last_seen.insert(*pub_id, seq);
+            self.last_seen.insert(key, seq);
             SampleResult::Gap(MissInfo {
                 source: *pub_id,
+                partition,
                 missed: expected..seq,
             })
         } else {
-            // seq < expected → duplicate.
             SampleResult::Duplicate
         }
     }
 
-    fn on_heartbeat(&mut self, pub_id: &PublisherId, current_seq: u64) -> Vec<MissInfo> {
-        let expected = self.last_seen.get(pub_id).map(|last| last + 1).unwrap_or(0);
-        self.last_activity.insert(*pub_id, Instant::now());
+    fn on_heartbeat(&mut self, pub_id: &PublisherId, partition_seqs: &HashMap<u32, u64>) -> Vec<MissInfo> {
+        let mut misses = Vec::new();
+        for (&partition, &current_seq) in partition_seqs {
+            let key = (*pub_id, partition);
+            let expected = self.last_seen.get(&key).map(|last| last + 1).unwrap_or(0);
+            self.last_activity.insert(key, Instant::now());
 
-        if current_seq >= expected {
-            let next = current_seq + 1;
-            if expected < next {
-                return vec![MissInfo {
-                    source: *pub_id,
-                    missed: expected..next,
-                }];
+            if current_seq >= expected {
+                let next = current_seq + 1;
+                if expected < next {
+                    misses.push(MissInfo {
+                        source: *pub_id,
+                        partition,
+                        missed: expected..next,
+                    });
+                }
             }
         }
-        vec![]
+        misses
     }
 
-    fn last_seen(&self, pub_id: &PublisherId) -> Option<u64> {
-        self.last_seen.get(pub_id).copied()
+    fn last_seen(&self, pub_id: &PublisherId, partition: u32) -> Option<u64> {
+        self.last_seen.get(&(*pub_id, partition)).copied()
     }
 }
 
@@ -161,10 +168,10 @@ mod tests {
         let mut det = GapDetector::new();
         let pub_id = make_pub_id();
 
-        assert_eq!(det.on_sample(&pub_id, 0), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_id, 1), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_id, 2), SampleResult::Deliver);
-        assert_eq!(det.last_seen(&pub_id), Some(2));
+        assert_eq!(det.on_sample(&pub_id, 0, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 1), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 2), SampleResult::Deliver);
+        assert_eq!(det.last_seen(&pub_id, 0), Some(2));
     }
 
     #[test]
@@ -172,17 +179,18 @@ mod tests {
         let mut det = GapDetector::new();
         let pub_id = make_pub_id();
 
-        assert_eq!(det.on_sample(&pub_id, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 0), SampleResult::Deliver);
         // Skip seq 1, 2
-        let result = det.on_sample(&pub_id, 3);
+        let result = det.on_sample(&pub_id, 0, 3);
         assert_eq!(
             result,
             SampleResult::Gap(MissInfo {
                 source: pub_id,
+                partition: 0,
                 missed: 1..3,
             })
         );
-        assert_eq!(det.last_seen(&pub_id), Some(3));
+        assert_eq!(det.last_seen(&pub_id, 0), Some(3));
     }
 
     #[test]
@@ -190,10 +198,10 @@ mod tests {
         let mut det = GapDetector::new();
         let pub_id = make_pub_id();
 
-        assert_eq!(det.on_sample(&pub_id, 0), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_id, 1), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_id, 0), SampleResult::Duplicate);
-        assert_eq!(det.on_sample(&pub_id, 1), SampleResult::Duplicate);
+        assert_eq!(det.on_sample(&pub_id, 0, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 1), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 0), SampleResult::Duplicate);
+        assert_eq!(det.on_sample(&pub_id, 0, 1), SampleResult::Duplicate);
     }
 
     #[test]
@@ -202,18 +210,19 @@ mod tests {
         let pub_a = make_pub_id();
         let pub_b = make_pub_id();
 
-        assert_eq!(det.on_sample(&pub_a, 0), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_b, 0), SampleResult::Deliver);
-        assert_eq!(det.on_sample(&pub_a, 1), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_a, 0, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_b, 0, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_a, 0, 1), SampleResult::Deliver);
         assert_eq!(
-            det.on_sample(&pub_b, 5),
+            det.on_sample(&pub_b, 0, 5),
             SampleResult::Gap(MissInfo {
                 source: pub_b,
+                partition: 0,
                 missed: 1..5,
             })
         );
-        assert_eq!(det.last_seen(&pub_a), Some(1));
-        assert_eq!(det.last_seen(&pub_b), Some(5));
+        assert_eq!(det.last_seen(&pub_a, 0), Some(1));
+        assert_eq!(det.last_seen(&pub_b, 0), Some(5));
     }
 
     #[test]
@@ -221,10 +230,12 @@ mod tests {
         let mut det = GapDetector::new();
         let pub_id = make_pub_id();
 
-        // No samples seen yet — heartbeat says current_seq=5
-        let misses = det.on_heartbeat(&pub_id, 5);
+        // No samples seen yet — heartbeat says partition 0 current_seq=5
+        let seqs = HashMap::from([(0u32, 5u64)]);
+        let misses = det.on_heartbeat(&pub_id, &seqs);
         assert_eq!(misses.len(), 1);
         assert_eq!(misses[0].missed, 0..6);
+        assert_eq!(misses[0].partition, 0);
     }
 
     #[test]
@@ -232,11 +243,12 @@ mod tests {
         let mut det = GapDetector::new();
         let pub_id = make_pub_id();
 
-        det.on_sample(&pub_id, 0);
-        det.on_sample(&pub_id, 1);
-        det.on_sample(&pub_id, 2);
+        det.on_sample(&pub_id, 0, 0);
+        det.on_sample(&pub_id, 0, 1);
+        det.on_sample(&pub_id, 0, 2);
 
-        let misses = det.on_heartbeat(&pub_id, 2);
+        let seqs = HashMap::from([(0u32, 2u64)]);
+        let misses = det.on_heartbeat(&pub_id, &seqs);
         assert!(misses.is_empty());
     }
 
@@ -244,15 +256,15 @@ mod tests {
     fn with_checkpoints() {
         let pub_id = make_pub_id();
         let mut checkpoints = HashMap::new();
-        checkpoints.insert(pub_id, 10);
+        checkpoints.insert((pub_id, 0), 10);
 
         let mut det = GapDetector::with_checkpoints(checkpoints);
 
         // seq 10 and below should be duplicate
-        assert_eq!(det.on_sample(&pub_id, 10), SampleResult::Duplicate);
-        assert_eq!(det.on_sample(&pub_id, 9), SampleResult::Duplicate);
+        assert_eq!(det.on_sample(&pub_id, 0, 10), SampleResult::Duplicate);
+        assert_eq!(det.on_sample(&pub_id, 0, 9), SampleResult::Duplicate);
         // seq 11 is the expected next
-        assert_eq!(det.on_sample(&pub_id, 11), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 11), SampleResult::Deliver);
     }
 
     #[test]
@@ -261,13 +273,38 @@ mod tests {
         let pub_id = make_pub_id();
 
         // First sample is seq 5 (late join) — reports gap [0..5)
-        let result = det.on_sample(&pub_id, 5);
+        let result = det.on_sample(&pub_id, 0, 5);
         assert_eq!(
             result,
             SampleResult::Gap(MissInfo {
                 source: pub_id,
+                partition: 0,
                 missed: 0..5,
             })
         );
+    }
+
+    #[test]
+    fn cross_partition_independence() {
+        let mut det = GapDetector::new();
+        let pub_id = make_pub_id();
+
+        // Publisher writes to partition 0 and partition 1 independently.
+        assert_eq!(det.on_sample(&pub_id, 0, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 1, 0), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 0, 1), SampleResult::Deliver);
+        assert_eq!(det.on_sample(&pub_id, 1, 1), SampleResult::Deliver);
+
+        // Gap on partition 1 only.
+        assert_eq!(
+            det.on_sample(&pub_id, 1, 5),
+            SampleResult::Gap(MissInfo {
+                source: pub_id,
+                partition: 1,
+                missed: 2..5,
+            })
+        );
+        // Partition 0 unaffected.
+        assert_eq!(det.on_sample(&pub_id, 0, 2), SampleResult::Deliver);
     }
 }

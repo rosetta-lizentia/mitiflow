@@ -1,8 +1,8 @@
 //! Event publisher with sequencing, caching, and heartbeat.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use tokio::sync::RwLock;
@@ -37,7 +37,8 @@ pub struct CachedSample {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HeartbeatBeacon {
     pub pub_id: PublisherId,
-    pub current_seq: u64,
+    /// Per-partition sequence counters (each value is the highest assigned seq).
+    pub partition_seqs: HashMap<u32, u64>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -53,8 +54,8 @@ pub struct EventPublisher {
     session: Session,
     /// Bounded in-memory cache for recovery queries.
     cache: Arc<RwLock<VecDeque<CachedSample>>>,
-    /// Monotonic sequence counter.
-    next_seq: Arc<AtomicU64>,
+    /// Per-partition monotonic sequence counters.
+    partition_seqs: Arc<Mutex<HashMap<u32, u64>>>,
     /// Unique identity for this publisher.
     publisher_id: PublisherId,
     /// Configuration snapshot.
@@ -74,7 +75,7 @@ async fn run_heartbeat_task(
     session: Session,
     key: String,
     pub_id: PublisherId,
-    seq: Arc<AtomicU64>,
+    partition_seqs: Arc<Mutex<HashMap<u32, u64>>>,
     cancel: CancellationToken,
     mode: HeartbeatMode,
 ) {
@@ -88,9 +89,13 @@ async fn run_heartbeat_task(
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = interval.tick() => {
+                let seqs = {
+                    let lock = partition_seqs.lock().unwrap();
+                    lock.iter().map(|(&p, &s)| (p, s.saturating_sub(1))).collect()
+                };
                 let beacon = HeartbeatBeacon {
                     pub_id,
-                    current_seq: seq.load(Ordering::Relaxed).saturating_sub(1),
+                    partition_seqs: seqs,
                     timestamp: chrono::Utc::now(),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&beacon) {
@@ -197,7 +202,8 @@ impl EventPublisher {
 
         let cache: Arc<RwLock<VecDeque<CachedSample>>> =
             Arc::new(RwLock::new(VecDeque::with_capacity(config.cache_size)));
-        let next_seq = Arc::new(AtomicU64::new(0));
+        let partition_seqs: Arc<Mutex<HashMap<u32, u64>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let cancel = CancellationToken::new();
         let mut tasks = Vec::new();
 
@@ -206,7 +212,7 @@ impl EventPublisher {
                 session.clone(),
                 format!("{key_prefix}/_heartbeat/{publisher_id}"),
                 publisher_id,
-                Arc::clone(&next_seq),
+                Arc::clone(&partition_seqs),
                 cancel.clone(),
                 config.heartbeat.clone(),
             )));
@@ -242,7 +248,7 @@ impl EventPublisher {
             publisher,
             session: session.clone(),
             cache,
-            next_seq,
+            partition_seqs,
             publisher_id,
             config,
             cancel,
@@ -267,8 +273,9 @@ impl EventPublisher {
     /// On the subscriber side, use [`EventSubscriber::recv_raw`] to receive
     /// the bytes without a deserialization step.
     pub async fn publish_bytes(&self, bytes: Vec<u8>) -> Result<u64> {
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        let key = format!("{}/{}", self.config.key_prefix, seq);
+        let partition = 0u32;
+        let seq = self.next_seq_for(partition);
+        let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(&key, bytes, seq, event_id, timestamp, NO_URGENCY).await?;
@@ -276,8 +283,12 @@ impl EventPublisher {
     }
 
     /// Publish raw bytes to an explicit key expression, bypassing codec encoding.
+    ///
+    /// The partition is extracted from the key expression (e.g., `prefix/p/3/data`).
+    /// If the key has no `/p/` segment, partition 0 is used.
     pub async fn publish_bytes_to(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let partition = crate::attachment::extract_partition(key);
+        let seq = self.next_seq_for(partition);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(key, bytes, seq, event_id, timestamp, NO_URGENCY).await?;
@@ -290,13 +301,14 @@ impl EventPublisher {
     #[cfg(feature = "store")]
     pub async fn publish_bytes_durable(&self, bytes: Vec<u8>) -> Result<u64> {
         let urgency_ms = self.urgency_ms();
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        let key = format!("{}/{}", self.config.key_prefix, seq);
+        let partition = 0u32;
+        let seq = self.next_seq_for(partition);
+        let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(&key, bytes, seq, event_id, timestamp, urgency_ms)
             .await?;
-        self.wait_for_watermark(seq).await
+        self.wait_for_watermark(partition, seq).await
     }
 
     /// Publish an event on the configured key prefix (fast path).
@@ -305,15 +317,20 @@ impl EventPublisher {
     /// the recovery cache, and publishes via Zenoh. Returns the assigned
     /// sequence number.
     pub async fn publish<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        let key = format!("{}/{}", self.config.key_prefix, seq);
+        let partition = 0u32;
+        let seq = self.next_seq_for(partition);
+        let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         self.publish_inner(&key, event, seq, NO_URGENCY).await?;
         Ok(seq)
     }
 
     /// Publish an event to an explicit key expression (e.g., a partition key).
+    ///
+    /// The partition is extracted from the key expression (e.g., `prefix/p/3/data`).
+    /// If the key has no `/p/` segment, partition 0 is used.
     pub async fn publish_to<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64> {
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let partition = crate::attachment::extract_partition(key);
+        let seq = self.next_seq_for(partition);
         self.publish_inner(key, event, seq, NO_URGENCY).await?;
         Ok(seq)
     }
@@ -332,15 +349,16 @@ impl EventPublisher {
     #[cfg(feature = "store")]
     pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
         let urgency_ms = self.urgency_ms();
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        let key = format!("{}/{}", self.config.key_prefix, seq);
+        let partition = 0u32;
+        let seq = self.next_seq_for(partition);
+        let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         self.publish_inner(&key, event, seq, urgency_ms).await?;
-        self.wait_for_watermark(seq).await
+        self.wait_for_watermark(partition, seq).await
     }
 
-    /// Wait until the Event Store's watermark covers `seq` for this publisher.
+    /// Wait until the Event Store's watermark covers `seq` for this publisher on the given partition.
     #[cfg(feature = "store")]
-    async fn wait_for_watermark(&self, seq: u64) -> Result<u64> {
+    async fn wait_for_watermark(&self, partition: u32, seq: u64) -> Result<u64> {
         let watermark_tx = self
             .watermark_tx
             .as_ref()
@@ -354,7 +372,7 @@ impl EventPublisher {
             loop {
                 match rx.recv().await {
                     Ok(wm) => {
-                        if wm.is_durable(&my_id, seq) {
+                        if wm.partition == partition && wm.is_durable(&my_id, seq) {
                             return Ok(seq);
                         }
                     }
@@ -442,9 +460,25 @@ impl EventPublisher {
         &self.session
     }
 
-    /// Current sequence number (next to be assigned).
+    /// Current sequence number for partition 0 (next to be assigned).
     pub fn current_seq(&self) -> u64 {
-        self.next_seq.load(Ordering::Relaxed)
+        let lock = self.partition_seqs.lock().unwrap();
+        lock.get(&0).copied().unwrap_or(0)
+    }
+
+    /// Current sequence number for a specific partition (next to be assigned).
+    pub fn current_seq_for(&self, partition: u32) -> u64 {
+        let lock = self.partition_seqs.lock().unwrap();
+        lock.get(&partition).copied().unwrap_or(0)
+    }
+
+    /// Allocate the next sequence number for the given partition.
+    fn next_seq_for(&self, partition: u32) -> u64 {
+        let mut lock = self.partition_seqs.lock().unwrap();
+        let counter = lock.entry(partition).or_insert(0);
+        let seq = *counter;
+        *counter += 1;
+        seq
     }
 
     /// Configuration snapshot.

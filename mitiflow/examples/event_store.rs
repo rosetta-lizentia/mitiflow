@@ -175,7 +175,7 @@ async fn main() -> mitiflow::Result<()> {
     let config = build_config()?;
     let num_events = 20u64;
 
-    let (mut store, publisher, subscriber) =
+    let (store, publisher, subscriber) =
         setup_store_and_pubsub(&session, &config, store_dir.path()).await?;
     publish_durable_events(&publisher, num_events).await?;
     drain_live_stream(&subscriber, num_events).await?;

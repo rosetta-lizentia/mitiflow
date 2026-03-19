@@ -5,7 +5,6 @@ mod common;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 
 use mitiflow::store::FjallBackend;
 use mitiflow::store::backend::{EventMetadata, StorageBackend};

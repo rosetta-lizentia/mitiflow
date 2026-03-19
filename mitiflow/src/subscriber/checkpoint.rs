@@ -11,7 +11,15 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::types::PublisherId;
 
-/// Persists per-publisher sequence checkpoints to disk via fjall.
+/// Checkpoint key: publisher_id (16) + partition (4 BE) = 20 bytes.
+fn checkpoint_key(pub_id: &PublisherId, partition: u32) -> [u8; 20] {
+    let mut key = [0u8; 20];
+    key[..16].copy_from_slice(&pub_id.to_bytes());
+    key[16..].copy_from_slice(&partition.to_be_bytes());
+    key
+}
+
+/// Persists per-(publisher, partition) sequence checkpoints to disk via fjall.
 ///
 /// Each `ack(pub_id, seq)` durably stores the sequence number so that
 /// after a restart, the subscriber can resume from where it left off.
@@ -35,13 +43,13 @@ impl SequenceCheckpoint {
         Ok(Self { db, keyspace })
     }
 
-    /// Acknowledge (checkpoint) a sequence number for a publisher.
+    /// Acknowledge (checkpoint) a sequence number for a publisher on a partition.
     ///
     /// Only advances the checkpoint — if the stored seq is already >= the
     /// given seq, this is a no-op.
-    pub fn ack(&self, pub_id: &PublisherId, seq: u64) -> Result<()> {
-        let key = pub_id.to_bytes();
-        let current = self.last_checkpoint(pub_id)?;
+    pub fn ack(&self, pub_id: &PublisherId, partition: u32, seq: u64) -> Result<()> {
+        let key = checkpoint_key(pub_id, partition);
+        let current = self.last_checkpoint(pub_id, partition)?;
 
         if let Some(current_seq) = current {
             if seq <= current_seq {
@@ -56,9 +64,9 @@ impl SequenceCheckpoint {
         Ok(())
     }
 
-    /// Get the last checkpointed sequence for a publisher, if any.
-    pub fn last_checkpoint(&self, pub_id: &PublisherId) -> Result<Option<u64>> {
-        let key = pub_id.to_bytes();
+    /// Get the last checkpointed sequence for a publisher on a partition, if any.
+    pub fn last_checkpoint(&self, pub_id: &PublisherId, partition: u32) -> Result<Option<u64>> {
+        let key = checkpoint_key(pub_id, partition);
         match self
             .keyspace
             .get(key)
@@ -75,10 +83,10 @@ impl SequenceCheckpoint {
         }
     }
 
-    /// Load all checkpoints as a map of `PublisherId → last_seq`.
+    /// Load all checkpoints as a map of `(PublisherId, partition) → last_seq`.
     ///
     /// Used on restart to seed the [`GapDetector::with_checkpoints()`].
-    pub fn restore(&self) -> Result<HashMap<PublisherId, u64>> {
+    pub fn restore(&self) -> Result<HashMap<(PublisherId, u32), u64>> {
         let mut map = HashMap::new();
 
         for guard in self.keyspace.iter() {
@@ -88,10 +96,20 @@ impl SequenceCheckpoint {
             let key_bytes: &[u8] = kv.0.as_ref();
             let val_bytes: &[u8] = kv.1.as_ref();
 
+            if key_bytes.len() < 20 {
+                continue; // Skip malformed keys
+            }
+
             let pub_id = PublisherId::from_bytes(
-                key_bytes
+                key_bytes[..16]
                     .try_into()
                     .map_err(|_| Error::CheckpointError("invalid publisher id bytes".into()))?,
+            );
+
+            let partition = u32::from_be_bytes(
+                key_bytes[16..20]
+                    .try_into()
+                    .map_err(|_| Error::CheckpointError("invalid partition bytes".into()))?,
             );
 
             let seq_arr: [u8; 8] = val_bytes
@@ -99,15 +117,15 @@ impl SequenceCheckpoint {
                 .map_err(|_| Error::CheckpointError("invalid seq bytes in checkpoint".into()))?;
             let seq = u64::from_be_bytes(seq_arr);
 
-            map.insert(pub_id, seq);
+            map.insert((pub_id, partition), seq);
         }
 
         Ok(map)
     }
 
-    /// Remove the checkpoint for a specific publisher.
-    pub fn remove(&self, pub_id: &PublisherId) -> Result<()> {
-        let key = pub_id.to_bytes();
+    /// Remove the checkpoint for a specific publisher on a partition.
+    pub fn remove(&self, pub_id: &PublisherId, partition: u32) -> Result<()> {
+        let key = checkpoint_key(pub_id, partition);
         self.keyspace
             .remove(key)
             .map_err(|e| Error::CheckpointError(format!("remove failed: {e}")))?;
@@ -131,16 +149,16 @@ mod tests {
         let pub1 = PublisherId::new();
         let pub2 = PublisherId::new();
 
-        cp.ack(&pub1, 5).unwrap();
-        cp.ack(&pub2, 10).unwrap();
+        cp.ack(&pub1, 0, 5).unwrap();
+        cp.ack(&pub2, 0, 10).unwrap();
 
-        assert_eq!(cp.last_checkpoint(&pub1).unwrap(), Some(5));
-        assert_eq!(cp.last_checkpoint(&pub2).unwrap(), Some(10));
+        assert_eq!(cp.last_checkpoint(&pub1, 0).unwrap(), Some(5));
+        assert_eq!(cp.last_checkpoint(&pub2, 0).unwrap(), Some(10));
 
         let restored = cp.restore().unwrap();
         assert_eq!(restored.len(), 2);
-        assert_eq!(restored[&pub1], 5);
-        assert_eq!(restored[&pub2], 10);
+        assert_eq!(restored[&(pub1, 0)], 5);
+        assert_eq!(restored[&(pub2, 0)], 10);
     }
 
     #[test]
@@ -148,11 +166,11 @@ mod tests {
         let (_dir, cp) = temp_checkpoint();
         let pub_id = PublisherId::new();
 
-        cp.ack(&pub_id, 10).unwrap();
-        cp.ack(&pub_id, 5).unwrap(); // This should be a no-op.
-        cp.ack(&pub_id, 10).unwrap(); // Same seq, no-op.
+        cp.ack(&pub_id, 0, 10).unwrap();
+        cp.ack(&pub_id, 0, 5).unwrap(); // This should be a no-op.
+        cp.ack(&pub_id, 0, 10).unwrap(); // Same seq, no-op.
 
-        assert_eq!(cp.last_checkpoint(&pub_id).unwrap(), Some(10));
+        assert_eq!(cp.last_checkpoint(&pub_id, 0).unwrap(), Some(10));
     }
 
     #[test]
@@ -160,17 +178,17 @@ mod tests {
         let (_dir, cp) = temp_checkpoint();
         let pub_id = PublisherId::new();
 
-        cp.ack(&pub_id, 5).unwrap();
-        cp.ack(&pub_id, 15).unwrap();
+        cp.ack(&pub_id, 0, 5).unwrap();
+        cp.ack(&pub_id, 0, 15).unwrap();
 
-        assert_eq!(cp.last_checkpoint(&pub_id).unwrap(), Some(15));
+        assert_eq!(cp.last_checkpoint(&pub_id, 0).unwrap(), Some(15));
     }
 
     #[test]
     fn unknown_publisher_returns_none() {
         let (_dir, cp) = temp_checkpoint();
         let pub_id = PublisherId::new();
-        assert_eq!(cp.last_checkpoint(&pub_id).unwrap(), None);
+        assert_eq!(cp.last_checkpoint(&pub_id, 0).unwrap(), None);
     }
 
     #[test]
@@ -178,11 +196,11 @@ mod tests {
         let (_dir, cp) = temp_checkpoint();
         let pub_id = PublisherId::new();
 
-        cp.ack(&pub_id, 42).unwrap();
-        assert_eq!(cp.last_checkpoint(&pub_id).unwrap(), Some(42));
+        cp.ack(&pub_id, 0, 42).unwrap();
+        assert_eq!(cp.last_checkpoint(&pub_id, 0).unwrap(), Some(42));
 
-        cp.remove(&pub_id).unwrap();
-        assert_eq!(cp.last_checkpoint(&pub_id).unwrap(), None);
+        cp.remove(&pub_id, 0).unwrap();
+        assert_eq!(cp.last_checkpoint(&pub_id, 0).unwrap(), None);
     }
 
     #[test]
@@ -192,14 +210,31 @@ mod tests {
 
         {
             let cp = SequenceCheckpoint::open(dir.path().join("checkpoints")).unwrap();
-            cp.ack(&pub_id, 99).unwrap();
+            cp.ack(&pub_id, 0, 99).unwrap();
         }
 
         // Re-open from the same path.
         let cp2 = SequenceCheckpoint::open(dir.path().join("checkpoints")).unwrap();
-        assert_eq!(cp2.last_checkpoint(&pub_id).unwrap(), Some(99));
+        assert_eq!(cp2.last_checkpoint(&pub_id, 0).unwrap(), Some(99));
 
         let restored = cp2.restore().unwrap();
-        assert_eq!(restored[&pub_id], 99);
+        assert_eq!(restored[&(pub_id, 0)], 99);
+    }
+
+    #[test]
+    fn cross_partition_checkpoints() {
+        let (_dir, cp) = temp_checkpoint();
+        let pub_id = PublisherId::new();
+
+        cp.ack(&pub_id, 0, 5).unwrap();
+        cp.ack(&pub_id, 1, 10).unwrap();
+
+        assert_eq!(cp.last_checkpoint(&pub_id, 0).unwrap(), Some(5));
+        assert_eq!(cp.last_checkpoint(&pub_id, 1).unwrap(), Some(10));
+
+        let restored = cp.restore().unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[&(pub_id, 0)], 5);
+        assert_eq!(restored[&(pub_id, 1)], 10);
     }
 }

@@ -208,7 +208,8 @@ impl EventSubscriber {
                             match sample_result {
                                 Ok(sample) => {
                                     if let Some((meta, key, payload)) = decode_sample(&sample) {
-                                        let result = gd.on_sample(&meta.pub_id, meta.seq);
+                                        let partition = crate::attachment::extract_partition(&key);
+                                        let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
                                         handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &prefix);
                                         sample_count += 1;
                                         maybe_evict(&mut gd, sample_count, publisher_ttl);
@@ -222,7 +223,7 @@ impl EventSubscriber {
                                 Ok(sample) => {
                                     if let Some(beacon) = decode_heartbeat(&sample) {
                                         if recovery_enabled {
-                                            let misses = gd.on_heartbeat(&beacon.pub_id, beacon.current_seq);
+                                            let misses = gd.on_heartbeat(&beacon.pub_id, &beacon.partition_seqs);
                                             handle_heartbeat_gaps(misses, &sess, &prefix, &tx);
                                         }
                                     }
@@ -263,14 +264,15 @@ impl EventSubscriber {
                             msg = shard_rx.recv_async() => {
                                 match msg {
                                     Ok(ShardMsg::Sample { meta, key, payload }) => {
-                                        let result = gd.on_sample(&meta.pub_id, meta.seq);
+                                        let partition = crate::attachment::extract_partition(&key);
+                                        let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
                                         handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &prefix);
                                         sample_count += 1;
                                         maybe_evict(&mut gd, sample_count, publisher_ttl);
                                     }
                                     Ok(ShardMsg::Heartbeat(beacon)) => {
                                         if recovery_enabled {
-                                            let misses = gd.on_heartbeat(&beacon.pub_id, beacon.current_seq);
+                                            let misses = gd.on_heartbeat(&beacon.pub_id, &beacon.partition_seqs);
                                             handle_heartbeat_gaps(misses, &sess, &prefix, &tx);
                                         }
                                     }

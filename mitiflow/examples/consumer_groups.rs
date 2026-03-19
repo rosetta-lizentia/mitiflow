@@ -76,7 +76,7 @@ mod inner {
     async fn phase_publish_events(
         session: &zenoh::Session,
         worker_a: &PartitionManager,
-        worker_b: &PartitionManager,
+        _worker_b: &PartitionManager,
         num_partitions: u32,
     ) -> mitiflow::Result<()> {
         const KEY_PREFIX: &str = "demo/user_actions";
@@ -98,7 +98,7 @@ mod inner {
         println!("\n--- Event routing to partitions ---");
         for user_id in &user_ids {
             let partition = worker_a.partition_for(user_id);
-            let key = format!("{KEY_PREFIX}/{partition}/{user_id}");
+            let key = format!("{KEY_PREFIX}/p/{partition}/{user_id}");
             let event = Event::new(UserAction {
                 user_id: user_id.to_string(),
                 action: "login".to_string(),
@@ -110,7 +110,7 @@ mod inner {
                 "worker-b"
             };
             println!(
-                "  user={user_id:6}  partition={partition:2}  owner={owner}  key_suffix=…/{partition}/{user_id}"
+                "  user={user_id:6}  partition={partition:2}  owner={owner}  key_suffix=…/p/{partition}/{user_id}"
             );
         }
         Ok(())

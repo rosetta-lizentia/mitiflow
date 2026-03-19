@@ -11,6 +11,9 @@
 //! [ seq: u64 BE (8) | publisher_id: UUID (16) | event_id: UUID (16) | timestamp_ns: i64 BE (8) | urgency_ms: u16 BE (2) ]
 //! ```
 //!
+//! The partition is encoded in the Zenoh key expression (topic segment), not
+//! in the attachment, so subscribers can filter by partition natively.
+//!
 //! `urgency_ms` is the publisher's requested latency budget for durability
 //! confirmation, in milliseconds. `0` means broadcast the watermark
 //! immediately. `0xFFFF` (`NO_URGENCY`) means no urgency — use the store's
@@ -111,6 +114,24 @@ pub fn decode_metadata(attachment: &ZBytes) -> Result<EventMeta> {
     })
 }
 
+/// Extract the partition number from a Zenoh key expression.
+///
+/// Expected format: `{prefix}/p/{partition}/{tail}`.
+/// Returns `0` when no `/p/` segment is found (non-partitioned mode).
+pub fn extract_partition(key: &str) -> u32 {
+    // Look for "/p/" segment and parse the u32 after it.
+    if let Some(idx) = key.find("/p/") {
+        let rest = &key[idx + 3..];
+        if let Some(end) = rest.find('/') {
+            rest[..end].parse().unwrap_or(0)
+        } else {
+            rest.parse().unwrap_or(0)
+        }
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +205,25 @@ mod tests {
     fn invalid_length() {
         let zbytes = ZBytes::from(vec![0u8; 10]);
         assert!(decode_metadata(&zbytes).is_err());
+    }
+
+    #[test]
+    fn extract_partition_from_key() {
+        assert_eq!(extract_partition("myapp/events/p/3/42"), 3);
+        assert_eq!(extract_partition("myapp/events/p/0/some/key"), 0);
+        assert_eq!(extract_partition("myapp/events/p/255/data"), 255);
+    }
+
+    #[test]
+    fn extract_partition_missing_segment() {
+        // No /p/ segment → defaults to 0 (non-partitioned mode).
+        assert_eq!(extract_partition("myapp/events/42"), 0);
+        assert_eq!(extract_partition("topic/data"), 0);
+    }
+
+    #[test]
+    fn extract_partition_invalid_number() {
+        // Non-numeric partition → defaults to 0.
+        assert_eq!(extract_partition("myapp/events/p/abc/42"), 0);
     }
 }

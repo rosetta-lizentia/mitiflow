@@ -6,7 +6,7 @@ mod common;
 
 use std::time::Duration;
 
-use mitiflow::{Event, EventBusConfig, EventPublisher, EventSubscriber, HeartbeatMode};
+use mitiflow::{Event, EventBusConfig, EventPublisher};
 
 use common::TestPayload;
 

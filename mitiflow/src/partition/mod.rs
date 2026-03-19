@@ -165,8 +165,9 @@ impl PartitionManager {
 
     /// Build a Zenoh key expression that matches only this worker's partitions.
     ///
-    /// Returns a key expression like `prefix/0|prefix/5|prefix/12` for partitions
-    /// `[0, 5, 12]`. This can be used to subscribe only to relevant partitions.
+    /// Returns a key expression like `prefix/p/0/**|prefix/p/5/**|prefix/p/12/**`
+    /// for partitions `[0, 5, 12]`. This can be used to subscribe only to
+    /// relevant partitions.
     pub async fn subscription_key_expr(&self, key_prefix: &str) -> String {
         let parts = self.my_partitions.read().await;
         if parts.is_empty() {
@@ -175,7 +176,7 @@ impl PartitionManager {
         }
         parts
             .iter()
-            .map(|p| format!("{key_prefix}/{p}/**"))
+            .map(|p| format!("{key_prefix}/p/{p}/**"))
             .collect::<Vec<_>>()
             .join("|")
     }

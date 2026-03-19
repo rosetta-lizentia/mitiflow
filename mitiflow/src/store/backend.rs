@@ -44,6 +44,9 @@ pub struct CompactionStats {
 /// Implementations must be `Send + Sync` to be used from async tasks.
 /// The default implementation (`FjallBackend`) uses an LSM-tree via the `fjall` crate.
 pub trait StorageBackend: Send + Sync {
+    /// The partition this backend is responsible for.
+    fn partition(&self) -> u32;
+
     /// Persist an event.
     fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()>;
 
@@ -70,25 +73,24 @@ mod fjall_impl {
     use std::collections::BTreeSet;
     use std::sync::Mutex;
 
-    /// Key encoding: 28 bytes = partition (4 BE) + publisher_id (16) + seq (8 BE).
-    /// Big-endian ensures natural sort order within each (partition, publisher) prefix.
-    fn encode_event_key(partition: u32, publisher_id: &PublisherId, seq: u64) -> [u8; 28] {
-        let mut buf = [0u8; 28];
-        buf[..4].copy_from_slice(&partition.to_be_bytes());
-        buf[4..20].copy_from_slice(&publisher_id.to_bytes());
-        buf[20..].copy_from_slice(&seq.to_be_bytes());
+    /// Key encoding: 24 bytes = publisher_id (16) + seq (8 BE).
+    /// Big-endian seq ensures natural sort order within each publisher.
+    /// Partition is implicit — each `FjallBackend` instance owns one partition.
+    fn encode_event_key(publisher_id: &PublisherId, seq: u64) -> [u8; 24] {
+        let mut buf = [0u8; 24];
+        buf[..16].copy_from_slice(&publisher_id.to_bytes());
+        buf[16..].copy_from_slice(&seq.to_be_bytes());
         buf
     }
 
-    fn decode_event_key(key: &[u8]) -> Option<(u32, PublisherId, u64)> {
-        if key.len() < 28 {
+    fn decode_event_key(key: &[u8]) -> Option<(PublisherId, u64)> {
+        if key.len() < 24 {
             return None;
         }
-        let partition = u32::from_be_bytes(key[..4].try_into().ok()?);
-        let pub_bytes: [u8; 16] = key[4..20].try_into().ok()?;
+        let pub_bytes: [u8; 16] = key[..16].try_into().ok()?;
         let publisher_id = PublisherId::from_bytes(pub_bytes);
-        let seq = u64::from_be_bytes(key[20..28].try_into().ok()?);
-        Some((partition, publisher_id, seq))
+        let seq = u64::from_be_bytes(key[16..24].try_into().ok()?);
+        Some((publisher_id, seq))
     }
 
     /// Persistent event value: metadata JSON + raw payload bytes.
@@ -137,8 +139,8 @@ mod fjall_impl {
 
     /// LSM-tree backed storage using the `fjall` crate.
     ///
-    /// Uses three keyspaces:
-    /// - `events`   — primary event data, keyed by `(partition, publisher_id, seq)`
+    /// Each instance owns exactly one partition. Uses three keyspaces:
+    /// - `events`   — primary event data, keyed by `(publisher_id, seq)`
     /// - `metadata` — watermark state (per-publisher `committed_seq`)
     /// - `keys`     — key_expr → event key mapping for compaction
     pub struct FjallBackend {
@@ -146,7 +148,7 @@ mod fjall_impl {
         events: fjall::Keyspace,
         metadata: fjall::Keyspace,
         keys: fjall::Keyspace,
-        /// Default partition id for non-partitioned mode.
+        /// Partition id this backend is responsible for.
         partition: u32,
         /// Per-publisher gap tracking. Updated incrementally on each `store()`
         /// to avoid O(N) scans in `publisher_watermarks()`.
@@ -181,12 +183,11 @@ mod fjall_impl {
                 .map_err(|e| Error::StoreError(format!("failed to open keys keyspace: {e}")))?;
 
             // One-time scan to rebuild per-publisher gap state from existing data.
-            let prefix = partition.to_be_bytes();
             let mut states: HashMap<PublisherId, PublisherSeqState> = HashMap::new();
 
-            for guard in events.prefix(prefix) {
+            for guard in events.iter() {
                 let Ok(kv) = guard.into_inner() else { break };
-                if let Some((_, pub_id, seq)) = decode_event_key(&kv.0) {
+                if let Some((pub_id, seq)) = decode_event_key(&kv.0) {
                     let state = states.entry(pub_id).or_default();
                     let expected = state.highest_seen.map_or(0, |h| h + 1);
                     // Record any gaps between expected and this seq.
@@ -224,10 +225,14 @@ mod fjall_impl {
     }
 
     impl StorageBackend for FjallBackend {
+        fn partition(&self) -> u32 {
+            self.partition
+        }
+
         fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()> {
             let seq = metadata.seq;
             let pub_id = metadata.publisher_id;
-            let event_key = encode_event_key(self.partition, &pub_id, seq);
+            let event_key = encode_event_key(&pub_id, seq);
             let event_value = encode_event_value(&metadata, event);
 
             let mut batch = self.db.batch();
@@ -280,15 +285,14 @@ mod fjall_impl {
         }
 
         fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>> {
-            let prefix = self.partition.to_be_bytes();
             let mut results = Vec::new();
 
-            for guard in self.events.prefix(prefix) {
+            for guard in self.events.iter() {
                 let kv = guard
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("scan error: {e}")))?;
 
-                let Some((_, _pub_id, seq)) = decode_event_key(&kv.0) else {
+                let Some((_, seq)) = decode_event_key(&kv.0) else {
                     continue;
                 };
 
@@ -349,11 +353,10 @@ mod fjall_impl {
         }
 
         fn gc(&self, older_than: DateTime<Utc>) -> Result<usize> {
-            let prefix = self.partition.to_be_bytes();
             let mut removed = 0usize;
             let mut to_remove = Vec::new();
 
-            for guard in self.events.prefix(prefix) {
+            for guard in self.events.iter() {
                 let kv = guard
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("scan error: {e}")))?;
@@ -378,16 +381,15 @@ mod fjall_impl {
         }
 
         fn compact(&self) -> Result<CompactionStats> {
-            let prefix = self.partition.to_be_bytes();
             let mut latest: std::collections::HashMap<String, (Vec<u8>, u64)> =
                 std::collections::HashMap::new();
             let mut all_entries: Vec<(Vec<u8>, String, u64)> = Vec::new();
 
-            for guard in self.events.prefix(prefix) {
+            for guard in self.events.iter() {
                 let kv = guard
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("compact scan error: {e}")))?;
-                let Some((_, _pub_id, seq)) = decode_event_key(&kv.0) else {
+                let Some((_, seq)) = decode_event_key(&kv.0) else {
                     continue;
                 };
                 let (meta, _) = decode_event_value(&kv.1)?;

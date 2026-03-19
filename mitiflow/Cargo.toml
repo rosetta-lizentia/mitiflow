@@ -27,6 +27,7 @@ chrono = { workspace = true }
 flume = { workspace = true }
 tokio-util = { workspace = true }
 fjall = { workspace = true, optional = true }
+scc = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

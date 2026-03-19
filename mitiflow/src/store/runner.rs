@@ -215,6 +215,7 @@ async fn run_watermark_task(
         earliest_deadline.store(NO_DEADLINE, Ordering::Release);
 
         let watermark = CommitWatermark {
+            partition: backend.partition(),
             publishers: backend.publisher_watermarks(),
             timestamp: chrono::Utc::now(),
         };
