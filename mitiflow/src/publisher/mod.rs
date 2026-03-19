@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use serde::Serialize;
 use tokio::sync::RwLock;
@@ -55,7 +54,7 @@ pub struct EventPublisher {
     /// Bounded in-memory cache for recovery queries.
     cache: Arc<RwLock<VecDeque<CachedSample>>>,
     /// Per-partition monotonic sequence counters.
-    partition_seqs: Arc<Mutex<HashMap<u32, u64>>>,
+    partition_seqs: Arc<scc::HashMap<u32, u64>>,
     /// Unique identity for this publisher.
     publisher_id: PublisherId,
     /// Configuration snapshot.
@@ -75,7 +74,7 @@ async fn run_heartbeat_task(
     session: Session,
     key: String,
     pub_id: PublisherId,
-    partition_seqs: Arc<Mutex<HashMap<u32, u64>>>,
+    partition_seqs: Arc<scc::HashMap<u32, u64>>,
     cancel: CancellationToken,
     mode: HeartbeatMode,
 ) {
@@ -89,10 +88,8 @@ async fn run_heartbeat_task(
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = interval.tick() => {
-                let seqs = {
-                    let lock = partition_seqs.lock().unwrap();
-                    lock.iter().map(|(&p, &s)| (p, s.saturating_sub(1))).collect()
-                };
+                let mut seqs: HashMap<u32, u64> = HashMap::new();
+                partition_seqs.iter_sync(|p, s| { seqs.insert(*p, s.saturating_sub(1)); true });
                 let beacon = HeartbeatBeacon {
                     pub_id,
                     partition_seqs: seqs,
@@ -202,8 +199,8 @@ impl EventPublisher {
 
         let cache: Arc<RwLock<VecDeque<CachedSample>>> =
             Arc::new(RwLock::new(VecDeque::with_capacity(config.cache_size)));
-        let partition_seqs: Arc<Mutex<HashMap<u32, u64>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let partition_seqs: Arc<scc::HashMap<u32, u64>> =
+            Arc::new(scc::HashMap::new());
         let cancel = CancellationToken::new();
         let mut tasks = Vec::new();
 
@@ -462,23 +459,27 @@ impl EventPublisher {
 
     /// Current sequence number for partition 0 (next to be assigned).
     pub fn current_seq(&self) -> u64 {
-        let lock = self.partition_seqs.lock().unwrap();
-        lock.get(&0).copied().unwrap_or(0)
+        self.partition_seqs.read_sync(&0, |_, v| *v).unwrap_or(0)
     }
 
     /// Current sequence number for a specific partition (next to be assigned).
     pub fn current_seq_for(&self, partition: u32) -> u64 {
-        let lock = self.partition_seqs.lock().unwrap();
-        lock.get(&partition).copied().unwrap_or(0)
+        self.partition_seqs.read_sync(&partition, |_, v| *v).unwrap_or(0)
     }
 
     /// Allocate the next sequence number for the given partition.
     fn next_seq_for(&self, partition: u32) -> u64 {
-        let mut lock = self.partition_seqs.lock().unwrap();
-        let counter = lock.entry(partition).or_insert(0);
-        let seq = *counter;
-        *counter += 1;
-        seq
+        match self.partition_seqs.entry_sync(partition) {
+            scc::hash_map::Entry::Occupied(mut o) => {
+                let seq = *o.get();
+                *o.get_mut() += 1;
+                seq
+            }
+            scc::hash_map::Entry::Vacant(v) => {
+                v.insert_entry(1);
+                0
+            }
+        }
     }
 
     /// Configuration snapshot.

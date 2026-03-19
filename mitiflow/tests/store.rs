@@ -294,7 +294,7 @@ async fn event_store_persists_and_publishes_watermark() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // The store's backend should have committed some events for the publisher.
-    let wms = store.backend().publisher_watermarks();
+    let wms = store.publisher_watermarks().await.unwrap();
     assert!(
         !wms.is_empty(),
         "store should have tracked at least one publisher"
@@ -306,7 +306,7 @@ async fn event_store_persists_and_publishes_watermark() {
         "store should have committed some events, got {max_committed}"
     );
 
-    let stored = store.backend().query(&QueryFilters::default()).unwrap();
+    let stored = store.query(&QueryFilters::default()).await.unwrap();
     assert!(
         stored.len() >= 2,
         "store should have persisted events, got {}",

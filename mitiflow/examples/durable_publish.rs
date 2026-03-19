@@ -61,8 +61,7 @@ async fn main() -> mitiflow::Result<()> {
 
     // Query the store to verify.
     let stored = store
-        .backend()
-        .query(&mitiflow::store::QueryFilters::default())?;
+        .query(&mitiflow::store::QueryFilters::default()).await?;
     println!("Store contains {} events", stored.len());
 
     store.shutdown();

@@ -108,39 +108,39 @@ async fn drain_live_stream(
 }
 
 /// Phase 5: Query the store with various filters.
-fn run_store_queries(store: &EventStore) -> mitiflow::Result<()> {
+async fn run_store_queries(store: &EventStore) -> mitiflow::Result<()> {
     println!("\nStore queries:");
 
-    let recent = store.backend().query(&QueryFilters {
+    let recent = store.query(&QueryFilters {
         after_seq: Some(14),
         limit: Some(5),
         ..Default::default()
-    })?;
+    }).await?;
     println!(
         "  after_seq=14, limit=5  -> {} events  seqs={:?}",
         recent.len(),
         recent.iter().map(|e| e.metadata.seq).collect::<Vec<_>>()
     );
 
-    let range = store.backend().query(&QueryFilters {
+    let range = store.query(&QueryFilters {
         after_seq: Some(4),
         before_seq: Some(10),
         ..Default::default()
-    })?;
+    }).await?;
     println!(
         "  seq range (4, 10)      -> {} events  seqs={:?}",
         range.len(),
         range.iter().map(|e| e.metadata.seq).collect::<Vec<_>>()
     );
 
-    let all = store.backend().query(&QueryFilters::default())?;
+    let all = store.query(&QueryFilters::default()).await?;
     println!("  all events             -> {} events  ✓", all.len());
     Ok(())
 }
 
 /// Phase 6-7: Watermark, compaction, and GC.
-fn run_maintenance(store: &EventStore) -> mitiflow::Result<()> {
-    let wms = store.backend().publisher_watermarks();
+async fn run_maintenance(store: &EventStore) -> mitiflow::Result<()> {
+    let wms = store.publisher_watermarks().await?;
     println!("\nWatermarks ({} publishers):", wms.len());
     for (pub_id, pw) in &wms {
         println!(
@@ -149,15 +149,14 @@ fn run_maintenance(store: &EventStore) -> mitiflow::Result<()> {
         );
     }
 
-    let stats = store.backend().compact()?;
+    let stats = store.compact().await?;
     println!(
         "\nCompaction: removed={}, retained={}",
         stats.removed, stats.retained
     );
 
     let gc_count = store
-        .backend()
-        .gc(chrono::Utc::now() - chrono::Duration::hours(1))?;
+        .gc(chrono::Utc::now() - chrono::Duration::hours(1)).await?;
     println!("GC (older than 1h): removed={gc_count}");
     Ok(())
 }
@@ -179,8 +178,8 @@ async fn main() -> mitiflow::Result<()> {
         setup_store_and_pubsub(&session, &config, store_dir.path()).await?;
     publish_durable_events(&publisher, num_events).await?;
     drain_live_stream(&subscriber, num_events).await?;
-    run_store_queries(&store)?;
-    run_maintenance(&store)?;
+    run_store_queries(&store).await?;
+    run_maintenance(&store).await?;
 
     store.shutdown();
     drop(publisher);

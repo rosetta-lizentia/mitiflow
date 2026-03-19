@@ -50,6 +50,18 @@ pub trait StorageBackend: Send + Sync {
     /// Persist an event.
     fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()>;
 
+    /// Persist a batch of events atomically where supported.
+    ///
+    /// The default implementation calls [`store`](StorageBackend::store) in a
+    /// loop; backends that support atomic batch writes (e.g. fjall) should
+    /// override this for better throughput.
+    fn store_batch(&self, events: Vec<(String, Vec<u8>, EventMetadata)>) -> Result<()> {
+        for (key, payload, metadata) in events {
+            self.store(&key, &payload, metadata)?;
+        }
+        Ok(())
+    }
+
     /// Query stored events matching the given filters.
     fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>>;
 
@@ -71,7 +83,6 @@ pub trait StorageBackend: Send + Sync {
 mod fjall_impl {
     use super::*;
     use std::collections::BTreeSet;
-    use std::sync::Mutex;
 
     /// Key encoding: 24 bytes = publisher_id (16) + seq (8 BE).
     /// Big-endian seq ensures natural sort order within each publisher.
@@ -152,7 +163,7 @@ mod fjall_impl {
         partition: u32,
         /// Per-publisher gap tracking. Updated incrementally on each `store()`
         /// to avoid O(N) scans in `publisher_watermarks()`.
-        publisher_states: Mutex<HashMap<PublisherId, PublisherSeqState>>,
+        publisher_states: scc::HashMap<PublisherId, PublisherSeqState>,
     }
 
     /// Metadata key for a publisher's committed_seq in the metadata keyspace.
@@ -213,13 +224,18 @@ mod fjall_impl {
                 }
             }
 
+            let publisher_states = scc::HashMap::new();
+            for (k, v) in states {
+                let _ = publisher_states.insert_sync(k, v);
+            }
+
             Ok(Self {
                 db,
                 events,
                 metadata,
                 keys,
                 partition,
-                publisher_states: Mutex::new(states),
+                publisher_states,
             })
         }
     }
@@ -240,8 +256,11 @@ mod fjall_impl {
             batch.insert(&self.keys, key.as_bytes(), event_key);
 
             // --- Incremental per-publisher gap tracking ---
-            let mut states = self.publisher_states.lock().unwrap();
-            let state = states.entry(pub_id).or_default();
+            let mut entry = match self.publisher_states.entry_sync(pub_id) {
+                scc::hash_map::Entry::Occupied(o) => o,
+                scc::hash_map::Entry::Vacant(v) => v.insert_entry(PublisherSeqState::default()),
+            };
+            let state = entry.get_mut();
 
             // Remove this seq from gaps (filling a gap, or no-op).
             state.gaps.remove(&seq);
@@ -274,8 +293,75 @@ mod fjall_impl {
             }
 
             let committed = state.committed_seq;
+            drop(entry); // release the entry guard before batch commit
             let meta_key = committed_seq_key(&pub_id);
             batch.insert(&self.metadata, meta_key, committed.to_le_bytes());
+
+            batch
+                .commit()
+                .map_err(|e| Error::StoreError(format!("batch commit failed: {e}")))?;
+
+            Ok(())
+        }
+
+        fn store_batch(&self, events: Vec<(String, Vec<u8>, EventMetadata)>) -> Result<()> {
+            if events.is_empty() {
+                return Ok(());
+            }
+
+            let mut batch = self.db.batch();
+
+            // Group events by publisher for efficient gap tracking.
+            // We process all events into the batch and update states in one pass.
+            for (key, payload, metadata) in &events {
+                let seq = metadata.seq;
+                let pub_id = metadata.publisher_id;
+                let event_key = encode_event_key(&pub_id, seq);
+                let event_value = encode_event_value(metadata, payload);
+
+                batch.insert(&self.events, event_key, event_value);
+                batch.insert(&self.keys, key.as_bytes(), event_key);
+
+                // --- Incremental per-publisher gap tracking ---
+                let mut entry = match self.publisher_states.entry_sync(pub_id) {
+                    scc::hash_map::Entry::Occupied(o) => o,
+                    scc::hash_map::Entry::Vacant(v) => {
+                        v.insert_entry(PublisherSeqState::default())
+                    }
+                };
+                let state = entry.get_mut();
+
+                state.gaps.remove(&seq);
+
+                match state.highest_seen {
+                    None => {
+                        for gap_seq in 0..seq {
+                            state.gaps.insert(gap_seq);
+                        }
+                        state.highest_seen = Some(seq);
+                    }
+                    Some(highest) if seq > highest => {
+                        for gap_seq in (highest + 1)..seq {
+                            state.gaps.insert(gap_seq);
+                        }
+                        state.highest_seen = Some(seq);
+                    }
+                    _ => {}
+                }
+
+                if let Some(highest) = state.highest_seen {
+                    while state.committed_seq < highest
+                        && !state.gaps.contains(&(state.committed_seq + 1))
+                    {
+                        state.committed_seq += 1;
+                    }
+                }
+
+                let committed = state.committed_seq;
+                drop(entry);
+                let meta_key = committed_seq_key(&pub_id);
+                batch.insert(&self.metadata, meta_key, committed.to_le_bytes());
+            }
 
             batch
                 .commit()
@@ -339,17 +425,16 @@ mod fjall_impl {
         }
 
         fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark> {
-            let states = self.publisher_states.lock().unwrap();
-            states
-                .iter()
-                .map(|(pub_id, state)| {
-                    let pw = PublisherWatermark {
-                        committed_seq: state.committed_seq,
-                        gaps: state.gaps.iter().copied().collect(),
-                    };
-                    (*pub_id, pw)
-                })
-                .collect()
+            let mut result = HashMap::new();
+            self.publisher_states.iter_sync(|pub_id, state| {
+                let pw = PublisherWatermark {
+                    committed_seq: state.committed_seq,
+                    gaps: state.gaps.iter().copied().collect(),
+                };
+                result.insert(*pub_id, pw);
+                true
+            });
+            result
         }
 
         fn gc(&self, older_than: DateTime<Utc>) -> Result<usize> {

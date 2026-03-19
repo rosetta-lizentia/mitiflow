@@ -85,6 +85,11 @@ pub struct EventBusConfig {
     /// `watermark_interval` (no acceleration).
     #[cfg(feature = "store")]
     pub durable_urgency: Duration,
+    /// Number of dedicated OS threads that process storage backend operations.
+    /// Using dedicated threads avoids blocking the tokio runtime with
+    /// synchronous I/O (e.g. fjall, redb). Defaults to `2`.
+    #[cfg(feature = "store")]
+    pub store_workers: usize,
 
     // -- Partition (feature = "partition") --
     /// Number of partitions for the hash ring.
@@ -153,6 +158,8 @@ pub struct EventBusConfigBuilder {
     durable_timeout: Duration,
     #[cfg(feature = "store")]
     durable_urgency: Duration,
+    #[cfg(feature = "store")]
+    store_workers: usize,
     #[cfg(feature = "partition")]
     num_partitions: u32,
     #[cfg(feature = "partition")]
@@ -185,6 +192,8 @@ impl EventBusConfigBuilder {
             durable_timeout: Duration::from_secs(5),
             #[cfg(feature = "store")]
             durable_urgency: Duration::from_millis(100),
+            #[cfg(feature = "store")]
+            store_workers: 2,
             #[cfg(feature = "partition")]
             num_partitions: 64,
             #[cfg(feature = "partition")]
@@ -289,6 +298,17 @@ impl EventBusConfigBuilder {
         self
     }
 
+    /// Set the number of dedicated OS threads for storage backend operations.
+    ///
+    /// Multiple threads consume from the same MPMC channel, providing
+    /// horizontal throughput scaling for backends like fjall or redb that
+    /// perform synchronous I/O. Defaults to `2`.
+    #[cfg(feature = "store")]
+    pub fn store_workers(mut self, n: usize) -> Self {
+        self.store_workers = n.max(1);
+        self
+    }
+
     #[cfg(feature = "partition")]
     pub fn num_partitions(mut self, n: u32) -> Self {
         self.num_partitions = n;
@@ -342,6 +362,8 @@ impl EventBusConfigBuilder {
             durable_timeout: self.durable_timeout,
             #[cfg(feature = "store")]
             durable_urgency: self.durable_urgency,
+            #[cfg(feature = "store")]
+            store_workers: self.store_workers,
             #[cfg(feature = "partition")]
             num_partitions: self.num_partitions,
             #[cfg(feature = "partition")]
