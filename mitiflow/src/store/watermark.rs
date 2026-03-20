@@ -19,7 +19,7 @@ pub struct PublisherWatermark {
 impl PublisherWatermark {
     /// Check whether the given sequence number is confirmed durable.
     pub fn is_durable(&self, seq: u64) -> bool {
-        seq <= self.committed_seq && !self.gaps.contains(&seq)
+        seq <= self.committed_seq && self.gaps.binary_search(&seq).is_err()
     }
 }
 

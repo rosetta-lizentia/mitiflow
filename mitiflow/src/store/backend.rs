@@ -380,9 +380,10 @@ mod fjall_impl {
 
             let mut batch = self.db.batch();
 
-            // Group events by publisher for efficient gap tracking.
-            // We process all events into the batch and update states in one pass.
-            for (key, payload, metadata) in &events {
+            // Pre-group events by publisher to minimize entry_sync calls.
+            let mut by_publisher: HashMap<PublisherId, Vec<(u64, usize)>> = HashMap::new();
+
+            for (i, (key, payload, metadata)) in events.iter().enumerate() {
                 let seq = metadata.seq;
                 let pub_id = metadata.publisher_id;
                 let event_key = encode_event_key(&pub_id, seq);
@@ -397,8 +398,12 @@ mod fjall_impl {
                     batch.insert(&self.replay, replay_key, event_key);
                 }
 
-                // --- Incremental per-publisher gap tracking ---
-                let mut entry = match self.publisher_states.entry_sync(pub_id) {
+                by_publisher.entry(pub_id).or_default().push((seq, i));
+            }
+
+            // One entry_sync per publisher instead of per event.
+            for (pub_id, seqs) in &by_publisher {
+                let mut entry = match self.publisher_states.entry_sync(*pub_id) {
                     scc::hash_map::Entry::Occupied(o) => o,
                     scc::hash_map::Entry::Vacant(v) => {
                         v.insert_entry(PublisherSeqState::default())
@@ -406,24 +411,27 @@ mod fjall_impl {
                 };
                 let state = entry.get_mut();
 
-                state.gaps.remove(&seq);
+                for &(seq, _) in seqs {
+                    state.gaps.remove(&seq);
 
-                match state.highest_seen {
-                    None => {
-                        for gap_seq in 0..seq {
-                            state.gaps.insert(gap_seq);
+                    match state.highest_seen {
+                        None => {
+                            for gap_seq in 0..seq {
+                                state.gaps.insert(gap_seq);
+                            }
+                            state.highest_seen = Some(seq);
                         }
-                        state.highest_seen = Some(seq);
-                    }
-                    Some(highest) if seq > highest => {
-                        for gap_seq in (highest + 1)..seq {
-                            state.gaps.insert(gap_seq);
+                        Some(highest) if seq > highest => {
+                            for gap_seq in (highest + 1)..seq {
+                                state.gaps.insert(gap_seq);
+                            }
+                            state.highest_seen = Some(seq);
                         }
-                        state.highest_seen = Some(seq);
+                        _ => {}
                     }
-                    _ => {}
                 }
 
+                // Advance committed_seq once after all events for this publisher.
                 if let Some(highest) = state.highest_seen {
                     while state.committed_seq < highest
                         && !state.gaps.contains(&(state.committed_seq + 1))
@@ -434,7 +442,7 @@ mod fjall_impl {
 
                 let committed = state.committed_seq;
                 drop(entry);
-                let meta_key = committed_seq_key(&pub_id);
+                let meta_key = committed_seq_key(pub_id);
                 batch.insert(&self.metadata, meta_key, committed.to_le_bytes());
             }
 
@@ -448,7 +456,19 @@ mod fjall_impl {
         fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>> {
             let mut results = Vec::new();
 
-            for guard in self.events.iter() {
+            // When publisher_id is specified, use a range scan over the
+            // publisher's key prefix instead of a full keyspace scan.
+            let iter: Box<dyn Iterator<Item = _>> = if let Some(ref pub_id) = filters.publisher_id {
+                let start_seq = filters.after_seq.map(|s| s + 1).unwrap_or(0);
+                let end_seq = filters.before_seq.map(|s| s.saturating_sub(1)).unwrap_or(u64::MAX);
+                let start_key = encode_event_key(pub_id, start_seq);
+                let end_key = encode_event_key(pub_id, end_seq);
+                Box::new(self.events.range(start_key..=end_key))
+            } else {
+                Box::new(self.events.iter())
+            };
+
+            for guard in iter {
                 let kv = guard
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("scan error: {e}")))?;
@@ -457,24 +477,21 @@ mod fjall_impl {
                     continue;
                 };
 
-                // Apply publisher_id filter early (before decoding value).
-                if let Some(ref filter_pub_id) = filters.publisher_id {
-                    if pub_id != *filter_pub_id {
-                        continue;
+                // When doing a full scan (no publisher_id filter in range),
+                // apply publisher_id and sequence filters manually.
+                if filters.publisher_id.is_none() {
+                    if let Some(after) = filters.after_seq {
+                        if seq <= after {
+                            continue;
+                        }
+                    }
+                    if let Some(before) = filters.before_seq {
+                        if seq >= before {
+                            continue;
+                        }
                     }
                 }
-
-                // Apply sequence filters.
-                if let Some(after) = filters.after_seq {
-                    if seq <= after {
-                        continue;
-                    }
-                }
-                if let Some(before) = filters.before_seq {
-                    if seq >= before {
-                        continue;
-                    }
-                }
+                let _ = pub_id; // used above in filter
 
                 let (meta, payload) = decode_event_value(&kv.1)?;
 
@@ -573,7 +590,6 @@ mod fjall_impl {
         }
 
         fn gc(&self, older_than: DateTime<Utc>) -> Result<usize> {
-            let mut removed = 0usize;
             let mut to_remove: Vec<(Vec<u8>, String, Option<HlcTimestamp>)> = Vec::new();
 
             for guard in self.events.iter() {
@@ -587,8 +603,8 @@ mod fjall_impl {
                 }
             }
 
+            let mut batch = self.db.batch();
             for (event_key, key_expr, hlc_ts) in &to_remove {
-                let mut batch = self.db.batch();
                 batch.remove(&self.events, event_key.as_slice());
                 batch.remove(&self.keys, key_expr.as_bytes());
                 // Clean up replay index entry using the stored HLC timestamp.
@@ -598,13 +614,12 @@ mod fjall_impl {
                     let replay_key = encode_replay_key(hlc, &pub_id, seq);
                     batch.remove(&self.replay, replay_key);
                 }
-                batch
-                    .commit()
-                    .map_err(|e| Error::StoreError(format!("gc batch commit failed: {e}")))?;
-                removed += 1;
             }
+            batch
+                .commit()
+                .map_err(|e| Error::StoreError(format!("gc batch commit failed: {e}")))?;
 
-            Ok(removed)
+            Ok(to_remove.len())
         }
 
         fn compact(&self) -> Result<CompactionStats> {
@@ -633,18 +648,20 @@ mod fjall_impl {
             let mut removed = 0usize;
             let mut retained = 0usize;
 
+            let mut batch = self.db.batch();
             for (event_key, key_expr, _seq) in &all_entries {
                 if let Some((latest_key, _)) = latest.get(key_expr) {
                     if event_key != latest_key {
-                        self.events.remove(event_key.as_slice()).map_err(|e| {
-                            Error::StoreError(format!("compact remove failed: {e}"))
-                        })?;
+                        batch.remove(&self.events, event_key.as_slice());
                         removed += 1;
                     } else {
                         retained += 1;
                     }
                 }
             }
+            batch
+                .commit()
+                .map_err(|e| Error::StoreError(format!("compact batch commit failed: {e}")))?;
 
             Ok(CompactionStats { removed, retained })
         }

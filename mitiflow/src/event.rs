@@ -74,9 +74,9 @@ pub struct RawEvent {
 }
 
 impl RawEvent {
-    /// Deserialize the payload into a typed `Event<T>` using JSON.
+    /// Deserialize the payload into a typed `Event<T>` using the default codec.
     pub fn deserialize<T: Serialize + DeserializeOwned>(&self) -> crate::Result<Event<T>> {
-        self.deserialize_with(crate::codec::CodecFormat::Json)
+        self.deserialize_with(crate::codec::CodecFormat::default())
     }
 
     /// Deserialize the payload into a typed `Event<T>` using the given codec.
