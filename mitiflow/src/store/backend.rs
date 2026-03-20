@@ -97,6 +97,22 @@ pub trait StorageBackend: Send + Sync {
 
     /// Compact the storage: keep only the latest event per key. Returns stats.
     fn compact(&self) -> Result<CompactionStats>;
+
+    /// Persist an offset commit for a consumer group.
+    /// Only accepts if generation >= stored generation (fencing).
+    fn commit_offsets(&self, _commit: &crate::store::offset::OffsetCommit) -> Result<()> {
+        Err(crate::error::Error::StoreError(
+            "offsets not supported by this backend".into(),
+        ))
+    }
+
+    /// Fetch all committed offsets for a consumer group on this partition.
+    fn fetch_offsets(
+        &self,
+        _group_id: &str,
+    ) -> Result<HashMap<PublisherId, u64>> {
+        Ok(HashMap::new())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,12 +227,14 @@ mod fjall_impl {
     /// - `metadata` — watermark state (per-publisher `committed_seq`)
     /// - `keys`     — key_expr → event key mapping for compaction
     /// - `replay`   — HLC-ordered replay index for deterministic cross-replica replay
+    /// - `offsets`  — consumer group offset commits
     pub struct FjallBackend {
         db: fjall::Database,
         events: fjall::Keyspace,
         metadata: fjall::Keyspace,
         keys: fjall::Keyspace,
         replay: fjall::Keyspace,
+        offsets: fjall::Keyspace,
         /// Partition id this backend is responsible for.
         partition: u32,
         /// Per-publisher gap tracking. Updated incrementally on each `store()`
@@ -254,6 +272,10 @@ mod fjall_impl {
             let replay = db
                 .keyspace("replay", fjall::KeyspaceCreateOptions::default)
                 .map_err(|e| Error::StoreError(format!("failed to open replay keyspace: {e}")))?;
+
+            let offsets = db
+                .keyspace("offsets", fjall::KeyspaceCreateOptions::default)
+                .map_err(|e| Error::StoreError(format!("failed to open offsets keyspace: {e}")))?;
 
             // One-time scan to rebuild per-publisher gap state from existing data.
             let mut states: HashMap<PublisherId, PublisherSeqState> = HashMap::new();
@@ -297,9 +319,119 @@ mod fjall_impl {
                 metadata,
                 keys,
                 replay,
+                offsets,
                 partition,
                 publisher_states,
             })
+        }
+
+        /// Offset key encoding: `[group_id_hash:8][publisher_id:16]` = 24 bytes.
+        /// Uses xxhash64 of the group_id for fixed-width prefix scans.
+        fn offset_key(group_id: &str, pub_id: &PublisherId) -> [u8; 24] {
+            let hash = Self::xxhash_group(group_id);
+            let mut key = [0u8; 24];
+            key[..8].copy_from_slice(&hash.to_be_bytes());
+            key[8..24].copy_from_slice(&pub_id.to_bytes());
+            key
+        }
+
+        /// Offset value encoding: `[seq:8 BE][generation:8 BE][timestamp_ms:8 BE]` = 24 bytes.
+        fn encode_offset_value(
+            seq: u64,
+            generation: u64,
+            timestamp: DateTime<Utc>,
+        ) -> [u8; 24] {
+            let mut val = [0u8; 24];
+            val[..8].copy_from_slice(&seq.to_be_bytes());
+            val[8..16].copy_from_slice(&generation.to_be_bytes());
+            val[16..24].copy_from_slice(
+                &(timestamp.timestamp_millis() as u64).to_be_bytes(),
+            );
+            val
+        }
+
+        fn decode_offset_value(value: &[u8]) -> Option<(u64, u64)> {
+            if value.len() < 16 {
+                return None;
+            }
+            let seq = u64::from_be_bytes(value[..8].try_into().ok()?);
+            let generation = u64::from_be_bytes(value[8..16].try_into().ok()?);
+            Some((seq, generation))
+        }
+
+        fn xxhash_group(group_id: &str) -> u64 {
+            // Simple hash — use the same approach as Kafka: hash the bytes.
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV offset basis
+            for byte in group_id.as_bytes() {
+                h ^= *byte as u64;
+                h = h.wrapping_mul(0x100_0000_01b3); // FNV prime
+            }
+            h
+        }
+
+        /// Persist an offset commit. Only accepts if generation >= stored generation.
+        pub fn commit_offsets(
+            &self,
+            commit: &crate::store::offset::OffsetCommit,
+        ) -> Result<()> {
+            let mut batch = self.db.batch();
+
+            for (pub_id, seq) in &commit.offsets {
+                let key = Self::offset_key(&commit.group_id, pub_id);
+
+                // Fencing: reject commits from older generations
+                if let Some(existing) = self.offsets.get(key)
+                    .map_err(|e| Error::StoreError(format!("offset read failed: {e}")))?
+                {
+                    if let Some((_, stored_gen)) =
+                        Self::decode_offset_value(existing.as_ref())
+                    {
+                        if commit.generation < stored_gen {
+                            return Err(Error::StaleFencedCommit {
+                                group: commit.group_id.clone(),
+                                commit_gen: commit.generation,
+                                stored_gen,
+                            });
+                        }
+                    }
+                }
+
+                let value =
+                    Self::encode_offset_value(*seq, commit.generation, commit.timestamp);
+                batch.insert(&self.offsets, key, value);
+            }
+
+            batch
+                .commit()
+                .map_err(|e| Error::StoreError(format!("offset commit failed: {e}")))?;
+            Ok(())
+        }
+
+        /// Fetch all committed offsets for a group on this partition.
+        pub fn fetch_offsets(
+            &self,
+            group_id: &str,
+        ) -> Result<HashMap<PublisherId, u64>> {
+            let hash = Self::xxhash_group(group_id);
+            let prefix = hash.to_be_bytes();
+            let mut result = HashMap::new();
+
+            for entry in self.offsets.prefix(prefix) {
+                let kv = entry
+                    .into_inner()
+                    .map_err(|e| Error::StoreError(format!("offset scan failed: {e}")))?;
+                let key_bytes: &[u8] = kv.0.as_ref();
+                if key_bytes.len() < 24 {
+                    continue;
+                }
+                let pub_bytes: [u8; 16] = key_bytes[8..24].try_into().unwrap();
+                let pub_id = PublisherId::from_bytes(pub_bytes);
+                if let Some((seq, _gen)) = Self::decode_offset_value(kv.1.as_ref()) {
+                    result.insert(pub_id, seq);
+                }
+            }
+
+            Ok(result)
         }
     }
 
@@ -664,6 +796,21 @@ mod fjall_impl {
                 .map_err(|e| Error::StoreError(format!("compact batch commit failed: {e}")))?;
 
             Ok(CompactionStats { removed, retained })
+        }
+
+        fn commit_offsets(
+            &self,
+            commit: &crate::store::offset::OffsetCommit,
+        ) -> Result<()> {
+            // Delegate to the inherent impl on FjallBackend
+            FjallBackend::commit_offsets(self, commit)
+        }
+
+        fn fetch_offsets(
+            &self,
+            group_id: &str,
+        ) -> Result<HashMap<PublisherId, u64>> {
+            FjallBackend::fetch_offsets(self, group_id)
         }
     }
 }

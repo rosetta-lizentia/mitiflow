@@ -1885,6 +1885,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "mitiflow-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "fjall",
+ "flume 0.11.1",
+ "mitiflow",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "zenoh",
+]
+
+[[package]]
 name = "nanorand"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

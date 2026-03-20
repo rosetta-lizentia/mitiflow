@@ -1,0 +1,25 @@
+[package]
+name = "mitiflow-orchestrator"
+description = "Control-plane orchestrator for mitiflow: config, lag monitoring, store lifecycle, admin API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mitiflow = { path = "../mitiflow", features = ["full"] }
+zenoh = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+fjall = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tokio-util = { workspace = true }
+flume = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }

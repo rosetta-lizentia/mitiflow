@@ -54,6 +54,15 @@ pub enum Error {
     /// The configuration is invalid.
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+
+    /// A consumer group offset commit was rejected because the commit's
+    /// generation is older than the stored generation (zombie fencing).
+    #[error("stale fenced commit for group {group}: commit gen {commit_gen} < stored gen {stored_gen}")]
+    StaleFencedCommit {
+        group: String,
+        commit_gen: u64,
+        stored_gen: u64,
+    },
 }
 
 impl From<serde_json::Error> for Error {

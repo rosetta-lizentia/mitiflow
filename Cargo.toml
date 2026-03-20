@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench"]
+members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench", "mitiflow-orchestrator"]
 
 [workspace.package]
 version = "0.1.0"

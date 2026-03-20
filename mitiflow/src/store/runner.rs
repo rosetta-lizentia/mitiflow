@@ -59,6 +59,14 @@ enum BackendRequest {
     Compact {
         reply: flume::Sender<Result<CompactionStats>>,
     },
+    CommitOffsets {
+        commit: super::offset::OffsetCommit,
+        reply: flume::Sender<Result<()>>,
+    },
+    FetchOffsets {
+        group_id: String,
+        reply: flume::Sender<Result<HashMap<PublisherId, u64>>>,
+    },
 }
 
 /// Union of all messages the backend thread processes.
@@ -141,6 +149,34 @@ impl BackendHandle {
         let (reply_tx, reply_rx) = flume::bounded(1);
         self.tx
             .send(BackendMsg::Request(BackendRequest::Compact {
+                reply: reply_tx,
+            }))
+            .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
+        reply_rx
+            .recv_async()
+            .await
+            .map_err(|_| Error::StoreError("backend worker dropped reply".into()))?
+    }
+
+    async fn commit_offsets(&self, commit: super::offset::OffsetCommit) -> Result<()> {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        self.tx
+            .send(BackendMsg::Request(BackendRequest::CommitOffsets {
+                commit,
+                reply: reply_tx,
+            }))
+            .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
+        reply_rx
+            .recv_async()
+            .await
+            .map_err(|_| Error::StoreError("backend worker dropped reply".into()))?
+    }
+
+    async fn fetch_offsets(&self, group_id: String) -> Result<HashMap<PublisherId, u64>> {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        self.tx
+            .send(BackendMsg::Request(BackendRequest::FetchOffsets {
+                group_id,
                 reply: reply_tx,
             }))
             .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
@@ -261,6 +297,12 @@ fn dispatch_request(
                 warn!(worker_id, "compact failed: {e}");
             }
             let _ = reply.send(result);
+        }
+        BackendRequest::CommitOffsets { commit, reply } => {
+            let _ = reply.send(backend.commit_offsets(&commit));
+        }
+        BackendRequest::FetchOffsets { group_id, reply } => {
+            let _ = reply.send(backend.fetch_offsets(&group_id));
         }
     }
 }
@@ -552,6 +594,111 @@ async fn run_gc_task(
     debug!("store gc task stopped");
 }
 
+/// Handle offset commit (sync via queryable, async via subscriber) and fetch
+/// (via queryable) requests from consumer group members.
+async fn run_offset_task(
+    queryable: zenoh::query::Queryable<FifoChannelHandler<zenoh::query::Query>>,
+    subscriber: zenoh::pubsub::Subscriber<FifoChannelHandler<Sample>>,
+    handle: BackendHandle,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            // Handle commit_sync queries and fetch_offsets queries
+            query_result = queryable.recv_async() => {
+                match query_result {
+                    Ok(query) => {
+                        let params = query.parameters().to_string();
+                        if params.contains("fetch=true") {
+                            // Fetch offsets query: extract group_id from params
+                            let group_id = extract_param(&params, "group_id")
+                                .unwrap_or_default();
+                            match handle.fetch_offsets(group_id.clone()).await {
+                                Ok(offsets) => {
+                                    let commit = super::offset::OffsetCommit {
+                                        group_id,
+                                        member_id: String::new(),
+                                        partition: handle.partition(),
+                                        offsets,
+                                        generation: 0,
+                                        timestamp: chrono::Utc::now(),
+                                    };
+                                    if let Ok(bytes) = serde_json::to_vec(&commit) {
+                                        let _ = query
+                                            .reply(query.key_expr(), bytes)
+                                            .await;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("offset fetch failed: {e}");
+                                }
+                            }
+                        } else {
+                            // commit_sync: payload is an OffsetCommit
+                            let payload = query.payload()
+                                .map(|p| p.to_bytes().to_vec())
+                                .unwrap_or_default();
+                            match serde_json::from_slice::<super::offset::OffsetCommit>(&payload) {
+                                Ok(commit) => {
+                                    let result = handle.commit_offsets(commit).await;
+                                    let reply_payload = match &result {
+                                        Ok(()) => b"ok".to_vec(),
+                                        Err(e) => format!("error:{e}").into_bytes(),
+                                    };
+                                    let _ = query
+                                        .reply(query.key_expr(), reply_payload)
+                                        .await;
+                                }
+                                Err(e) => {
+                                    warn!("invalid offset commit query: {e}");
+                                    let _ = query
+                                        .reply(query.key_expr(), format!("error:{e}").into_bytes())
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            // Handle commit_async puts (fire-and-forget)
+            sub_result = subscriber.recv_async() => {
+                match sub_result {
+                    Ok(sample) => {
+                        if sample.kind() != zenoh::sample::SampleKind::Put {
+                            continue;
+                        }
+                        let payload = sample.payload().to_bytes().to_vec();
+                        match serde_json::from_slice::<super::offset::OffsetCommit>(&payload) {
+                            Ok(commit) => {
+                                if let Err(e) = handle.commit_offsets(commit).await {
+                                    warn!("async offset commit failed: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                trace!("ignoring non-offset put: {e}");
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    debug!("store offset task stopped");
+}
+
+/// Extract a parameter value from a query parameter string like "key1=val1&key2=val2".
+fn extract_param<'a>(params: &'a str, key: &str) -> Option<String> {
+    params
+        .split('&')
+        .find_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            (k == key).then(|| v.to_string())
+        })
+}
+
 // ---------------------------------------------------------------------------
 // EventStore — public API
 // ---------------------------------------------------------------------------
@@ -670,8 +817,27 @@ impl EventStore {
         )));
 
         self._tasks.push(tokio::spawn(run_gc_task(
-            handle,
+            handle.clone(),
             Duration::from_secs(60),
+            self.cancel.clone(),
+        )));
+
+        // -- Offset commit/fetch tasks --
+        // Queryable for commit_sync (query-based) and fetch_offsets
+        let offset_key = format!("{key_prefix}/_offsets/{partition}");
+        let offset_queryable = self
+            .session
+            .declare_queryable(format!("{offset_key}/**"))
+            .await?;
+        // Subscriber for commit_async (fire-and-forget put)
+        let offset_subscriber = self
+            .session
+            .declare_subscriber(format!("{offset_key}/**"))
+            .await?;
+        self._tasks.push(tokio::spawn(run_offset_task(
+            offset_queryable,
+            offset_subscriber,
+            handle,
             self.cancel.clone(),
         )));
 

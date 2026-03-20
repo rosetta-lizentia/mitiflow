@@ -5,6 +5,9 @@ pub mod gap_detector;
 #[cfg(feature = "store")]
 pub mod checkpoint;
 
+#[cfg(all(feature = "store", feature = "partition"))]
+pub mod consumer_group;
+
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;

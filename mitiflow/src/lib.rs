@@ -23,7 +23,10 @@ pub mod partition;
 
 // Public re-exports
 pub use codec::CodecFormat;
-pub use config::{EventBusConfig, EventBusConfigBuilder, HeartbeatMode, RecoveryMode};
+pub use config::{
+    CommitMode, ConsumerGroupConfig, EventBusConfig, EventBusConfigBuilder, HeartbeatMode,
+    OffsetReset, RecoveryMode,
+};
 pub use dlq::{BackoffStrategy, DeadLetterQueue, DlqConfig, RetryOutcome};
 pub use error::{Error, Result};
 pub use event::Event;
@@ -32,10 +35,13 @@ pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};
 
 #[cfg(feature = "store")]
-pub use store::{EventStore, FjallBackend, StoreManager};
+pub use store::{EventStore, FjallBackend, OffsetCommit, StoreManager};
 
 #[cfg(feature = "store")]
 pub use subscriber::checkpoint::SequenceCheckpoint;
 
 #[cfg(feature = "partition")]
 pub use partition::PartitionManager;
+
+#[cfg(all(feature = "store", feature = "partition"))]
+pub use subscriber::consumer_group::ConsumerGroupSubscriber;

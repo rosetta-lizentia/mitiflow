@@ -29,6 +29,37 @@ pub enum RecoveryMode {
     Both,
 }
 
+/// Offset commit mode for consumer groups.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitMode {
+    /// Application calls commit() explicitly after processing.
+    Manual,
+    /// Offsets are committed automatically at interval.
+    Auto { interval: Duration },
+}
+
+/// What to do when no committed offset exists for a consumer group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OffsetReset {
+    /// Start from the earliest available event (replay everything).
+    Earliest,
+    /// Start from the latest event (skip history).
+    Latest,
+}
+
+/// Configuration for a consumer group.
+#[derive(Debug, Clone)]
+pub struct ConsumerGroupConfig {
+    /// Consumer group identifier.
+    pub group_id: String,
+    /// This member's unique ID (default: random UUID).
+    pub member_id: String,
+    /// Offset commit mode.
+    pub commit_mode: CommitMode,
+    /// What to do when no committed offset exists.
+    pub offset_reset: OffsetReset,
+}
+
 /// Configuration for the mitiflow event bus.
 ///
 /// Use [`EventBusConfig::builder`] to construct with defaults and override

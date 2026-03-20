@@ -4,6 +4,7 @@
 //! when workers join or leave the consumer group.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -22,6 +23,8 @@ pub struct MembershipContext {
     pub workers: Arc<RwLock<Vec<String>>>,
     pub rebalance_cb: RebalanceCb,
     pub cancel: CancellationToken,
+    /// Generation counter — incremented on every membership change.
+    pub generation: Arc<AtomicU64>,
     /// Kept alive to maintain presence — dropped when the task ends.
     pub _token: zenoh::liveliness::LivelinessToken,
 }
@@ -73,6 +76,7 @@ pub async fn membership_watcher(ctx: MembershipContext) -> crate::error::Result<
                             &new_workers,
                             &ctx.my_partitions,
                             &ctx.rebalance_cb,
+                            &ctx.generation,
                         )
                         .await;
                     }
@@ -93,6 +97,7 @@ async fn rebalance(
     workers: &[String],
     my_partitions: &Arc<RwLock<Vec<u32>>>,
     rebalance_cb: &RebalanceCb,
+    generation: &Arc<AtomicU64>,
 ) {
     let assignment = hash_ring::assignments(workers, num_partitions);
     let new_parts = assignment.get(my_id).cloned().unwrap_or_default();
@@ -115,6 +120,9 @@ async fn rebalance(
     if gained.is_empty() && lost.is_empty() {
         return;
     }
+
+    // Increment generation on every actual rebalance.
+    generation.fetch_add(1, Ordering::SeqCst);
 
     // Update stored assignment.
     {

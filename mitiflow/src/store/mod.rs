@@ -4,10 +4,12 @@
 
 pub mod backend;
 pub mod lifecycle;
+pub mod offset;
 pub mod query;
 pub mod watermark;
 
 pub use backend::{CompactionStats, EventMetadata, HlcTimestamp, StorageBackend, StoredEvent};
+pub use offset::OffsetCommit;
 pub use query::{QueryFilters, ReplayFilters};
 pub use watermark::{CommitWatermark, PublisherWatermark};
 

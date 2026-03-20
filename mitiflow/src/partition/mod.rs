@@ -13,6 +13,7 @@ pub mod hash_ring;
 pub mod rebalance;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -59,6 +60,8 @@ pub struct PartitionManager {
     _task: tokio::task::JoinHandle<()>,
     /// Rebalance callback (if registered before construction, pass via builder).
     rebalance_cb: RebalanceCb,
+    /// Generation counter — increments on every membership change.
+    generation: Arc<AtomicU64>,
 }
 
 impl PartitionManager {
@@ -107,6 +110,7 @@ impl PartitionManager {
         let workers = Arc::new(RwLock::new(initial_workers));
         let cancel = CancellationToken::new();
         let rebalance_cb: RebalanceCb = Arc::new(RwLock::new(None));
+        let generation = Arc::new(AtomicU64::new(1));
 
         // Spawn the membership watcher task.
         let task = {
@@ -119,6 +123,7 @@ impl PartitionManager {
                 workers: Arc::clone(&workers),
                 rebalance_cb: Arc::clone(&rebalance_cb),
                 cancel: cancel.clone(),
+                generation: Arc::clone(&generation),
                 _token,
             };
             let wid = worker_id.clone();
@@ -139,6 +144,7 @@ impl PartitionManager {
             cancel,
             _task: task,
             rebalance_cb,
+            generation,
         })
     }
 
@@ -187,6 +193,11 @@ impl PartitionManager {
     /// Number of partitions.
     pub fn num_partitions(&self) -> u32 {
         self.num_partitions
+    }
+
+    /// Current generation counter (increments on every membership change).
+    pub fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 }
 
