@@ -4,6 +4,66 @@ Tracks the gap between the design documents and the current implementation.
 
 ---
 
+## Consumer Group Commits (Phase 1)
+
+**Status:** Not started
+**Ref:** [11_consumer_group_commits.md](11_consumer_group_commits.md)
+
+Store-managed offset commits co-located with the EventStore. Enables
+Kafka-style consumer groups with at-least-once semantics over Zenoh.
+
+### Implementation checklist
+
+- [ ] **`store/backend.rs` — offsets keyspace.** Add `offsets` keyspace to
+      `FjallBackend`. Key: `[group_id_hash:8][publisher_id:16]`, Value:
+      `[seq:8 BE][generation:8 BE][timestamp_ms:8 BE]`. Implement
+      `commit_offsets(&OffsetCommit)` with generation fencing (reject if
+      `commit.generation < stored_generation`). Implement
+      `fetch_offsets(group_id) → HashMap<PublisherId, u64>` via prefix scan.
+
+- [ ] **`store/runner.rs` — offset subscribe + queryable.** Subscribe to
+      `{key_prefix}/_offsets/{partition}/**` and persist incoming commits.
+      Declare queryable on `{key_prefix}/_offsets/{partition}/**` to serve
+      offset fetch requests via `session.get()`.
+
+- [ ] **`subscriber/mod.rs` — commit API.** Add `commit_sync()` (query-based,
+      waits for store ACK), `commit_async()` (fire-and-forget put), and
+      `load_offsets(partition)` (fetches via `session.get()` and seeds
+      `GapDetector`). Integrate into `on_rebalance`: commit lost partitions,
+      load offsets for gained partitions.
+
+- [ ] **`subscriber/mod.rs` — `new_consumer_group()`.** Constructor that joins
+      a group via `PartitionManager`, fetches committed offsets, and begins
+      consuming from assigned partitions.
+
+- [ ] **`config.rs` — consumer group config.** Add `ConsumerGroupConfig`
+      (`group_id`, `member_id`, `CommitMode::Manual|Auto`, `OffsetReset`).
+
+- [ ] **`partition/mod.rs` — generation counter.** Add `generation: AtomicU64`
+      to `PartitionManager`. Increment on every membership change. Expose via
+      `current_generation()`.
+
+- [ ] **Auto-commit task.** Background `tokio::spawn` that calls
+      `commit_async()` at configurable interval (default 5s). Final commit on
+      `CancellationToken` cancel.
+
+- [ ] **`error.rs` — `StaleFencedCommit` variant.** For generation fencing
+      rejections.
+
+- [ ] **`lib.rs` — re-exports.** `OffsetCommit`, `ConsumerGroupConfig`,
+      `CommitMode`, `OffsetReset`.
+
+- [ ] **`examples/consumer_groups.rs` — update.** Demonstrate
+      `new_consumer_group()`, manual commit, and auto-commit modes.
+
+### Depends on
+
+- Sequence model migration (below) should ideally land first so that offset
+  commits use per-partition sequences. But Phase 1 can proceed with the current
+  model if each publisher writes to a single partition.
+
+---
+
 ## Critical: Sequence Model Migration
 
 **Status:** Not started
@@ -58,6 +118,41 @@ Any real workload with key-based routing will break.
 The storage key format `(partition:4BE, publisher_id:16, seq:8BE)` already
 encodes the partition — no storage migration needed. Only the publisher-side
 counter and watermark lookup need changes.
+
+---
+
+## Orchestrator (Phase 2)
+
+**Status:** Not started
+**Ref:** [11_consumer_group_commits.md](11_consumer_group_commits.md) § Part 6
+
+A control-plane service for cross-partition visibility and lifecycle automation.
+Does **not** sit in the event data path.
+
+### Implementation checklist
+
+- [ ] **New crate: `mitiflow-orchestrator/`.** Binary entry point.
+- [ ] **Config management.** `TopicConfig` storage in fjall. Distribute via
+      `_config/{topic_name}` pub/sub. EventStore instances subscribe and
+      reconfigure (retention, compaction).
+- [ ] **Lag monitoring.** Subscribe to `_watermark/*` and `_offsets/**`, compute
+      per-(group, partition, publisher) lag, publish to `_lag/{group}/{partition}`.
+- [ ] **Store lifecycle.** Track store liveliness via `_store/*`. Automated
+      provisioning: `create_topic()` → spawn N × RF store instances.
+      Health monitoring and alerting.
+- [ ] **Admin API.** Zenoh queryable (`_admin/**`) + HTTP REST.
+      Endpoints: list/describe topics, list groups, get lag, create/delete topics.
+- [ ] **Consumer group sessions (optional).** JoinGroup/SyncGroup/Heartbeat
+      protocol via Zenoh queryable. Assigns globally unique generation IDs.
+      Fallback: existing liveliness-based `PartitionManager` remains default.
+- [ ] **Orchestrator HA.** Multiple replicas subscribe to same key expressions.
+      Leader election via liveliness + lowest UUID for write ops. Any replica
+      serves reads.
+
+### Depends on
+
+- Consumer Group Commits (Phase 1) — offset storage must exist before the
+  orchestrator can aggregate lag.
 
 ---
 
@@ -144,6 +239,9 @@ exist yet:
       suite from the plan.)
 - [ ] `tests/gateway.rs` — Kafka protocol round-trip. Blocked on gateway
       implementation.
+- [ ] `tests/consumer_group_commit.rs` — consumer group offset commit e2e
+      tests. See [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md)
+      for full test plan with edge cases.
 - [ ] `e2e_*` integration tests — multi-process pub/sub, store crash recovery,
       live rebalance. Currently only single-process integration tests exist.
 - [ ] Criterion benchmarks (`mitiflow-bench/benches/`) — the plan specifies
@@ -161,3 +259,7 @@ exist yet:
 - [ ] Add `ARCHITECTURE.md` at repo root as a quick-start pointer to the docs.
 - [x] Add [08_replay_ordering.md](08_replay_ordering.md) — deterministic replay
       ordering via HLC and publisher lifecycle management.
+- [x] Add [11_consumer_group_commits.md](11_consumer_group_commits.md) —
+      consumer group offset commits, generation fencing, and orchestrator design.
+- [ ] Add [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md) —
+      systematic e2e test plan for consumer group edge cases.
