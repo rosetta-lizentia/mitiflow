@@ -20,7 +20,7 @@ Modern distributed systems need event streaming with sequencing, durability, con
 | **Durable persistence** | Distributed Event Store (sidecar: subscriber + queryable + storage backend) |
 | **Confirmed durability** | Watermark stream — Event Store broadcasts commit progress; publishers block until covered |
 | **App-specific queries** | Zenoh Queryable with custom filters (time range, seq range, payload fields) |
-| **Consumer groups** | Partitioned subscription via rendezvous hashing + liveliness-driven rebalancing |
+| **Consumer groups** | Partitioned subscription via rendezvous hashing + liveliness-driven rebalancing; store-managed offset commits with generation fencing (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) |
 | **Exactly-once** | In-session dedup built-in; cross-restart dedup via persisted sequence checkpoints |
 | **Dead letter queue** | Poison message isolation via key-space routing |
 
@@ -81,6 +81,11 @@ pub/sub fan-out as the replication transport.
 | [05_replication.md](05_replication.md) | Pub/sub-based storage replication without Raft |
 | [06_comparison.md](06_comparison.md) | Detailed comparison with Kafka, RabbitMQ, NATS, Pulsar, Redis Streams |
 | [07_kafka_compatibility.md](07_kafka_compatibility.md) | Kafka wire protocol gateway design, API mapping, implementation plan |
+| [08_replay_ordering.md](08_replay_ordering.md) | HLC-based deterministic replay ordering and publisher lifecycle management |
+| [09_cache_recovery_design.md](09_cache_recovery_design.md) | Tiered recovery: ZBytes publisher cache + EventStore fallback |
+| [10_graceful_termination.md](10_graceful_termination.md) | Explicit `shutdown(self)` for publisher, subscriber, and store |
+| [11_consumer_group_commits.md](11_consumer_group_commits.md) | Consumer group offset commits, generation fencing, and orchestrator design |
+| [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md) | Systematic e2e test plan for consumer group edge cases |
 
 ## Quick Start (Envisioned API)
 
@@ -110,6 +115,8 @@ while let Ok(event) = subscriber.recv::<MyPayload>().await {
 2. **Event Store + Watermark** — sidecar persistence, queryable, watermark stream, `publish_durable()`
 3. **Partitioned consumer groups** — rendezvous hashing, liveliness-driven rebalancing
 4. **Cross-restart dedup + DLQ** — sequence checkpoints, dead letter routing
+5. **Consumer group commits** — store-managed offset commits, generation fencing, `commit_sync()` / `commit_async()` (see [11_consumer_group_commits.md](11_consumer_group_commits.md))
+6. **Orchestrator** — cross-partition lag monitoring, topic config management, store lifecycle (see [11_consumer_group_commits.md](11_consumer_group_commits.md) § Part 6)
 
 ## License
 

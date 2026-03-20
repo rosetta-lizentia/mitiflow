@@ -30,6 +30,7 @@ mitiflow/
 │   │   ├── mod.rs            # EventStore (sidecar process)
 │   │   ├── backend.rs        # StorageBackend trait + FjallBackend
 │   │   ├── lifecycle.rs      # Publisher lifecycle state machine
+│   │   ├── manager.rs        # Store manager coordination
 │   │   ├── query.rs          # Selector → QueryFilters parsing
 │   │   ├── runner.rs         # Background tasks (subscribe, queryable, watermark, gc)
 │   │   └── watermark.rs      # CommitWatermark + PublisherWatermark types
@@ -52,8 +53,10 @@ mitiflow/
     ├── dedup.rs              # Deduplication
     ├── dlq.rs                # Dead letter queue
     ├── partition.rs          # Rebalance on join/leave
+    ├── recovery.rs           # Cache + store recovery paths
     ├── reliability.rs        # Ordering + gap recovery
-    └── store.rs              # Persistence + query + watermark
+    ├── store.rs              # Persistence + query + watermark
+    └── common/               # Shared test helpers
 ```
 
 ## 2. Feature Flags
@@ -185,6 +188,11 @@ impl EventSubscriber {
     pub fn stream<T: DeserializeOwned>(&self) -> impl Stream<Item = Result<Event<T>>>;
     pub fn on_miss(&mut self, handler: impl Fn(MissInfo) + Send + 'static);
     pub async fn ack(&self, event_id: &Uuid) -> Result<()>;
+
+    // Consumer group commit API (Phase 5)
+    pub async fn commit_sync(&self) -> Result<()>;
+    pub async fn commit_async(&self) -> Result<()>;
+    pub async fn load_offsets(&mut self, partition: u32) -> Result<()>;
 }
 ```
 
@@ -225,12 +233,14 @@ pub struct PartitionManager {
     hash_ring: ConsistentHashRing,
     my_id: String,
     my_partitions: Arc<RwLock<Vec<u32>>>,
+    generation: AtomicU64,             // increments on every rebalance
 }
 
 impl PartitionManager {
     pub async fn new(session: &Session, config: EventBusConfig) -> Result<Self>;
     pub fn partition_for(&self, key: &str) -> u32;
     pub fn my_partitions(&self) -> Vec<u32>;
+    pub fn current_generation(&self) -> u64;
     pub fn on_rebalance(&self, cb: impl Fn(&[u32], &[u32]) + Send + 'static);
     pub fn subscription_key_expr(&self) -> String;
 }
@@ -273,6 +283,22 @@ impl PartitionManager {
 - Optional `DurablePublisher` (feature = "wal")
 - Tests: dedup after restart, DLQ flow
 
+### Phase 5: Consumer Group Commits
+- `OffsetCommit` type with generation fencing
+- `FjallBackend::commit_offsets()` / `fetch_offsets()` with offsets keyspace
+- `EventStore` offset subscribe + queryable on `_offsets/{partition}/**`
+- `EventSubscriber::commit_sync()` / `commit_async()` / `load_offsets()`
+- `ConsumerGroupConfig` (`group_id`, `CommitMode::Manual|Auto`, `OffsetReset`)
+- Auto-commit background task
+- Generation counter on `PartitionManager`
+- See [11_consumer_group_commits.md](11_consumer_group_commits.md)
+
+### Phase 6: Orchestrator
+- Standalone control-plane service (`mitiflow-orchestrator/`)
+- Cross-partition lag monitoring, topic config management, store lifecycle
+- Optional JoinGroup/SyncGroup/Heartbeat protocol for globally unique generation IDs
+- See [11_consumer_group_commits.md](11_consumer_group_commits.md) § Part 6
+
 ---
 
 ## 7. Layer Summary
@@ -284,3 +310,4 @@ impl PartitionManager {
 | **L3: Partitioning** | Exclusive processing, load distribution | Medium-High | Multiple consumers on shared stream |
 | **L4: Dedup** | Cross-restart exactly-once | Low | If rolling restarts cause duplicates |
 | **L5: DLQ** | Poison message isolation | Low | When some events may be unprocessable |
+| **L6: Consumer Group Commits** | Store-managed offset commits, generation fencing | Medium | Consumer groups with durable offset tracking (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) |

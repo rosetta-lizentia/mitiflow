@@ -2,7 +2,7 @@
 
 Detailed implementation plan for the `mitiflow` crate, with test validation and benchmark strategies.
 
-> **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_ordering.md](04_ordering.md) for sequence design, and [07_kafka_compatibility.md](07_kafka_compatibility.md) for the gateway design.
+> **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_ordering.md](04_ordering.md) for sequence design, [07_kafka_compatibility.md](07_kafka_compatibility.md) for the gateway design, [08_replay_ordering.md](08_replay_ordering.md) for HLC replay, [09_cache_recovery_design.md](09_cache_recovery_design.md) for tiered recovery, [10_graceful_termination.md](10_graceful_termination.md) for shutdown protocol, and [11_consumer_group_commits.md](11_consumer_group_commits.md) for consumer group offset commits.
 
 ---
 
@@ -323,6 +323,44 @@ On membership change (worker join or leave detected via liveliness):
 
 ---
 
+### Phase 3.5 — Consumer Group Commits
+
+> Store-managed offset commits with generation fencing.
+>
+> **Foundation:** Full design in [11_consumer_group_commits.md](11_consumer_group_commits.md).
+> E2E test plan in [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md).
+
+#### 2.3.5.1 Offset Keyspace — `src/store/backend.rs` (extension)
+
+Add `offsets` keyspace to `FjallBackend`:
+- Key: `[group_id_hash:8][publisher_id:16]`
+- Value: `[seq:8 BE][generation:8 BE][timestamp_ms:8 BE]`
+- `commit_offsets(&OffsetCommit)` with generation fencing
+- `fetch_offsets(group_id) -> HashMap<PublisherId, u64>` via prefix scan
+
+#### 2.3.5.2 Offset Subscribe + Queryable — `src/store/runner.rs` (extension)
+
+- Subscribe to `{key_prefix}/_offsets/{partition}/**` and persist commits
+- Queryable on `{key_prefix}/_offsets/{partition}/**` for offset fetch
+
+#### 2.3.5.3 Consumer Commit API — `src/subscriber/mod.rs` (extension)
+
+- `commit_sync()` — query-based, waits for store ACK
+- `commit_async()` — fire-and-forget put
+- `load_offsets(partition)` — fetches via `session.get()`, seeds `GapDetector`
+- `new_consumer_group()` — constructor joining group via `PartitionManager`
+
+#### 2.3.5.4 Configuration — `src/config.rs` (extension)
+
+- `ConsumerGroupConfig` with `group_id`, `member_id`, `CommitMode::Manual|Auto`, `OffsetReset`
+
+#### 2.3.5.5 Generation Counter — `src/partition/mod.rs` (extension)
+
+- `generation: AtomicU64` on `PartitionManager`, incremented on every rebalance
+- `current_generation() -> u64`
+
+---
+
 ### Phase 4 — Cross-Restart Dedup + DLQ
 
 > Exactly-once semantics across restarts and poison message isolation.
@@ -403,7 +441,7 @@ mitiflow-gateway/
 │       ├── produce.rs       # ProduceRequest → EventPublisher
 │       ├── fetch.rs         # FetchRequest → EventSubscriber / Store query
 │       ├── metadata.rs      # MetadataRequest → topology info
-│       ├── offset.rs        # OffsetCommit/Fetch → SequenceCheckpoint
+│       ├── offset.rs        # OffsetCommit/Fetch → EventSubscriber commit API (see [11_consumer_group_commits.md](11_consumer_group_commits.md))
 │       ├── group.rs         # Consumer group lifecycle → PartitionManager
 │       └── admin.rs         # CreateTopics, DeleteTopics, DescribeConfigs
 ```
@@ -419,6 +457,7 @@ mitiflow-gateway/
 **Phase 5b: Consumer Groups**
 - 5 API keys: FindCoordinator, JoinGroup, SyncGroup, Heartbeat, LeaveGroup
 - Maps to `PartitionManager` — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 6
+- OffsetCommit/Fetch via `EventSubscriber::commit_sync()` / `load_offsets()` (see [11_consumer_group_commits.md](11_consumer_group_commits.md))
 - Validation: `kafka-console-consumer` with `--group`
 
 **Phase 5c: Admin + Polish**
@@ -624,14 +663,16 @@ graph TD
     P1["Phase 1: Core Pub/Sub<br/><i>Event, Config, Publisher, Subscriber, GapDetector</i>"]
     P2["Phase 2: Event Store + Watermark<br/><i>StorageBackend, RedbBackend, CommitWatermark, EventStore</i>"]
     P3["Phase 3: Consumer Groups<br/><i>ConsistentHashRing, PartitionManager, Rebalance</i>"]
+    P35["Phase 3.5: Consumer Group Commits<br/><i>OffsetCommit, generation fencing, commit API</i>"]
     P4["Phase 4: Dedup + DLQ<br/><i>SequenceCheckpoint, DeadLetterQueue</i>"]
     P5["Phase 5: Kafka Gateway<br/><i>mitiflow-gateway binary</i>"]
     BM["Benchmarks<br/><i>mitiflow-bench crate</i>"]
 
     P1 --> P2
     P2 --> P3
+    P3 --> P35
     P2 --> P4
-    P3 --> P5
+    P35 --> P5
     P4 --> P5
     P1 --> BM
     P2 --> BM
@@ -648,8 +689,9 @@ Each phase is independently testable and shippable. Phase 1 is a usable MVP — 
 | 1: Core Pub/Sub | ~8 | ~1,500 | 🔴 Critical | — |
 | 2: Event Store + Watermark | ~6 | ~1,200 | 🔴 Critical | Phase 1 |
 | 3: Consumer Groups | ~4 | ~800 | 🟡 Important | Phase 2 |
+| 3.5: Consumer Group Commits | ~3 | ~400 | 🟡 Important | Phase 3 |
 | 4: Dedup + DLQ | ~3 | ~500 | 🟢 Nice-to-have | Phase 2 |
-| 5: Kafka Gateway | ~10 | ~2,000 | 🟡 Important | Phases 3+4 |
+| 5: Kafka Gateway | ~10 | ~2,000 | 🟡 Important | Phases 3.5+4 |
 | Benchmarks | ~8 | ~800 | 🟡 Important | Phases 1+ |
 | **Total** | **~39** | **~6,800** | | |
 

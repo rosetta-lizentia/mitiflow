@@ -251,6 +251,17 @@ No Raft consensus, no leader election — just counting independent confirmation
 See [05_replication.md](05_replication.md) for the full replication design,
 failure modes, and recovery protocol.
 
+### Consumer Group Offset Commits
+
+Consumer group offset commits follow the same durability model. Consumers
+publish offset commits via `put()` to `_offsets/{partition}/{group_id}`, and
+the EventStore persists them in a dedicated `offsets` keyspace. A `commit_sync()`
+uses a queryable round-trip to confirm the store has persisted the commit,
+analogous to how `publish_durable()` waits for watermark confirmation. With
+replicated stores, offset commits are received by all replicas via the same
+pub/sub fan-out. See [11_consumer_group_commits.md](11_consumer_group_commits.md)
+for the full design.
+
 ---
 
 ## Strategy C: Inbox Pattern

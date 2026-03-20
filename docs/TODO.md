@@ -64,63 +64,6 @@ Kafka-style consumer groups with at-least-once semantics over Zenoh.
 
 ---
 
-## Critical: Sequence Model Migration
-
-**Status:** Not started
-**Ref:** [04_ordering.md](04_ordering.md)
-
-The publisher currently uses a **single global `AtomicU64`** (`next_seq`) for
-all events regardless of target partition. This breaks watermark tracking when a
-publisher writes to multiple partitions — sequences become non-contiguous within
-each partition, causing phantom gaps.
-
-### What needs to change
-
-1. **`EventPublisher`** — replace `next_seq: Arc<AtomicU64>` with a
-   `partition_seqs: Arc<RwLock<HashMap<u32, AtomicU64>>>` that maintains one
-   counter per partition the publisher writes to.
-
-2. **`publish_to(key, event)`** — hash the key to a partition, look up (or
-   create) the counter for that partition, increment it. Return `(partition, seq)`
-   instead of a bare `seq`.
-
-3. **`publish(event)` / `publish_bytes(event)`** — these currently write to
-   `{key_prefix}/{seq}`. They need a default partition (e.g., partition 0) or
-   the caller must specify a key for partitioning.
-
-4. **`HeartbeatBeacon`** — currently carries a single `current_seq`. Needs to
-   carry per-partition seq info: `HashMap<u32, u64>` or only beacon per
-   partition the publisher has written to.
-
-5. **`wait_for_watermark(seq)`** — must become
-   `wait_for_watermark(partition, seq)` to look up the right publisher watermark
-   entry in the `CommitWatermark`.
-
-6. **`CachedSample`** — add `partition: u32` field so recovery queries can be
-   scoped to the correct partition.
-
-7. **Attachment encoding** — currently encodes `(publisher_id, seq)`. Must add
-   `partition` to the attachment so the store knows which partition counter the
-   seq belongs to.
-
-8. **Store gap tracker** — `PublisherSeqState` in `FjallBackend` is keyed by
-   `PublisherId`. Must be re-keyed to `(PublisherId, partition)` or the store
-   must track gaps per (publisher, partition).
-
-### Why it works today
-
-Each benchmark worker creates its own `EventPublisher` and writes to a single
-fixed partition. So sequences happen to be contiguous per (publisher, partition).
-Any real workload with key-based routing will break.
-
-### Migration strategy
-
-The storage key format `(partition:4BE, publisher_id:16, seq:8BE)` already
-encodes the partition — no storage migration needed. Only the publisher-side
-counter and watermark lookup need changes.
-
----
-
 ## Orchestrator (Phase 2)
 
 **Status:** Not started
@@ -261,5 +204,5 @@ exist yet:
       ordering via HLC and publisher lifecycle management.
 - [x] Add [11_consumer_group_commits.md](11_consumer_group_commits.md) —
       consumer group offset commits, generation fencing, and orchestrator design.
-- [ ] Add [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md) —
+- [x] Add [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md) —
       systematic e2e test plan for consumer group edge cases.

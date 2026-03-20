@@ -407,6 +407,15 @@ The main advantage: **no new protocol to implement.** Replication uses Zenoh's
 existing fan-out. Recovery uses the existing queryable API. The only new
 component is the `QuorumTracker` in the publisher, which is ~50 lines of code.
 
+### Offset Commit Replication
+
+Consumer group offset commits (see [11_consumer_group_commits.md](11_consumer_group_commits.md))
+replicate via the same pub/sub fan-out. Consumers publish offsets to
+`_offsets/{partition}/{group_id}`, and all EventStore replicas subscribing to
+that keyspace receive the commit. Each replica independently persists the offset
+in its `offsets` keyspace. This means offset durability comes for free with
+store replication — no additional protocol needed.
+
 ---
 
 ## Implementation Sketch

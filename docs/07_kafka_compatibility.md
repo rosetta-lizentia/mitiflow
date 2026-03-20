@@ -67,10 +67,10 @@ The gateway is a **separate binary** (`mitiflow-gateway`), not part of the core 
 | **Partition** | Key expression suffix `p{N}` (e.g., `app/events/orders/p0`) |
 | **Producer** | `EventPublisher` |
 | **Consumer** | `EventSubscriber` |
-| **Consumer Group** | `PartitionManager` (L3) |
+| **Consumer Group** | `PartitionManager` (L3) + store-managed offset commits (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) |
 | **Offset** | Per-(partition, publisher) sequence number; gateway can assign per-partition total order (see [04_ordering.md](04_ordering.md)) |
 | **ISR / Replication** | Zenoh pub/sub fan-out to store replicas (see [05_replication.md](05_replication.md)) |
-| **Committed Offset** | `CommitWatermark.publishers[id].committed_seq` (per-publisher; see [03_durability.md](03_durability.md)) |
+| **Committed Offset** | `OffsetCommit.offsets` per-(publisher, partition) cursor stored in EventStore offsets keyspace (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) |
 | **Log Compaction** | `StorageBackend::compact()` |
 
 ### 3.2 API Key Coverage (Priority Order)
@@ -84,8 +84,8 @@ The Kafka protocol defines ~60 API keys. Not all are needed for compatibility. H
 | 0 | **Produce** | `EventPublisher::publish()` or `publish_durable()` (if `acks=all`) |
 | 1 | **Fetch** | `EventSubscriber::recv()` (live) or Event Store query (historical) |
 | 3 | **Metadata** | `PartitionManager::my_partitions()` + gateway topology |
-| 8 | **OffsetCommit** | `SequenceCheckpoint::ack()` |
-| 9 | **OffsetFetch** | `SequenceCheckpoint::last_checkpoint()` |
+| 8 | **OffsetCommit** | `EventSubscriber::commit_sync()` / `commit_async()` → store offset keyspace (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) |
+| 9 | **OffsetFetch** | `EventSubscriber::load_offsets()` → store offset queryable (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) |
 | 2 | **ListOffsets** | Event Store query (earliest/latest seq per partition) |
 
 #### Phase 2: Consumer Groups
@@ -205,6 +205,12 @@ Kafka's consumer group protocol (JoinGroup → SyncGroup → Heartbeat → Leave
 | Heartbeat | Zenoh liveliness keepalive (automatic) |
 | LeaveGroup | Drop liveliness token → triggers rebalance |
 | Rebalance | PartitionManager detects membership change via liveliness watcher |
+
+**Generation fencing:** Each rebalance increments a generation counter on the
+`PartitionManager`. Offset commits carry this generation, and the EventStore
+rejects commits from stale generations to prevent zombie consumers from
+corrupting offset state. See [11_consumer_group_commits.md](11_consumer_group_commits.md)
+§ 5.6 for the full zombie consumer timeline.
 
 **Key difference:** Kafka's rebalance is a "stop the world" protocol — all consumers in the group pause during reassignment. mitiflow's liveliness-driven rebalance can be cooperative — consumers only pause for their affected partitions.
 

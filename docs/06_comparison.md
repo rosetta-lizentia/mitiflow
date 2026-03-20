@@ -75,8 +75,8 @@ Data sourced from published benchmarks ([zenoh.io 2023](https://zenoh.io/blog/20
 
 | Feature | Zenoh + mitiflow | Kafka | RabbitMQ | NATS JS | Pulsar | Redis Streams |
 |---------|-------------------|-------|----------|---------|--------|---------------|
-| **Consumer groups** | ⚠️ L3 (app-level) | ✅ Native | ⚠️ Competing consumers | ✅ Queue groups | ✅ Subscriptions | ✅ XREADGROUP |
-| **Partitioning** | ⚠️ L3 (hash ring) | ✅ Native (topic partitions) | ❌ | ❌ | ✅ Native | ❌ |
+| **Consumer groups** | ✅ Store-managed offsets + generation fencing (see [11_consumer_group_commits.md](11_consumer_group_commits.md)) | ✅ Native | ⚠️ Competing consumers | ✅ Queue groups | ✅ Subscriptions | ✅ XREADGROUP |
+| **Partitioning** | ✅ L3 (HRW hash ring + liveliness rebalancing) | ✅ Native (topic partitions) | ❌ | ❌ | ✅ Native | ❌ |
 | **Auto-rebalance** | ✅ Liveliness-driven | ✅ Coordinator | ❌ | ⚠️ Limited | ✅ | ❌ |
 | **Ordering guarantee** | Per-(partition, publisher) | Per-partition | Per-queue | Per-subject | Per-partition | Per-stream |
 
@@ -136,7 +136,7 @@ Producer ← peer protocol → Consumer      (direct, µs latency)
 
 - Messages flow peer-to-peer (or via router for wide-area)
 - Persistence is a **subscriber-side concern**, not a transport-level feature
-- Consumer groups are application-level
+- Consumer groups use store-managed offset commits with generation fencing (see [11_consumer_group_commits.md](11_consumer_group_commits.md))
 - Latency = peer-to-peer (~µs) or via router (~tens of µs)
 
 ---
