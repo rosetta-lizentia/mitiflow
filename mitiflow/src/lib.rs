@@ -32,7 +32,7 @@ pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};
 
 #[cfg(feature = "store")]
-pub use store::{EventStore, FjallBackend};
+pub use store::{EventStore, FjallBackend, StoreManager};
 
 #[cfg(feature = "store")]
 pub use subscriber::checkpoint::SequenceCheckpoint;

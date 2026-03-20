@@ -639,7 +639,7 @@ impl EventStore {
 
         let subscriber = self
             .session
-            .declare_subscriber(format!("{key_prefix}/**"))
+            .declare_subscriber(format!("{key_prefix}/p/{partition}/**"))
             .await?;
         self._tasks.push(tokio::spawn(run_subscribe_task(
             subscriber,

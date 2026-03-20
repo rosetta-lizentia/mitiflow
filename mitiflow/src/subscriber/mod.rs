@@ -223,16 +223,72 @@ impl EventSubscriber {
     /// Create a new subscriber, spawning background tasks for event processing,
     /// heartbeat listening, and gap recovery.
     pub async fn new(session: &Session, config: EventBusConfig) -> Result<Self> {
+        let key_expr = format!("{}/**", config.key_prefix);
+        Self::init(session, config, &[key_expr]).await
+    }
+
+    /// Create a subscriber that only receives events for the specified partitions.
+    ///
+    /// This is the consumer-group-aware constructor: each consumer subscribes
+    /// only to its assigned partition subset. Gap detection, heartbeat listening,
+    /// and recovery all work identically to [`new`].
+    pub async fn new_partitioned(
+        session: &Session,
+        config: EventBusConfig,
+        partitions: &[u32],
+    ) -> Result<Self> {
+        let key_exprs: Vec<String> = if partitions.is_empty() {
+            vec![format!("{}/_none", config.key_prefix)]
+        } else {
+            partitions
+                .iter()
+                .map(|p| format!("{}/p/{p}/**", config.key_prefix))
+                .collect()
+        };
+        Self::init(session, config, &key_exprs).await
+    }
+
+    /// Shared initialization: create one Zenoh subscriber per key expression,
+    /// fan decoded samples into a shared channel, and spawn background tasks
+    /// for gap detection, heartbeat listening, and recovery.
+    async fn init(
+        session: &Session,
+        config: EventBusConfig,
+        key_exprs: &[String],
+    ) -> Result<Self> {
         let key_prefix = &config.key_prefix;
 
-        // Declare Zenoh subscriber on the data key expression.
-        let subscriber = session
-            .declare_subscriber(format!("{key_prefix}/**"))
-            .await?;
+        // Fan-in channel: all data subscribers push decoded samples here.
+        let (sample_tx, sample_rx) = flume::unbounded::<(EventMeta, String, Vec<u8>)>();
 
         let cancel = CancellationToken::new();
         let (event_tx, event_rx) = flume::unbounded::<RawEvent>();
         let mut tasks = Vec::new();
+
+        // Spawn a forwarder task per key expression.
+        for ke in key_exprs {
+            let sub = session.declare_subscriber(ke.as_str()).await?;
+            let tx: flume::Sender<(EventMeta, String, Vec<u8>)> = sample_tx.clone();
+            let cancel_c = cancel.clone();
+            tasks.push(tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel_c.cancelled() => break,
+                        result = sub.recv_async() => {
+                            match result {
+                                Ok(sample) => {
+                                    if let Some(decoded) = decode_sample(&sample) {
+                                        let _ = tx.send(decoded);
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                }
+            }));
+        }
+        drop(sample_tx);
 
         let num_shards = config.num_processing_shards;
         let publisher_ttl = config.publisher_ttl;
@@ -242,8 +298,7 @@ impl EventSubscriber {
         );
 
         if num_shards == 1 {
-            // Fast path: collapse dispatcher + shard worker into a single task,
-            // eliminating one flume channel hop and one Tokio context switch per message.
+            // Fast path: collapse dispatcher + shard worker into a single task.
             let cancel_clone = cancel.clone();
             let tx = event_tx.clone();
             let sess = session.clone();
@@ -266,16 +321,14 @@ impl EventSubscriber {
                 loop {
                     tokio::select! {
                         _ = cancel_clone.cancelled() => break,
-                        sample_result = subscriber.recv_async() => {
+                        sample_result = sample_rx.recv_async() => {
                             match sample_result {
-                                Ok(sample) => {
-                                    if let Some((meta, key, payload)) = decode_sample(&sample) {
-                                        let partition = crate::attachment::extract_partition(&key);
-                                        let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
-                                        handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &rc);
-                                        sample_count += 1;
-                                        maybe_evict(&mut gd, sample_count, publisher_ttl);
-                                    }
+                                Ok((meta, key, payload)) => {
+                                    let partition = crate::attachment::extract_partition(&key);
+                                    let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
+                                    handle_sample_result(result, &meta, &key, &payload, &tx, &sess, &rc);
+                                    sample_count += 1;
+                                    maybe_evict(&mut gd, sample_count, publisher_ttl);
                                 }
                                 Err(_) => break,
                             }
@@ -309,7 +362,6 @@ impl EventSubscriber {
             }
 
             // -- Spawn shard worker tasks --
-            // Each shard owns its GapDetector exclusively — no locks needed.
             for shard_rx in shard_rxs {
                 let tx = event_tx.clone();
                 let sess = session.clone();
@@ -348,7 +400,7 @@ impl EventSubscriber {
                 tasks.push(handle);
             }
 
-            // -- Dispatcher task: Zenoh samples → shard channels --
+            // -- Dispatcher task: fan-in samples → shard channels --
             {
                 let dispatchers_tx = shard_txs.clone();
                 let cancel_clone = cancel.clone();
@@ -357,17 +409,15 @@ impl EventSubscriber {
                     loop {
                         tokio::select! {
                             _ = cancel_clone.cancelled() => break,
-                            sample_result = subscriber.recv_async() => {
+                            sample_result = sample_rx.recv_async() => {
                                 match sample_result {
-                                    Ok(sample) => {
-                                        if let Some((meta, key, payload)) = decode_sample(&sample) {
-                                            let shard_idx = shard_for(&meta.pub_id, num_shards);
-                                            let _ = dispatchers_tx[shard_idx].send(ShardMsg::Sample {
-                                                meta,
-                                                key,
-                                                payload,
-                                            });
-                                        }
+                                    Ok((meta, key, payload)) => {
+                                        let shard_idx = shard_for(&meta.pub_id, num_shards);
+                                        let _ = dispatchers_tx[shard_idx].send(ShardMsg::Sample {
+                                            meta,
+                                            key,
+                                            payload,
+                                        });
                                     }
                                     Err(_) => break,
                                 }

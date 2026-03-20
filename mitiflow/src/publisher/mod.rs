@@ -311,6 +311,23 @@ impl EventPublisher {
         self.wait_for_watermark(partition, seq).await
     }
 
+    /// Publish raw bytes to an explicit key expression and wait for watermark
+    /// confirmation from the Event Store.
+    ///
+    /// The partition is extracted from the key expression (e.g., `prefix/p/3/data`).
+    /// If the key has no `/p/` segment, partition 0 is used.
+    #[cfg(feature = "store")]
+    pub async fn publish_bytes_durable_to(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
+        let urgency_ms = self.urgency_ms();
+        let partition = crate::attachment::extract_partition(key);
+        let seq = self.next_seq_for(partition);
+        let event_id = crate::types::EventId::new();
+        let timestamp = chrono::Utc::now();
+        self.put_payload(key, bytes, seq, event_id, timestamp, urgency_ms)
+            .await?;
+        self.wait_for_watermark(partition, seq).await
+    }
+
     /// Publish an event on the configured key prefix (fast path).
     ///
     /// Assigns a monotonic sequence number, attaches metadata, inserts into

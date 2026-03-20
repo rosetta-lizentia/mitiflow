@@ -266,3 +266,127 @@ impl BenchmarkWork for NatsDurableWork {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Consumer group consumers
+// ---------------------------------------------------------------------------
+
+/// NATS core queue group consumer — messages are distributed among members
+/// of the same queue group (no persistence, best-effort).
+#[derive(Clone)]
+pub struct NatsConsumerGroupConsumer {
+    pub url: String,
+    pub topic: String,
+    pub group: String,
+}
+
+impl ConsumerWork for NatsConsumerGroupConsumer {
+    type State = async_nats::Subscriber;
+
+    async fn init(&self) -> Self::State {
+        let client = async_nats::connect(&self.url)
+            .await
+            .expect("failed to connect to NATS");
+        client
+            .queue_subscribe(self.topic.clone(), self.group.clone())
+            .await
+            .expect("failed to queue-subscribe to NATS topic")
+    }
+
+    async fn run(&self, mut state: Self::State, recorder: ConsumerRecorder) -> Self::State {
+        use futures::StreamExt;
+        loop {
+            tokio::select! {
+                item = state.next() => {
+                    match item {
+                        Some(msg) => {
+                            let now = now_unix_ns_estimate();
+                            let sent_ts = extract_timestamp(&msg.payload);
+                            recorder.record(now.saturating_sub(sent_ts)).await;
+                        }
+                        None => break,
+                    }
+                }
+                _ = recorder.stopped() => break,
+            }
+        }
+        state
+    }
+}
+
+/// NATS JetStream consumer group consumer — uses a durable pull consumer
+/// with shared `deliver_group` so messages are distributed among members.
+#[derive(Clone)]
+pub struct NatsJetStreamConsumerGroupConsumer {
+    pub url: String,
+    pub topic: String,
+    pub group: String,
+}
+
+pub struct NatsJetStreamCGState {
+    messages: futures::stream::Fuse<async_nats::jetstream::consumer::pull::Stream>,
+}
+
+impl ConsumerWork for NatsJetStreamConsumerGroupConsumer {
+    type State = NatsJetStreamCGState;
+
+    async fn init(&self) -> Self::State {
+        use async_nats::jetstream::consumer::pull;
+
+        let client = async_nats::connect(&self.url)
+            .await
+            .expect("failed to connect to NATS");
+        let js = jetstream::new(client);
+
+        let stream_name = self.topic.replace(['.', '/'], "_");
+        let stream = js
+            .get_or_create_stream(jetstream::stream::Config {
+                name: stream_name,
+                subjects: vec![self.topic.clone()],
+                ..Default::default()
+            })
+            .await
+            .expect("failed to get JetStream stream");
+
+        let consumer = stream
+            .create_consumer(pull::Config {
+                durable_name: Some(self.group.clone()),
+                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
+                filter_subject: self.topic.clone(),
+                ..Default::default()
+            })
+            .await
+            .expect("failed to create JetStream pull consumer");
+
+        let messages = consumer
+            .messages()
+            .await
+            .expect("failed to get JetStream pull messages");
+
+        use futures::StreamExt;
+        NatsJetStreamCGState {
+            messages: messages.fuse(),
+        }
+    }
+
+    async fn run(&self, mut state: Self::State, recorder: ConsumerRecorder) -> Self::State {
+        use futures::StreamExt;
+        loop {
+            tokio::select! {
+                item = state.messages.next() => {
+                    match item {
+                        Some(Ok(msg)) => {
+                            let now = now_unix_ns_estimate();
+                            let sent_ts = extract_timestamp(&msg.payload);
+                            recorder.record(now.saturating_sub(sent_ts)).await;
+                        }
+                        Some(Err(_)) => continue,
+                        None => break,
+                    }
+                }
+                _ = recorder.stopped() => break,
+            }
+        }
+        state
+    }
+}

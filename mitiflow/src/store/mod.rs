@@ -18,4 +18,10 @@ pub use backend::FjallBackend;
 mod runner;
 
 #[cfg(feature = "store")]
+mod manager;
+
+#[cfg(feature = "store")]
 pub use runner::EventStore;
+
+#[cfg(feature = "store")]
+pub use manager::StoreManager;

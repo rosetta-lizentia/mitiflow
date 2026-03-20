@@ -1,5 +1,8 @@
 //! Redis Streams transport.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use lightbench::{
     BenchmarkWork, ConsumerRecorder, ConsumerWork, ProducerWork, WorkResult, now_unix_ns_estimate,
 };
@@ -145,5 +148,104 @@ impl BenchmarkWork for RedisDurableWork {
             Ok(_) => WorkResult::success(now_unix_ns_estimate() - start),
             Err(e) => WorkResult::error(e.to_string()),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Consumer group consumer (XREADGROUP + XACK)
+// ---------------------------------------------------------------------------
+
+/// Redis Streams consumer group consumer — uses XREADGROUP for distributed
+/// consumption via Redis consumer groups.
+#[derive(Clone)]
+pub struct RedisConsumerGroupConsumer {
+    pub url: String,
+    pub stream_key: String,
+    pub group_name: String,
+    /// Shared counter for assigning unique consumer IDs within the group.
+    pub consumer_counter: Arc<AtomicU32>,
+}
+
+pub struct RedisConsumerGroupState {
+    conn: redis::aio::MultiplexedConnection,
+    stream_key: String,
+    group_name: String,
+    consumer_id: String,
+}
+
+impl ConsumerWork for RedisConsumerGroupConsumer {
+    type State = RedisConsumerGroupState;
+
+    async fn init(&self) -> Self::State {
+        let client = redis::Client::open(self.url.as_str()).expect("failed to open redis client");
+        let mut conn = client
+            .get_multiplexed_async_connection()
+            .await
+            .expect("failed to connect to redis");
+
+        let consumer_idx = self.consumer_counter.fetch_add(1, Ordering::Relaxed);
+        let consumer_id = format!("consumer-{}", consumer_idx);
+
+        // Create the consumer group (ignore error if it already exists).
+        let _: redis::RedisResult<String> = redis::cmd("XGROUP")
+            .arg("CREATE")
+            .arg(&self.stream_key)
+            .arg(&self.group_name)
+            .arg("$")
+            .arg("MKSTREAM")
+            .query_async(&mut conn)
+            .await;
+
+        RedisConsumerGroupState {
+            conn,
+            stream_key: self.stream_key.clone(),
+            group_name: self.group_name.clone(),
+            consumer_id,
+        }
+    }
+
+    async fn run(&self, mut state: Self::State, recorder: ConsumerRecorder) -> Self::State {
+        while recorder.is_running() {
+            let result: redis::RedisResult<redis::streams::StreamReadReply> = redis::cmd("XREADGROUP")
+                .arg("GROUP")
+                .arg(&state.group_name)
+                .arg(&state.consumer_id)
+                .arg("COUNT")
+                .arg(100)
+                .arg("BLOCK")
+                .arg(100)
+                .arg("STREAMS")
+                .arg(&state.stream_key)
+                .arg(">")
+                .query_async(&mut state.conn)
+                .await;
+
+            match result {
+                Ok(reply) => {
+                    for stream_key in &reply.keys {
+                        let mut ack_ids = Vec::new();
+                        for entry in &stream_key.ids {
+                            if let Some(redis::Value::BulkString(data)) = entry.map.get("d") {
+                                let now = now_unix_ns_estimate();
+                                let sent_ts = extract_timestamp(data);
+                                recorder.record(now.saturating_sub(sent_ts)).await;
+                            }
+                            ack_ids.push(&entry.id);
+                        }
+                        // Acknowledge processed messages.
+                        if !ack_ids.is_empty() {
+                            let _: redis::RedisResult<i64> = redis::cmd("XACK")
+                                .arg(&state.stream_key)
+                                .arg(&state.group_name)
+                                .arg(ack_ids.as_slice())
+                                .query_async(&mut state.conn)
+                                .await;
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        state
     }
 }

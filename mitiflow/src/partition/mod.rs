@@ -163,22 +163,20 @@ impl PartitionManager {
         *guard = Some(Box::new(cb));
     }
 
-    /// Build a Zenoh key expression that matches only this worker's partitions.
+    /// Build Zenoh key expressions that match only this worker's partitions.
     ///
-    /// Returns a key expression like `prefix/p/0/**|prefix/p/5/**|prefix/p/12/**`
-    /// for partitions `[0, 5, 12]`. This can be used to subscribe only to
-    /// relevant partitions.
-    pub async fn subscription_key_expr(&self, key_prefix: &str) -> String {
+    /// Returns one key expression per assigned partition, e.g.
+    /// `["prefix/p/0/**", "prefix/p/5/**", "prefix/p/12/**"]`.
+    /// These can be used to declare individual Zenoh subscribers.
+    pub async fn subscription_key_exprs(&self, key_prefix: &str) -> Vec<String> {
         let parts = self.my_partitions.read().await;
         if parts.is_empty() {
-            // Return a key that won't match anything.
-            return format!("{key_prefix}/_none");
+            return vec![format!("{key_prefix}/_none")];
         }
         parts
             .iter()
             .map(|p| format!("{key_prefix}/p/{p}/**"))
-            .collect::<Vec<_>>()
-            .join("|")
+            .collect()
     }
 
     /// This worker's ID.

@@ -180,16 +180,16 @@ mod inner {
         const KEY_PREFIX: &str = "demo/user_actions";
         println!("\n--- Partition-filtered subscription key expressions ---");
         println!(
-            "  worker-a: {}",
-            worker_a.subscription_key_expr(KEY_PREFIX).await
+            "  worker-a: {:?}",
+            worker_a.subscription_key_exprs(KEY_PREFIX).await
         );
         println!(
-            "  worker-b: {}",
-            worker_b.subscription_key_expr(KEY_PREFIX).await
+            "  worker-b: {:?}",
+            worker_b.subscription_key_exprs(KEY_PREFIX).await
         );
         println!(
-            "  worker-c: {}",
-            worker_c.subscription_key_expr(KEY_PREFIX).await
+            "  worker-c: {:?}",
+            worker_c.subscription_key_exprs(KEY_PREFIX).await
         );
     }
 

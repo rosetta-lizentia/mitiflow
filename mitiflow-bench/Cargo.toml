@@ -44,3 +44,11 @@ path = "src/bin/bench_durable.rs"
 [[bin]]
 name = "bench_durable_pubsub"
 path = "src/bin/bench_durable_pubsub.rs"
+
+[[bin]]
+name = "bench_consumer_group"
+path = "src/bin/bench_consumer_group.rs"
+
+[[bin]]
+name = "bench_durable_consumer_group"
+path = "src/bin/bench_durable_consumer_group.rs"
