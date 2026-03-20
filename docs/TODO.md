@@ -6,7 +6,7 @@ Tracks the gap between the design documents and the current implementation.
 
 ## Consumer Group Commits (Phase 1)
 
-**Status:** Not started
+**Status:** Done
 **Ref:** [11_consumer_group_commits.md](11_consumer_group_commits.md)
 
 Store-managed offset commits co-located with the EventStore. Enables
@@ -14,47 +14,48 @@ Kafka-style consumer groups with at-least-once semantics over Zenoh.
 
 ### Implementation checklist
 
-- [ ] **`store/backend.rs` — offsets keyspace.** Add `offsets` keyspace to
+- [x] **`store/backend.rs` — offsets keyspace.** Add `offsets` keyspace to
       `FjallBackend`. Key: `[group_id_hash:8][publisher_id:16]`, Value:
       `[seq:8 BE][generation:8 BE][timestamp_ms:8 BE]`. Implement
       `commit_offsets(&OffsetCommit)` with generation fencing (reject if
       `commit.generation < stored_generation`). Implement
       `fetch_offsets(group_id) → HashMap<PublisherId, u64>` via prefix scan.
 
-- [ ] **`store/runner.rs` — offset subscribe + queryable.** Subscribe to
+- [x] **`store/runner.rs` — offset subscribe + queryable.** Subscribe to
       `{key_prefix}/_offsets/{partition}/**` and persist incoming commits.
       Declare queryable on `{key_prefix}/_offsets/{partition}/**` to serve
       offset fetch requests via `session.get()`.
 
-- [ ] **`subscriber/mod.rs` — commit API.** Add `commit_sync()` (query-based,
+- [x] **`subscriber/consumer_group.rs` — commit API.** `commit_sync()` (query-based,
       waits for store ACK), `commit_async()` (fire-and-forget put), and
       `load_offsets(partition)` (fetches via `session.get()` and seeds
-      `GapDetector`). Integrate into `on_rebalance`: commit lost partitions,
+      `GapDetector`). Integrated into `on_rebalance`: commit lost partitions,
       load offsets for gained partitions.
 
-- [ ] **`subscriber/mod.rs` — `new_consumer_group()`.** Constructor that joins
-      a group via `PartitionManager`, fetches committed offsets, and begins
+- [x] **`subscriber/consumer_group.rs` — `ConsumerGroupSubscriber::new()`.** Constructor
+      that joins a group via `PartitionManager`, fetches committed offsets, and begins
       consuming from assigned partitions.
 
-- [ ] **`config.rs` — consumer group config.** Add `ConsumerGroupConfig`
+- [x] **`config.rs` — consumer group config.** Add `ConsumerGroupConfig`
       (`group_id`, `member_id`, `CommitMode::Manual|Auto`, `OffsetReset`).
 
-- [ ] **`partition/mod.rs` — generation counter.** Add `generation: AtomicU64`
+- [x] **`partition/mod.rs` — generation counter.** Add `generation: Arc<AtomicU64>`
       to `PartitionManager`. Increment on every membership change. Expose via
       `current_generation()`.
 
-- [ ] **Auto-commit task.** Background `tokio::spawn` that calls
+- [x] **Auto-commit task.** Background `tokio::spawn` that calls
       `commit_async()` at configurable interval (default 5s). Final commit on
       `CancellationToken` cancel.
 
-- [ ] **`error.rs` — `StaleFencedCommit` variant.** For generation fencing
+- [x] **`error.rs` — `StaleFencedCommit` variant.** For generation fencing
       rejections.
 
-- [ ] **`lib.rs` — re-exports.** `OffsetCommit`, `ConsumerGroupConfig`,
+- [x] **`lib.rs` — re-exports.** `OffsetCommit`, `ConsumerGroupConfig`,
       `CommitMode`, `OffsetReset`.
 
 - [ ] **`examples/consumer_groups.rs` — update.** Demonstrate
-      `new_consumer_group()`, manual commit, and auto-commit modes.
+      `ConsumerGroupSubscriber`, manual commit, and auto-commit modes.
+      (Current example only shows `PartitionManager`.)
 
 ### Depends on
 
@@ -66,7 +67,7 @@ Kafka-style consumer groups with at-least-once semantics over Zenoh.
 
 ## Orchestrator (Phase 2)
 
-**Status:** Not started
+**Status:** Core done (optional items deferred)
 **Ref:** [11_consumer_group_commits.md](11_consumer_group_commits.md) § Part 6
 
 A control-plane service for cross-partition visibility and lifecycle automation.
@@ -74,17 +75,23 @@ Does **not** sit in the event data path.
 
 ### Implementation checklist
 
-- [ ] **New crate: `mitiflow-orchestrator/`.** Binary entry point.
-- [ ] **Config management.** `TopicConfig` storage in fjall. Distribute via
-      `_config/{topic_name}` pub/sub. EventStore instances subscribe and
-      reconfigure (retention, compaction).
-- [ ] **Lag monitoring.** Subscribe to `_watermark/*` and `_offsets/**`, compute
-      per-(group, partition, publisher) lag, publish to `_lag/{group}/{partition}`.
-- [ ] **Store lifecycle.** Track store liveliness via `_store/*`. Automated
-      provisioning: `create_topic()` → spawn N × RF store instances.
-      Health monitoring and alerting.
-- [ ] **Admin API.** Zenoh queryable (`_admin/**`) + HTTP REST.
-      Endpoints: list/describe topics, list groups, get lag, create/delete topics.
+- [x] **New crate: `mitiflow-orchestrator/`.** Binary entry point with
+      `OrchestratorConfig` (env-var driven).
+- [x] **Config management.** `TopicConfig` storage in fjall (`ConfigStore`).
+      Distribute via `_config/{topic_name}` pub/sub. CRUD: `put_topic`,
+      `get_topic`, `list_topics`, `delete_topic`.
+- [x] **Lag monitoring.** (`LagMonitor`) subscribes to `_watermark/*` and
+      `_offsets/**`, computes per-(group, partition, publisher) lag, publishes
+      to `_lag/{group}/{partition}`.
+- [x] **Store lifecycle.** (`StoreTracker`) tracks store liveliness via
+      `_store/*`. Detects online/offline transitions. Exposes
+      `online_stores()`, `offline_stores()`, `is_partition_online()`.
+- [x] **Admin API (Zenoh queryable).** `_admin/**` queryable serving
+      `topics` (list all) and `topics/{name}` (get specific).
+- [ ] **Admin API (HTTP REST).** Not implemented — only Zenoh queryable exists.
+- [ ] **Automated store provisioning.** `create_topic()` → spawn N × RF store
+      instances. Currently `create_topic()` persists config and publishes it
+      but does not spawn stores.
 - [ ] **Consumer group sessions (optional).** JoinGroup/SyncGroup/Heartbeat
       protocol via Zenoh queryable. Assigns globally unique generation IDs.
       Fallback: existing liveliness-based `PartitionManager` remains default.
@@ -92,10 +99,16 @@ Does **not** sit in the event data path.
       Leader election via liveliness + lowest UUID for write ops. Any replica
       serves reads.
 
+### Tests
+
+- `mitiflow-orchestrator/tests/orchestrator.rs` — 8 tests covering config
+  store CRUD, persistence, lag monitoring, store tracker online/offline,
+  orchestrator topic lifecycle, admin queryable, and lag integration.
+
 ### Depends on
 
 - Consumer Group Commits (Phase 1) — offset storage must exist before the
-  orchestrator can aggregate lag.
+  orchestrator can aggregate lag. ✅ Done.
 
 ---
 
@@ -182,9 +195,11 @@ exist yet:
       suite from the plan.)
 - [ ] `tests/gateway.rs` — Kafka protocol round-trip. Blocked on gateway
       implementation.
-- [ ] `tests/consumer_group_commit.rs` — consumer group offset commit e2e
-      tests. See [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md)
-      for full test plan with edge cases.
+- [x] `tests/consumer_group_commit.rs` — consumer group offset commit e2e
+      tests. 8 tests covering: commit round-trip, multi-publisher, generation
+      fencing, auto-commit interval, per-publisher independence, independent
+      groups on same topic, sync vs async commit, store crash recovery.
+      See [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md).
 - [ ] `e2e_*` integration tests — multi-process pub/sub, store crash recovery,
       live rebalance. Currently only single-process integration tests exist.
 - [ ] Criterion benchmarks (`mitiflow-bench/benches/`) — the plan specifies
