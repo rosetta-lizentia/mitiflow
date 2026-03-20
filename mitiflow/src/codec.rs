@@ -25,11 +25,11 @@ use crate::error::Result;
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub enum CodecFormat {
-    #[default]
     /// JSON encoding via `serde_json`.
     Json,
     /// MessagePack encoding via `rmp-serde`.
     MsgPack,
+    #[default]
     /// Postcard encoding via `postcard`.
     Postcard,
 }
