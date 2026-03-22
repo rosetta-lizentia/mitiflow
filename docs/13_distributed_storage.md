@@ -18,6 +18,36 @@ of what the decentralized tier already does.
 [10_graceful_termination.md](10_graceful_termination.md),
 [11_consumer_group_commits.md](11_consumer_group_commits.md)
 
+### Implementation Status
+
+**Tier 1 (StorageAgent): Done.** The `mitiflow-agent` crate implements the
+full decentralized storage management layer — weighted HRW assignment,
+liveliness-based membership, reconciler with `(partition, replica)` tracking,
+recovery from peer stores, rack-aware placement, override subscription, and
+health/status reporting. 47 tests pass (7 agent, 9 reconciler, 5 recovery,
+6 membership, 13 E2E scenarios, 3 smoke, 4 reporters).
+
+**Tier 2 (Orchestrator extensions): Not started.** ClusterView, OverrideManager,
+drain operations, and admin API extensions are designed but not implemented.
+
+### Key Files
+
+| Area | Path |
+|------|------|
+| Agent daemon | `mitiflow-agent/src/agent.rs` |
+| Agent binary entry | `mitiflow-agent/src/main.rs` |
+| Agent config | `mitiflow-agent/src/config.rs` |
+| Membership tracker | `mitiflow-agent/src/membership.rs` |
+| Reconciler | `mitiflow-agent/src/reconciler.rs` |
+| Recovery manager | `mitiflow-agent/src/recovery.rs` |
+| Health reporter | `mitiflow-agent/src/health.rs` |
+| Status reporter | `mitiflow-agent/src/status.rs` |
+| Types (NodeHealth, OverrideTable, etc.) | `mitiflow-agent/src/types.rs` |
+| Weighted HRW + rack-aware | `mitiflow/src/partition/hash_ring.rs` |
+| StorageBackend Arc blanket impl | `mitiflow/src/store/backend.rs` |
+| E2E test scenarios | `mitiflow-agent/tests/e2e/scenarios.rs` |
+| E2E test helpers | `mitiflow-agent/tests/e2e/helpers.rs` |
+
 ---
 
 ## 1. System Overview
@@ -902,36 +932,44 @@ just one possible source of topic configs.
 
 ## 9. Implementation Plan
 
-### Phase 1: StorageAgent Core (Tier 1 MVP)
+### Phase 1: StorageAgent Core (Tier 1 MVP) — ✅ Done
 
-Build the minimal decentralized system for single-topic deployment.
+Minimal decentralized system for single-topic deployment.
 
-- [ ] **Weighted HRW** — extend `hash_ring.rs` with `weighted_hrw_score()`
+- [x] **Weighted HRW** — `hash_ring.rs` extended with `weighted_hrw_score()`
       and `assign_replicas()`
-- [ ] **MembershipTracker** — liveliness-based node discovery at
-      `_agents/{id}`
-- [ ] **Reconciler** — desired vs actual state diff, start/stop EventStore
-- [ ] **StorageAgent binary** — main daemon that wires everything together
-- [ ] **StorageAgentConfig** — configuration struct with builder pattern
-- [ ] **HealthReporter** — periodic health publish to
+- [x] **MembershipTracker** — liveliness-based node discovery at
+      `_agents/{id}`, metadata queryable, peer watch task
+- [x] **Reconciler** — desired vs actual state diff, start/stop EventStore
+      per `(partition, replica)` tuple
+- [x] **StorageAgent binary** — main daemon wiring all components
+- [x] **StorageAgentConfig** — configuration struct with builder pattern
+- [x] **HealthReporter** — periodic health publish to
       `_cluster/health/{id}`
-- [ ] **StatusReporter** — on-change status publish to
+- [x] **StatusReporter** — on-change status publish to
       `_cluster/status/{id}`
 
-### Phase 2: Recovery & Multi-Replica (Tier 1 Complete)
+### Phase 2: Recovery & Multi-Replica (Tier 1 Complete) — ✅ Done
 
-Add failure resilience and replication support.
+Failure resilience and replication support.
 
-- [ ] **RecoveryManager** — peer query on partition gain
-- [ ] **Rack-aware assignment** — best-effort label-based replica separation
-- [ ] **Multi-replica support** — `(partition, replica)` tuple in reconciler
-- [ ] **Watermark per replica** — extend watermark key to include replica
-      index
-- [ ] **Drain grace period** — configurable drain timeout in reconciler
+- [x] **RecoveryManager** — peer query on partition gain via
+      `session.get()` with `accept_replies(ReplyKeyExpr::Any)`;
+      `recover_from_cache()` fallback; wired into Reconciler via
+      `with_recovery()`
+- [x] **Rack-aware assignment** — `assign_replicas_rack_aware()` with
+      two-pass rack diversity selection
+- [x] **Multi-replica support** — `(partition, replica)` tuple in reconciler;
+      `assign_replicas()` returns replication chain
+- [x] **Override support** — agents subscribe to `_cluster/overrides`;
+      overrides take precedence over HRW; epoch and expiry support
+- [x] **Drain grace period** — configurable drain timeout in reconciler
+- [x] **Arc<dyn StorageBackend> sharing** — blanket impl allows EventStore
+      and RecoveryManager to share the same backend
 
-### Phase 3: Orchestrator Cluster Extensions (Tier 2)
+### Phase 3: Orchestrator Cluster Extensions (Tier 2) — Not started
 
-Add optional operational control.
+Optional operational control.
 
 - [ ] **ClusterView** — subscribe to status/health streams, aggregate
 - [ ] **OverrideManager** — publish/manage override table
@@ -940,7 +978,7 @@ Add optional operational control.
       `_admin/cluster/**`
 - [ ] **Orchestrator HA** — liveliness-based leader election
 
-### Phase 4: Multi-Topic & Polish
+### Phase 4: Multi-Topic & Polish — Not started
 
 - [ ] **Multi-topic support** — topic discovery via `_config/*`
 - [ ] **Rebalance operation** — load-aware override generation

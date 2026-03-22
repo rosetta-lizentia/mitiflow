@@ -148,7 +148,7 @@ hard requirement for users.
 
 ## Distributed Storage Management
 
-**Status:** Design only
+**Status:** Tier 1 done, Tier 2 not started
 **Ref:** [13_distributed_storage.md](13_distributed_storage.md), [05_replication.md](05_replication.md)
 
 Two-tier architecture: decentralized StorageAgent (Tier 1) handles partition
@@ -158,19 +158,42 @@ operations, and cluster dashboards.
 
 ### Tier 1 — StorageAgent (Phases 1–2)
 
-- [ ] **Weighted HRW** — extend `hash_ring.rs` with weighted rendezvous
-      hashing and `assign_replicas()`.
-- [ ] **MembershipTracker** — liveliness-based node discovery at
-      `_agents/{node_id}`.
-- [ ] **Reconciler** — desired vs actual state diff, start/stop EventStore
-      instances per partition/replica.
-- [ ] **StorageAgent binary** — per-node daemon managing local EventStores.
-- [ ] **HealthReporter + StatusReporter** — publish node health and
-      assignment status to `_cluster/health/` and `_cluster/status/`.
-- [ ] **RecoveryManager** — query peers for missing events on partition gain.
-- [ ] **Rack-aware assignment** — best-effort label-based replica separation.
-- [ ] **Multi-replica support** — `(partition, replica)` tuple tracking in
-      reconciler with per-replica watermarks.
+- [x] **Weighted HRW** — `hash_ring.rs` extended with `weighted_hrw_score()`
+      and `assign_replicas()`. Weighted rendezvous hashing assigns partitions
+      proportionally to node capacity.
+- [x] **MembershipTracker** — liveliness-based node discovery at
+      `_agents/{node_id}`. Publishes `NodeMetadata`, queries existing peers
+      with `history=true`, watches for membership changes.
+- [x] **Reconciler** — desired vs actual state diff via `compute_actions()`.
+      Starts/stops `EventStore` instances per `(partition, replica)` tuple.
+      State machine: Starting → Recovering → Active → Draining → Stopped.
+      Triggers `RecoveryManager` on partition gain when wired via
+      `with_recovery()`.
+- [x] **StorageAgent binary** — per-node daemon (`mitiflow-agent`) wires
+      MembershipTracker, Reconciler, RecoveryManager, HealthReporter,
+      StatusReporter. Env-var config (`MITIFLOW_KEY_PREFIX`, `MITIFLOW_DATA_DIR`,
+      etc.). Graceful shutdown on Ctrl+C.
+- [x] **HealthReporter + StatusReporter** — publish `NodeHealth` to
+      `_cluster/health/{node_id}` (periodic, `CongestionControl::Drop`);
+      publish `NodeStatus` with partition assignments to
+      `_cluster/status/{node_id}` (on-change + 30s heartbeat).
+- [x] **RecoveryManager** — `recover(partition, backend, peer_ids)` queries
+      `{prefix}/_store/{partition}` via `session.get()` with
+      `accept_replies(ReplyKeyExpr::Any)`. `recover_from_cache()` as fallback.
+      Idempotent via `(publisher_id, seq)` keyed storage. Wired into
+      Reconciler for automatic recovery on partition gain.
+- [x] **Rack-aware assignment** — `assign_replicas_rack_aware()` in
+      `hash_ring.rs`. Two-pass selection: first pass prefers rack diversity,
+      second pass fills remaining slots. Uses `NodeDescriptor.labels`.
+- [x] **Multi-replica support** — `HashMap<(u32, u32), ManagedStore>` in
+      Reconciler tracks `(partition, replica)` tuples. Assignment via
+      `assign_replicas()` returns replication chain. Tests validate RF=2
+      scenarios.
+- [x] **Override support** — agents subscribe to `_cluster/overrides` and
+      prefer overrides over HRW-computed assignments. `OverrideTable` with
+      epoch and expiry support.
+- [x] **Arc<dyn StorageBackend> blanket impl** — allows sharing backend
+      between EventStore (owned) and RecoveryManager (writes during recovery).
 
 ### Tier 2 — Orchestrator Extensions (Phase 3)
 
@@ -188,26 +211,44 @@ operations, and cluster dashboards.
 - [ ] **Rebalance operation** — load-aware override generation.
 - [ ] **CLI tooling** — `mitiflow-ctl` for cluster management.
 
+### Tests
+
+- `mitiflow-agent/tests/agent.rs` — 7 tests: single node, 2-node split,
+  node leave/rebalance, shutdown drains, overrides, RF=2 multi-replica,
+  rack-aware placement.
+- `mitiflow-agent/tests/reconciler.rs` — 9 tests: start/stop, noop,
+  simultaneous gain/loss, drain grace period, state tracking, multi-replica,
+  shutdown, recovery trigger.
+- `mitiflow-agent/tests/recovery.rs` — 5 tests: no peers, unreachable peer,
+  recover from EventStore, cache fallback, idempotency.
+- `mitiflow-agent/tests/membership.rs` — 6 tests: discovery, leave, ignore
+  self, metadata propagation, consistent node list.
+- `mitiflow-agent/tests/e2e/scenarios.rs` — 13 E2E scenarios: cluster
+  formation, rebalance, crash/rejoin, data survival across graceful leave
+  and crash recovery, publish during rebalance, live ingestion.
+- `mitiflow-agent/tests/smoke/scenarios.rs` — 3 smoke tests.
+
 ---
 
 ## Replication
 
-**Status:** Design only (subsumed by Distributed Storage Management)
+**Status:** Partially implemented (via Distributed Storage Management)
 **Ref:** [05_replication.md](05_replication.md), [13_distributed_storage.md](13_distributed_storage.md)
 
 Replication is now part of the StorageAgent design — the `replica` index in
 `(partition, replica)` assignment tuples maps directly to the replication
 factor. See [13_distributed_storage.md](13_distributed_storage.md) § 7.
 
-- [ ] **Multi-store deployment** — run multiple `EventStore` instances
+- [x] **Multi-store deployment** — run multiple `EventStore` instances
       subscribing to the same key expressions. Zenoh pub/sub fan-out handles
-      data distribution.
+      data distribution. Reconciler manages `(partition, replica)` tuples.
 - [ ] **Quorum watermark tracker** — `QuorumTracker` that collects watermarks
       from N replicas and computes a quorum watermark (majority agreement).
 - [ ] **Publisher quorum confirmation** — `publish_durable()` waits for quorum
       watermark instead of single-store watermark.
-- [ ] **Recovery protocol** — a lagging replica queries peers for missing
-      events via `session.get()`.
+- [x] **Recovery protocol** — `RecoveryManager` queries peers for missing
+      events via `session.get()` with `accept_replies(ReplyKeyExpr::Any)`.
+      Idempotent via `(publisher_id, seq)` keyed storage.
 - [ ] **Durability levels** — configurable: `Single` (any 1 store),
       `Quorum` (majority), `All` (every replica).
 
@@ -248,8 +289,10 @@ exist yet:
       fencing, auto-commit interval, per-publisher independence, independent
       groups on same topic, sync vs async commit, store crash recovery.
       See [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md).
-- [ ] `e2e_*` integration tests — multi-process pub/sub, store crash recovery,
-      live rebalance. Currently only single-process integration tests exist.
+- [x] `e2e_*` integration tests — `mitiflow-agent/tests/e2e/` has 13
+      scenarios covering cluster formation, rebalance, crash/rejoin, data
+      survival, and live ingestion. `mitiflow-agent/tests/smoke/` has 3
+      multi-process smoke tests.
 - [ ] Criterion benchmarks (`mitiflow-bench/benches/`) — the plan specifies
       throughput, latency, store, and watermark benchmark suites. Current
       benchmarks use a custom harness (`bench_pubsub`, `bench_durable`), not
