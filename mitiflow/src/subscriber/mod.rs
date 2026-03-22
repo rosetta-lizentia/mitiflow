@@ -561,7 +561,12 @@ async fn query_and_deliver(
     tx: &flume::Sender<RawEvent>,
     tracker: &mut RecoveryTracker,
 ) {
-    let replies = match session.get(selector).await {
+    let replies = match session
+        .get(selector)
+        .accept_replies(zenoh::query::ReplyKeyExpr::Any)
+        .consolidation(zenoh::query::ConsolidationMode::None)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             warn!("recovery query failed: {e}");

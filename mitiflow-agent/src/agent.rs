@@ -22,9 +22,9 @@ use crate::types::OverrideTable;
 pub struct StorageAgent {
     config: StorageAgentConfig,
     _session: Session,
-    membership: MembershipTracker,
+    membership: Arc<MembershipTracker>,
     reconciler: Arc<Reconciler>,
-    _recovery: RecoveryManager,
+    _recovery: Arc<RecoveryManager>,
     health: HealthReporter,
     status: StatusReporter,
     overrides: Arc<RwLock<OverrideTable>>,
@@ -40,18 +40,23 @@ impl StorageAgent {
 
         // 1. Start membership tracker.
         let membership = MembershipTracker::new(session, &config).await?;
-
-        // 2. Create reconciler.
-        let reconciler = Arc::new(Reconciler::new(
-            config.node_id.clone(),
-            config.data_dir.clone(),
-            session.clone(),
-            config.bus_config.clone(),
-            config.drain_grace_period,
-        ));
+        let membership_arc = Arc::new(membership);
 
         // 3. Create recovery manager.
         let recovery = RecoveryManager::new(session, &key_prefix);
+        let recovery_arc = Arc::new(recovery);
+
+        // 2. Create reconciler (with recovery + membership for peer data recovery).
+        let reconciler = Arc::new(
+            Reconciler::new(
+                config.node_id.clone(),
+                config.data_dir.clone(),
+                session.clone(),
+                config.bus_config.clone(),
+                config.drain_grace_period,
+            )
+            .with_recovery(Arc::clone(&recovery_arc), Arc::clone(&membership_arc)),
+        );
 
         // 4. Start health reporter.
         let health = HealthReporter::new(
@@ -96,9 +101,9 @@ impl StorageAgent {
         let agent = Self {
             config,
             _session: session.clone(),
-            membership,
+            membership: membership_arc,
             reconciler,
-            _recovery: recovery,
+            _recovery: recovery_arc,
             health,
             status,
             overrides,

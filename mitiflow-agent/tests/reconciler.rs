@@ -260,3 +260,54 @@ async fn reconciler_shutdown_all_stops_everything() {
 
     session.close().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reconciler_triggers_recovery_on_start() {
+    use std::sync::Arc;
+    use mitiflow_agent::membership::MembershipTracker;
+    use mitiflow_agent::recovery::RecoveryManager;
+    use mitiflow_agent::config::StorageAgentConfig;
+
+    let session = zenoh::open(zenoh::Config::default()).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = bus_config("reconciler_recovery");
+
+    let agent_config = StorageAgentConfig::builder(
+        tmp.path().to_path_buf(),
+        config.clone(),
+    )
+    .node_id("recovery-test")
+    .num_partitions(4)
+    .build()
+    .unwrap();
+
+    let membership = Arc::new(
+        MembershipTracker::new(&session, &agent_config).await.unwrap(),
+    );
+    let recovery = Arc::new(RecoveryManager::new(&session, "test/reconciler_recovery"));
+
+    let reconciler = Reconciler::new(
+        "recovery-test".into(),
+        tmp.path().to_path_buf(),
+        session.clone(),
+        config,
+        Duration::from_secs(5),
+    )
+    .with_recovery(recovery, membership);
+
+    // Start p0 — should transition through Starting → Recovering → Active.
+    reconciler.reconcile(&[(0, 0)]).await.unwrap();
+
+    // The store should be in the active list (recovery runs in background and
+    // transitions to Active). Give it a moment since recovery is async.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let statuses = reconciler.partition_statuses().await;
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].partition, 0);
+    // With no peers, recovery completes quickly and transitions to Active.
+    assert_eq!(statuses[0].state, StoreState::Active);
+
+    reconciler.shutdown_all().await.unwrap();
+    session.close().await.unwrap();
+}

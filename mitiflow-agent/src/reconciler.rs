@@ -4,13 +4,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use mitiflow::store::backend::StorageBackend;
 use mitiflow::{EventBusConfig, EventStore, FjallBackend};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use zenoh::Session;
 
 use crate::error::{AgentError, AgentResult};
+use crate::membership::MembershipTracker;
+use crate::recovery::RecoveryManager;
 use crate::types::{PartitionStatus, StoreState};
 
 /// An action to be taken during reconciliation.
@@ -24,6 +27,10 @@ pub enum ReconcileAction {
 /// A managed EventStore instance with its lifecycle state.
 struct ManagedStore {
     store: EventStore,
+    /// Shared backend reference — kept alive so recovery can write directly
+    /// to the same storage the EventStore workers are reading from.
+    #[allow(dead_code)]
+    backend: Arc<dyn StorageBackend>,
     partition: u32,
     replica: u32,
     state: StoreState,
@@ -39,6 +46,10 @@ pub struct Reconciler {
     bus_config: EventBusConfig,
     session: Session,
     drain_grace_period: Duration,
+    /// Optional recovery manager for fetching historical events from peers.
+    recovery: Option<Arc<RecoveryManager>>,
+    /// Optional membership tracker for discovering peer node IDs.
+    membership: Option<Arc<MembershipTracker>>,
     /// Currently running stores keyed by (partition, replica).
     stores: Arc<RwLock<HashMap<(u32, u32), ManagedStore>>>,
 }
@@ -57,8 +68,21 @@ impl Reconciler {
             bus_config,
             session,
             drain_grace_period,
+            recovery: None,
+            membership: None,
             stores: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Set the recovery manager and membership tracker for peer recovery.
+    pub fn with_recovery(
+        mut self,
+        recovery: Arc<RecoveryManager>,
+        membership: Arc<MembershipTracker>,
+    ) -> Self {
+        self.recovery = Some(recovery);
+        self.membership = Some(membership);
+        self
     }
 
     /// Compute the diff between desired and actual state.
@@ -181,7 +205,10 @@ impl Reconciler {
         let backend = FjallBackend::open(&path, partition)
             .map_err(|e| AgentError::Store(format!("failed to open backend: {e}")))?;
 
-        let mut store = EventStore::new(&self.session, backend, self.bus_config.clone());
+        // Wrap in Arc so the same backend is shared between EventStore and recovery.
+        let backend: Arc<dyn StorageBackend> = Arc::new(backend);
+
+        let mut store = EventStore::new(&self.session, backend.clone(), self.bus_config.clone());
         store
             .run()
             .await
@@ -196,15 +223,63 @@ impl Reconciler {
 
         let managed = ManagedStore {
             store,
+            backend: backend.clone(),
             partition,
             replica,
-            state: StoreState::Active,
+            state: StoreState::Starting,
             _started_at: Utc::now(),
             event_count: 0,
             drain_cancel: None,
         };
 
         self.stores.write().await.insert((partition, replica), managed);
+
+        // Trigger background recovery if recovery + membership are configured.
+        if let (Some(recovery), Some(membership)) = (&self.recovery, &self.membership) {
+            let recovery = Arc::clone(recovery);
+            let membership = Arc::clone(membership);
+            let stores = Arc::clone(&self.stores);
+            let backend = backend;
+
+            tokio::spawn(async move {
+                // Update state to Recovering.
+                {
+                    let mut guard = stores.write().await;
+                    if let Some(m) = guard.get_mut(&(partition, replica)) {
+                        m.state = StoreState::Recovering;
+                    }
+                }
+
+                let peer_ids: Vec<String> = membership
+                    .peer_nodes()
+                    .await
+                    .iter()
+                    .map(|n| n.id.clone())
+                    .collect();
+
+                match recovery.recover(partition, &backend, &peer_ids).await {
+                    Ok(count) => {
+                        debug!(partition, recovered = count, "recovery finished");
+                    }
+                    Err(e) => {
+                        warn!(partition, "recovery failed: {e}");
+                    }
+                }
+
+                // Transition to Active regardless (store is already ingesting live events).
+                let mut guard = stores.write().await;
+                if let Some(m) = guard.get_mut(&(partition, replica)) {
+                    m.state = StoreState::Active;
+                }
+            });
+        } else {
+            // No recovery configured — mark Active immediately.
+            let mut guard = self.stores.write().await;
+            if let Some(m) = guard.get_mut(&(partition, replica)) {
+                m.state = StoreState::Active;
+            }
+        }
+
         Ok(())
     }
 

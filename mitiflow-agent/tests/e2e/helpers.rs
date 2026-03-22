@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow::EventBusConfig;
+use mitiflow::attachment::decode_metadata;
+use mitiflow::{EventBusConfig, EventPublisher};
 use mitiflow_agent::{StorageAgent, StorageAgentConfigBuilder};
 
 /// A managed cluster of StorageAgent instances for testing.
@@ -218,5 +219,121 @@ impl TestCluster {
     #[allow(dead_code)]
     pub fn agent(&self, idx: usize) -> Option<&StorageAgent> {
         self.agents[idx].as_ref().map(|s| &s.agent)
+    }
+
+    /// Get a Zenoh session from a running agent (for publishing/querying).
+    #[allow(dead_code)]
+    pub fn session(&self, idx: usize) -> Option<&zenoh::Session> {
+        self.agents[idx].as_ref().map(|s| &s.session)
+    }
+
+    /// Create an `EventPublisher` bound to this cluster's key prefix.
+    #[allow(dead_code)]
+    pub async fn create_publisher(&self, session: &zenoh::Session) -> EventPublisher {
+        let bus_config = EventBusConfig::builder(format!("test/{}", self.test_name))
+            .cache_size(100)
+            .build()
+            .unwrap();
+        EventPublisher::new(session, bus_config).await.unwrap()
+    }
+
+    /// Publish `n` events with sequential payload `"msg-0"`, `"msg-1"`, … to the given partition.
+    #[allow(dead_code)]
+    pub async fn publish_events(
+        &self,
+        publisher: &EventPublisher,
+        partition: u32,
+        count: usize,
+    ) {
+        let key = format!("test/{}/p/{partition}/data", self.test_name);
+        for i in 0..count {
+            let payload = format!("msg-{i}");
+            publisher
+                .publish_bytes_to(&key, payload.as_bytes().to_vec())
+                .await
+                .unwrap();
+        }
+    }
+
+    /// Query a store partition via Zenoh and return the number of events found.
+    #[allow(dead_code)]
+    pub async fn query_store_count(
+        &self,
+        session: &zenoh::Session,
+        partition: u32,
+    ) -> usize {
+        let query_key = format!("test/{}/_store/{partition}", self.test_name);
+        let mut count = 0;
+
+        if let Ok(replies) = session
+            .get(&query_key)
+            .consolidation(zenoh::query::ConsolidationMode::None)
+            .accept_replies(zenoh::query::ReplyKeyExpr::Any)
+            .timeout(Duration::from_secs(3))
+            .await
+        {
+            while let Ok(reply) = replies.recv_async().await {
+                if let Ok(sample) = reply.result() {
+                    if sample.attachment().is_some() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        count
+    }
+
+    /// Query a store partition and return the sequence numbers of stored events.
+    #[allow(dead_code)]
+    pub async fn query_store_seqs(
+        &self,
+        session: &zenoh::Session,
+        partition: u32,
+    ) -> Vec<u64> {
+        let query_key = format!("test/{}/_store/{partition}", self.test_name);
+        let mut seqs = Vec::new();
+
+        if let Ok(replies) = session
+            .get(&query_key)
+            .consolidation(zenoh::query::ConsolidationMode::None)
+            .accept_replies(zenoh::query::ReplyKeyExpr::Any)
+            .timeout(Duration::from_secs(3))
+            .await
+        {
+            while let Ok(reply) = replies.recv_async().await {
+                if let Ok(sample) = reply.result() {
+                    if let Some(attachment) = sample.attachment() {
+                        if let Ok(meta) = decode_metadata(attachment) {
+                            seqs.push(meta.seq);
+                        }
+                    }
+                }
+            }
+        }
+
+        seqs.sort();
+        seqs
+    }
+
+    /// Wait until a store partition has at least `min_count` events, polling periodically.
+    #[allow(dead_code)]
+    pub async fn wait_for_events(
+        &self,
+        session: &zenoh::Session,
+        partition: u32,
+        min_count: usize,
+        deadline: Duration,
+    ) -> usize {
+        let start = tokio::time::Instant::now();
+        let mut count = 0;
+        while start.elapsed() < deadline {
+            count = self.query_store_count(session, partition).await;
+            if count >= min_count {
+                return count;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        count
     }
 }

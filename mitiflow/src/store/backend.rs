@@ -115,6 +115,51 @@ pub trait StorageBackend: Send + Sync {
     }
 }
 
+// Blanket impl: `Arc<dyn StorageBackend>` itself implements `StorageBackend`,
+// allowing a shared backend to be passed to `EventStore::new` while keeping
+// a clone for recovery or other concurrent access.
+impl StorageBackend for std::sync::Arc<dyn StorageBackend> {
+    fn partition(&self) -> u32 {
+        (**self).partition()
+    }
+
+    fn store(&self, key: &str, event: &[u8], metadata: EventMetadata) -> Result<()> {
+        (**self).store(key, event, metadata)
+    }
+
+    fn store_batch(&self, events: Vec<(String, Vec<u8>, EventMetadata)>) -> Result<()> {
+        (**self).store_batch(events)
+    }
+
+    fn query(&self, filters: &QueryFilters) -> Result<Vec<StoredEvent>> {
+        (**self).query(filters)
+    }
+
+    fn query_replay(&self, filters: &ReplayFilters) -> Result<Vec<StoredEvent>> {
+        (**self).query_replay(filters)
+    }
+
+    fn publisher_watermarks(&self) -> HashMap<PublisherId, PublisherWatermark> {
+        (**self).publisher_watermarks()
+    }
+
+    fn gc(&self, older_than: DateTime<Utc>) -> Result<usize> {
+        (**self).gc(older_than)
+    }
+
+    fn compact(&self) -> Result<CompactionStats> {
+        (**self).compact()
+    }
+
+    fn commit_offsets(&self, commit: &crate::store::offset::OffsetCommit) -> Result<()> {
+        (**self).commit_offsets(commit)
+    }
+
+    fn fetch_offsets(&self, group_id: &str) -> Result<HashMap<PublisherId, u64>> {
+        (**self).fetch_offsets(group_id)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FjallBackend — LSM-tree backed implementation using the fjall crate.
 // ---------------------------------------------------------------------------
