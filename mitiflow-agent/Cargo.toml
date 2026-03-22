@@ -1,0 +1,27 @@
+[package]
+name = "mitiflow-agent"
+description = "Storage agent for distributed partition management in mitiflow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mitiflow = { path = "../mitiflow", features = ["full"] }
+zenoh = { workspace = true }
+tokio = { workspace = true, features = ["signal", "process"] }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = "1"
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+rand = { workspace = true }
+nix = { version = "0.31", features = ["signal"] }

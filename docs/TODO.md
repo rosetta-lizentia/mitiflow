@@ -146,10 +146,58 @@ hard requirement for users.
 
 ---
 
-## Replication
+## Distributed Storage Management
 
 **Status:** Design only
-**Ref:** [05_replication.md](05_replication.md), [03_durability.md](03_durability.md) § Quorum Watermarks
+**Ref:** [13_distributed_storage.md](13_distributed_storage.md), [05_replication.md](05_replication.md)
+
+Two-tier architecture: decentralized StorageAgent (Tier 1) handles partition
+assignment, failure recovery, and peer coordination via Zenoh primitives.
+Optional Orchestrator extensions (Tier 2) add strategic overrides, drain
+operations, and cluster dashboards.
+
+### Tier 1 — StorageAgent (Phases 1–2)
+
+- [ ] **Weighted HRW** — extend `hash_ring.rs` with weighted rendezvous
+      hashing and `assign_replicas()`.
+- [ ] **MembershipTracker** — liveliness-based node discovery at
+      `_agents/{node_id}`.
+- [ ] **Reconciler** — desired vs actual state diff, start/stop EventStore
+      instances per partition/replica.
+- [ ] **StorageAgent binary** — per-node daemon managing local EventStores.
+- [ ] **HealthReporter + StatusReporter** — publish node health and
+      assignment status to `_cluster/health/` and `_cluster/status/`.
+- [ ] **RecoveryManager** — query peers for missing events on partition gain.
+- [ ] **Rack-aware assignment** — best-effort label-based replica separation.
+- [ ] **Multi-replica support** — `(partition, replica)` tuple tracking in
+      reconciler with per-replica watermarks.
+
+### Tier 2 — Orchestrator Extensions (Phase 3)
+
+- [ ] **ClusterView** — aggregate status/health streams into cluster-wide view.
+- [ ] **OverrideManager** — publish assignment overrides via
+      `_cluster/overrides`.
+- [ ] **Drain operation** — compute overrides to evacuate a node for
+      maintenance.
+- [ ] **Admin API extensions** — cluster endpoints on `_admin/cluster/**`.
+- [ ] **Orchestrator HA** — liveliness-based leader election.
+
+### Tier 1+2 Polish (Phase 4)
+
+- [ ] **Multi-topic support** — topic discovery via `_config/*`.
+- [ ] **Rebalance operation** — load-aware override generation.
+- [ ] **CLI tooling** — `mitiflow-ctl` for cluster management.
+
+---
+
+## Replication
+
+**Status:** Design only (subsumed by Distributed Storage Management)
+**Ref:** [05_replication.md](05_replication.md), [13_distributed_storage.md](13_distributed_storage.md)
+
+Replication is now part of the StorageAgent design — the `replica` index in
+`(partition, replica)` assignment tuples maps directly to the replication
+factor. See [13_distributed_storage.md](13_distributed_storage.md) § 7.
 
 - [ ] **Multi-store deployment** — run multiple `EventStore` instances
       subscribing to the same key expressions. Zenoh pub/sub fan-out handles

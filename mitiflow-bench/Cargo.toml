@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["full"]
+default = []
 kafka = ["dep:rdkafka"]
 nats = ["dep:async-nats"]
 redis = ["dep:redis"]

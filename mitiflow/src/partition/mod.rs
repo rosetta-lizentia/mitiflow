@@ -12,6 +12,8 @@
 pub mod hash_ring;
 pub mod rebalance;
 
+pub use hash_ring::NodeDescriptor;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 

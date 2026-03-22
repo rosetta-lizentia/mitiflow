@@ -1,0 +1,6 @@
+[test-groups.zenoh-integration]
+max-threads = 4
+
+[[profile.default.overrides]]
+filter = "package(mitiflow-agent)"
+test-group = "zenoh-integration"

@@ -41,7 +41,7 @@ pub use store::{EventStore, FjallBackend, OffsetCommit, StoreManager};
 pub use subscriber::checkpoint::SequenceCheckpoint;
 
 #[cfg(feature = "partition")]
-pub use partition::PartitionManager;
+pub use partition::{NodeDescriptor, PartitionManager};
 
 #[cfg(all(feature = "store", feature = "partition"))]
 pub use subscriber::consumer_group::ConsumerGroupSubscriber;
