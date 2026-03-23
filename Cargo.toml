@@ -12,6 +12,9 @@ rust-version = "1.85"
 [workspace.dependencies]
 mitiflow = { path = "mitiflow"}
 mitiflow-agent = { path = "mitiflow-agent"}
+mitiflow-orchestrator = { path = "../mitiflow-orchestrator" }
+
+
 # Zenoh
 zenoh = "1.8"
 
