@@ -511,7 +511,11 @@ Approach C provides:
 4. **Natural per-entity ordering.** Events for the same entity key hash to the
    same partition. With one publisher per entity type (the common case), ordering
    within the partition is total for that entity.
-5. **Kafka gateway is still feasible.** The gateway maintains a per-partition
+5. **Key-based publishing.** Application keys embedded in the Zenoh key
+   expression (`{prefix}/p/{partition}/k/{key}/{seq}`) enable server-side
+   filtering, key-scoped replay, and log compaction. See
+   [15_key_based_publishing.md](15_key_based_publishing.md).
+6. **Kafka gateway is still feasible.** The gateway maintains a per-partition
    offset counter (a thin mapping layer), presenting a unified log view to Kafka
    clients while mitiflow internally uses per-publisher streams.
 

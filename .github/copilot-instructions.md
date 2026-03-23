@@ -54,7 +54,8 @@ cargo bench -p mitiflow                      # Criterion micro-benchmarks
 - Types: `PascalCase` (`EventPublisher`, `StorageBackend`)
 - Functions: `snake_case` (`publish_durable`, `recv_raw`)
 - Modules: `snake_case` (`gap_detector`, `hash_ring`)
-- Zenoh key expressions: slash-separated (`demo/sensors`, `myapp/events/p/0`)
+- Zenoh key expressions: slash-separated (`demo/sensors`, `myapp/events/p/0`, `myapp/events/p/0/k/order-123/42`)
+- Keyed event key expressions: `{prefix}/p/{partition}/k/{key}/{seq}` — the `/k/` segment separates application keys from partition/sequence. See [docs/15_key_based_publishing.md](docs/15_key_based_publishing.md).
 - Internal Zenoh keys: `_` prefix (`{prefix}/_store`, `{prefix}/_watermark`)
 
 ## Testing
@@ -91,4 +92,5 @@ async fn test_something() {
 | Consumer group subscriber | `mitiflow/src/subscriber/consumer_group.rs` |
 | Test helpers | `mitiflow/tests/common/mod.rs` |
 | Orchestrator | `mitiflow-orchestrator/src/orchestrator.rs` |
+| Key-based publishing design | `docs/15_key_based_publishing.md` |
 | Implementation roadmap | `docs/implementation_plan.md` |

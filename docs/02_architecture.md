@@ -169,6 +169,10 @@ impl EventPublisher {
 
     /// Publish to explicit partition key
     pub async fn publish_to<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64>;
+
+    /// Publish with application key (auto-partitions via hash)
+    /// Key expression: {prefix}/p/{hash(key) % partitions}/k/{key}/{seq}
+    pub async fn publish_keyed<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64>;
 }
 ```
 

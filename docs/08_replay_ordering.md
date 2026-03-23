@@ -178,6 +178,17 @@ relationship, the value can be empty (the actual event data lives in the
 `events` keyspace). A replay query scans the `replay` keyspace in key order
 and looks up each event from `events`.
 
+**Key index** (for key-based publishing, see
+[15_key_based_publishing.md](15_key_based_publishing.md)):
+```
+Keyspace: keys
+Key:   [key_hash: 8 bytes][hlc_physical: 8 bytes BE][hlc_logical: 4 bytes BE][publisher_id: 16 bytes]
+Value: [publisher_id: 16 bytes][seq: 8 bytes BE]  (pointer to events keyspace)
+```
+
+The `keys` index enables key-scoped queries and log compaction. It is populated
+only when events carry an application key (keyed publish path).
+
 **Alternative: inline value.** Store the full event value in the replay
 keyspace too. Doubles storage but avoids the second lookup per event during
 replay. Worth it if replay is the dominant read pattern.
