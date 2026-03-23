@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench", "mitiflow-orchestrator", "mitiflow-agent"]
+members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench", "mitiflow-orchestrator", "mitiflow-agent", "mitiflow-emulator"]
 
 [workspace.package]
 version = "0.1.0"
@@ -55,3 +55,14 @@ rand = "=0.8"
 
 scc = "3.6"
 criterion = "0.8.2"
+
+lightbench = "0.3"
+
+anyhow = "1"
+humantime = "2"
+humantime-serde = "1"
+async-trait = "0.1"
+clap = "4"
+
+base64 = "0.22"
+nix = "0.31"

@@ -1,0 +1,24 @@
+# Minimal Pub/Sub
+#
+# The simplest possible topology: one producer → one consumer.
+# Useful as a smoke test or starter template.
+
+topics:
+  - name: events
+    key_prefix: demo/events
+
+components:
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 100
+    payload:
+      generator: counter
+      prefix: evt
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 1

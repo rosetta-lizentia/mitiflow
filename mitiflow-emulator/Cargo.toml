@@ -1,0 +1,61 @@
+[package]
+name = "mitiflow-emulator"
+description = "YAML-driven topology runner and chaos testbed for mitiflow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+default-run = "mitiflow-emulator"
+
+[[bin]]
+name = "mitiflow-emulator"
+path = "src/main.rs"
+
+[[bin]]
+name = "mitiflow-emulator-producer"
+path = "src/bin/producer.rs"
+
+[[bin]]
+name = "mitiflow-emulator-consumer"
+path = "src/bin/consumer.rs"
+
+[[bin]]
+name = "mitiflow-emulator-processor"
+path = "src/bin/processor.rs"
+
+[[bin]]
+name = "mitiflow-emulator-storage-agent"
+path = "src/bin/storage_agent.rs"
+
+[[bin]]
+name = "mitiflow-emulator-orchestrator"
+path = "src/bin/orchestrator.rs"
+
+[dependencies]
+mitiflow = { path = "../mitiflow", features = ["full"] }
+mitiflow-agent = { path = "../mitiflow-agent" }
+mitiflow-orchestrator = { path = "../mitiflow-orchestrator" }
+zenoh = { workspace = true }
+tokio = { workspace = true, features = ["signal", "process", "fs", "io-util"] }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+lightbench = { workspace = true }
+base64 = { workspace = true }
+nix = { workspace = true , features = ["signal", "process"] }
+anyhow = { workspace = true }
+humantime = { workspace = true }
+humantime-serde = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }

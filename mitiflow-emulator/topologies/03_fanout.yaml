@@ -1,0 +1,83 @@
+# Fan-out Pipeline
+#
+# Multiple producers → shared topic → processor → enriched topic → consumer group.
+# Tests multi-producer, processing stage, and consumer group commit.
+
+defaults:
+  codec: msgpack
+  cache_size: 256
+  heartbeat_ms: 1000
+  recovery_mode: both
+
+topics:
+  - name: raw-events
+    key_prefix: demo/fanout/raw
+    num_partitions: 8
+
+  - name: enriched
+    key_prefix: demo/fanout/enriched
+    num_partitions: 8
+
+components:
+  - name: store-raw
+    kind: storage_agent
+    topic: raw-events
+    capacity: 100
+
+  - name: store-enriched
+    kind: storage_agent
+    topic: enriched
+
+  - name: prod-1
+    kind: producer
+    topic: raw-events
+    rate: 100.0
+    payload:
+      generator: schema
+      schema:
+        sensor_id:
+          type: uuid
+        temperature:
+          type: float
+          min: -20.0
+          max: 50.0
+        rack:
+          type: string
+          pattern: "rack-{0-9}"
+
+  - name: prod-2
+    kind: producer
+    topic: raw-events
+    rate: 100.0
+    payload:
+      generator: schema
+      schema:
+        sensor_id:
+          type: uuid
+        temperature:
+          type: float
+          min: 10.0
+          max: 30.0
+        rack:
+          type: string
+          pattern: "rack-{10-19}"
+
+  - name: enricher
+    kind: processor
+    input_topic: raw-events
+    output_topic: enriched
+    processing:
+      mode: delay
+      delay_ms: 10
+
+  - name: analytics
+    kind: consumer
+    topic: enriched
+    consumer_group:
+      group_id: analytics-group
+      commit_mode: auto
+      auto_commit_interval_ms: 3000
+    output:
+      mode: count
+      report_interval_sec: 5
+    instances: 2

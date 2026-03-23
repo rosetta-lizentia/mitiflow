@@ -1,0 +1,87 @@
+# Chaos Engineering Demo
+#
+# Durable pipeline with scheduled chaos events:
+# - Kill a storage agent at 15s, restart after 3s
+# - Pause a consumer every 30s for 5s
+# - Kill a random producer every 45s
+#
+# Tests fault tolerance, gap recovery, and automatic restart.
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+topics:
+  - name: events
+    key_prefix: demo/chaos/events
+    num_partitions: 8
+
+components:
+  - name: store-1
+    kind: storage_agent
+    topic: events
+    capacity: 100
+
+  - name: store-2
+    kind: storage_agent
+    topic: events
+    capacity: 100
+
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 50.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: chaos-evt
+
+  - name: prod-2
+    kind: producer
+    topic: events
+    rate: 50.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: chaos-evt
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 5
+
+  - name: cons-2
+    kind: consumer
+    topic: events
+    consumer_group:
+      group_id: chaos-group
+      commit_mode: auto
+    output:
+      mode: count
+      report_interval_sec: 5
+
+chaos:
+  enabled: true
+  schedule:
+    - at: 15s
+      action: kill
+      target: store-1
+      restart_after: 3s
+
+    - every: 30s
+      action: pause
+      target: cons-1
+      duration: 5s
+
+    - every: 45s
+      action: kill_random
+      pool: [prod-1, prod-2]
+      restart_after: 2s
+
+    - at: 60s
+      action: restart
+      target: store-2

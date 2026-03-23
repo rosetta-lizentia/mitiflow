@@ -28,7 +28,6 @@
 //!   --transport zenoh --rate 1000 --workers 1 --duration 10
 //! ```
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
@@ -96,7 +95,7 @@ async fn main() {
         Transport::Kafka | Transport::Redpanda => {
             let work = transport::kafka::KafkaDurableWork {
                 broker: cli.kafka_broker.clone(),
-                topic: Arc::new(kafka_topic(&topic)),
+                topic: std::sync::Arc::new(kafka_topic(&topic)),
                 payload_size,
             };
             run_durable(cli.bench, work).await;

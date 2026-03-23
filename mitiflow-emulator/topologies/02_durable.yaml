@@ -1,0 +1,45 @@
+# Durable Pipeline
+#
+# Producer → Storage Agent → Consumer with durability enabled.
+# Tests event persistence and recovery.
+
+zenoh:
+  mode: peer
+
+defaults:
+  codec: json
+  cache_size: 256
+  heartbeat_ms: 1000
+  recovery_mode: both
+
+topics:
+  - name: events
+    key_prefix: demo/durable/events
+    num_partitions: 4
+    replication_factor: 1
+
+components:
+  - name: store-1
+    kind: storage_agent
+    topic: events
+    capacity: 1000
+    log_level: "debug"
+
+  - name: prod-1
+    kind: producer
+    topic: events
+    instances: 1
+    rate: 100
+    durable: true
+    urgency_ms: 50
+    cache_size: 10000
+    payload:
+      generator: random_json
+      size_bytes: 256
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 1

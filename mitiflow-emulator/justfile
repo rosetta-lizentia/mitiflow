@@ -1,0 +1,89 @@
+# mitiflow-emulator justfile
+#
+# Usage:
+#   just build           — build all emulator binaries
+#   just validate-all    — validate every topology YAML
+#   just run NAME [ARGS] — run a topology by short name (e.g., just run 01_minimal --duration 10)
+#   just run-all         — run each topology for 15 seconds sequentially
+#   just test            — run all emulator tests
+#   just dry-run NAME    — print spawn plan without starting processes
+
+set dotenv-load := false
+
+topologies_dir := "topologies"
+cargo_run := "cargo run -p mitiflow-emulator --bin mitiflow-emulator"
+cargo_run_q := "cargo run -q -p mitiflow-emulator --bin mitiflow-emulator"
+
+# Build all emulator binaries (main + role binaries)
+build:
+    cargo build -p mitiflow-emulator 
+
+# Build in release mode
+build-release:
+    cargo build -p mitiflow-emulator --release 
+
+# Run all emulator tests
+test:
+    cargo test -p mitiflow-emulator 
+
+# Validate a single topology by filename (e.g., just validate 01_minimal)
+validate name:
+    {{cargo_run}} -- validate {{topologies_dir}}/{{name}}.yaml
+
+# Validate every topology YAML file
+validate-all: build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    passed=0
+    failed=0
+    for f in {{topologies_dir}}/*.yaml; do
+        name=$(basename "$f")
+        printf "%-30s" "$name"
+        if output=$({{cargo_run_q}} -- validate "$f" 2>&1); then
+            echo "✓  $output"
+            passed=$((passed + 1))
+        else
+            echo "✗  $output"
+            failed=$((failed + 1))
+        fi
+    done
+    echo ""
+    echo "Results: $passed passed, $failed failed"
+    if [ "$failed" -gt 0 ]; then exit 1; fi
+
+# Print dry-run spawn plan for a topology
+dry-run name:
+    {{cargo_run}} -- run --dry-run {{topologies_dir}}/{{name}}.yaml
+
+# Dry-run all topologies
+dry-run-all: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in {{topologies_dir}}/*.yaml; do
+        echo "=== $(basename "$f") ==="
+        {{cargo_run_q}} -- run --dry-run "$f" 2>&1
+        echo ""
+    done
+
+# Run a single topology (e.g., just run 01_minimal --duration 10)
+run name *args: build
+    {{cargo_run}} -- run {{topologies_dir}}/{{name}}.yaml {{args}}
+
+# Run each topology sequentially for a given duration (default 15s)
+run-all duration="15": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in {{topologies_dir}}/*.yaml; do
+        name=$(basename "$f" .yaml)
+        echo "━━━ Running $name for {{duration}}s ━━━"
+        if {{cargo_run}} -- run "$f" --duration {{duration}} 2>&1; then
+            echo "✓ $name completed"
+        else
+            echo "✗ $name failed (exit $?)"
+        fi
+        echo ""
+    done
+
+# List available topologies
+list:
+    @ls -1 {{topologies_dir}}/*.yaml | xargs -I{} basename {} .yaml

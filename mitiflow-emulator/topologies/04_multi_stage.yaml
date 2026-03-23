@@ -1,0 +1,108 @@
+# Multi-stage Pipeline
+#
+# Ingestion → filtering → enrichment → analytics output.
+# Three processing stages with different modes.
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+logging:
+  level: info
+
+topics:
+  - name: raw
+    key_prefix: demo/pipeline/raw
+    num_partitions: 8
+
+  - name: filtered
+    key_prefix: demo/pipeline/filtered
+    num_partitions: 4
+
+  - name: enriched
+    key_prefix: demo/pipeline/enriched
+    num_partitions: 4
+
+  - name: output
+    key_prefix: demo/pipeline/output
+    num_partitions: 2
+
+components:
+  - name: orch
+    kind: orchestrator
+    lag_interval_ms: 2000
+
+  - name: store-raw
+    kind: storage_agent
+    topic: raw
+    capacity: 200
+
+  - name: store-output
+    kind: storage_agent
+    topic: output
+
+  - name: ingest
+    kind: producer
+    topic: raw
+    rate: 200.0
+    payload:
+      generator: schema
+      schema:
+        device_id:
+          type: uuid
+        reading:
+          type: float
+          min: 0.0
+          max: 1000.0
+        priority:
+          type: enum
+          values: [low, medium, high, critical]
+        region:
+          type: enum
+          values: [us-east-1, us-west-2, eu-west-1, ap-south-1]
+        active:
+          type: bool
+          probability: 0.9
+
+  - name: filter
+    kind: processor
+    input_topic: raw
+    output_topic: filtered
+    processing:
+      mode: filter
+      drop_probability: 0.3
+
+  - name: enrich
+    kind: processor
+    input_topic: filtered
+    output_topic: enriched
+    processing:
+      mode: delay
+      delay_ms: 5
+
+  - name: transform
+    kind: processor
+    input_topic: enriched
+    output_topic: output
+    processing:
+      mode: passthrough
+
+  - name: realtime-dash
+    kind: consumer
+    topic: output
+    output:
+      mode: count
+      report_interval_sec: 3
+
+  - name: batch-analytics
+    kind: consumer
+    topic: output
+    consumer_group:
+      group_id: batch-analytics
+      commit_mode: manual
+      auto_commit_interval_ms: 10000
+    output:
+      mode: count
+      report_interval_sec: 10

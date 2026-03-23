@@ -1,6 +1,6 @@
 # Emulator — Local Topology Runner & Chaos Testbed
 
-**Status:** Proposed  
+**Status:** Implemented (Phase 1–3 complete, Phase 4–5 partial)  
 **Crate:** `mitiflow-emulator`
 
 ---
@@ -848,52 +848,52 @@ On startup, the supervisor creates these directories. On shutdown (or when
 
 ### Phase 1: Core Scaffold
 
-- [ ] Create `mitiflow-emulator` crate with workspace integration
-- [ ] YAML config schema (`config.rs`) with serde + validation
-- [ ] `ProcessBackend` — spawn child processes, capture stdout/stderr
-- [ ] Log aggregator — line-buffered multiplexer with `[name:instance]` prefix
-- [ ] Producer role binary — `EventPublisher` + `random_json` generator + rate limiter
-- [ ] Consumer role binary — `EventSubscriber` + count/log output modes
-- [ ] Supervisor — ordered startup, `ctrl_c` graceful shutdown
-- [ ] `run` CLI subcommand
-- [ ] Example topology: `simple_pubsub.yaml`
+- [x] Create `mitiflow-emulator` crate with workspace integration
+- [x] YAML config schema (`config.rs`) with serde + validation
+- [x] `ProcessBackend` — spawn child processes, capture stdout/stderr
+- [x] Log aggregator — line-buffered multiplexer with `[name:instance]` prefix
+- [x] Producer role binary — `EventPublisher` + `random_json` generator + lightbench rate controller
+- [x] Consumer role binary — `EventSubscriber` + count/log output modes
+- [x] Supervisor — ordered startup, `ctrl_c` graceful shutdown
+- [x] `run` CLI subcommand
+- [x] Example topology: `simple_pubsub.yaml` (as `01_minimal.yaml`)
 
 ### Phase 2: Full Pipeline
 
-- [ ] Processor role binary — subscribe → passthrough/delay → publish
-- [ ] Storage agent role binary — thin wrapper of `StorageAgent::start()`
-- [ ] Orchestrator role binary — thin wrapper of `Orchestrator::new().run()`
-- [ ] Consumer group support in processor and consumer role binaries
-- [ ] `schema` payload generator
-- [ ] `validate` CLI subcommand (DAG check, partition consistency)
-- [ ] `depends_on` and readiness gates
-- [ ] Example topology: `enrichment_pipeline.yaml`
+- [x] Processor role binary — subscribe → passthrough/delay → publish
+- [x] Storage agent role binary — thin wrapper of `StorageAgent::start()`
+- [x] Orchestrator role binary — thin wrapper of `Orchestrator::new().run()`
+- [x] Consumer group support in processor and consumer role binaries
+- [x] `schema` payload generator (float, int, string, uuid, datetime, bool, enum)
+- [x] `validate` CLI subcommand (DAG check, partition consistency)
+- [x] `depends_on` field (validated, startup ordering via tier system)
+- [x] Example topologies: `02_durable.yaml`, `03_fanout.yaml`, `04_multi_stage.yaml`, `05_stress.yaml`
 
 ### Phase 3: Chaos Engineering
 
-- [ ] Chaos scheduler engine (one-shot, recurring triggers)
-- [ ] `kill` action with optional `restart_after`
-- [ ] `pause` / resume actions (SIGSTOP/SIGCONT)
-- [ ] `kill_random` action with target pool
-- [ ] `restart` action (graceful stop → re-spawn)
-- [ ] `--chaos` / `--no-chaos` CLI flags
-- [ ] Example topology: `chaos_demo.yaml`
+- [x] Chaos scheduler engine (one-shot, recurring triggers)
+- [x] `kill` action with optional `restart_after`
+- [x] `pause` / resume actions (SIGSTOP/SIGCONT)
+- [x] `kill_random` action with target pool
+- [x] `restart` action (graceful stop → re-spawn)
+- [x] `--chaos` / `--no-chaos` CLI flags
+- [x] Example topology: `06_chaos.yaml`
 
 ### Phase 4: Container Backend
 
-- [ ] `ContainerBackend` — Docker/Podman spawner
+- [x] `ContainerBackend` — Docker/Podman spawner (`container_backend.rs`)
 - [ ] Multi-stage Dockerfile
-- [ ] Per-component `isolation: container` support
+- [x] Per-component `isolation: container` support
 - [ ] `auto_router` — supervisor-managed Zenoh router
-- [ ] Container-specific chaos: `docker pause`, `docker kill`
+- [x] Container-specific chaos: `docker pause`, `docker kill`
 - [ ] `slow` action via `tc`/`netem` (container mode only)
 
 ### Phase 5: Developer Experience
 
 - [ ] `dot` CLI subcommand (Graphviz pipeline visualization)
-- [ ] Colored log output with component-name prefixes
-- [ ] `--duration` flag for time-bounded runs
-- [ ] `--dry-run` flag
+- [x] Log output with component-name prefixes (`[name:instance]`)
+- [x] `--duration` flag for time-bounded runs
+- [x] `--dry-run` flag
 - [ ] `--clean` flag to remove data directories on exit
 - [ ] Built-in topology templates (list/generate common patterns)
 - [ ] Metrics summary on shutdown (events produced/consumed, gaps, latency)

@@ -1,0 +1,46 @@
+# High-throughput Stress Test
+#
+# Multiple producers pushing at high rate through partitioned topics
+# with multiple consumer group members. Useful for measuring throughput
+# and verifying stability under load.
+
+defaults:
+  codec: postcard
+  cache_size: 1024
+  heartbeat_ms: 500
+  recovery_mode: heartbeat
+
+topics:
+  - name: events
+    key_prefix: demo/stress/events
+    num_partitions: 16
+    replication_factor: 2
+
+components:
+  - name: store
+    kind: storage_agent
+    topic: events
+    capacity: 500
+    instances: 2
+
+  - name: producer
+    kind: producer
+    topic: events
+    rate: 1000.0
+    durable: true
+    instances: 4
+    payload:
+      generator: random_json
+      size_bytes: 512
+
+  - name: consumer
+    kind: consumer
+    topic: events
+    instances: 4
+    consumer_group:
+      group_id: stress-group
+      commit_mode: auto
+      auto_commit_interval_ms: 1000
+    output:
+      mode: count
+      report_interval_sec: 5
