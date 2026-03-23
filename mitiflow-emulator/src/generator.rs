@@ -1,6 +1,6 @@
 //! Payload generation strategies for emulator producers.
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 use serde_json::json;
 
 use crate::config::{GeneratorType, PayloadConfig, SchemaFieldDef, SchemaFieldType};
@@ -81,11 +81,11 @@ impl PayloadGenerator {
     pub fn generate(&mut self) -> Vec<u8> {
         match self {
             Self::RandomJson { size_bytes } => {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 let padding_len = size_bytes.saturating_sub(20);
                 let padding: String = (0..padding_len)
                     .map(|_| {
-                        let idx = rng.gen_range(0..62);
+                        let idx = rng.random_range(0..62);
                         match idx {
                             0..=9 => (b'0' + idx) as char,
                             10..=35 => (b'a' + idx - 10) as char,
@@ -104,7 +104,7 @@ impl PayloadGenerator {
                 serde_json::to_vec(&obj).unwrap()
             }
             Self::Schema { fields } => {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 let mut map = serde_json::Map::new();
                 for (name, field_gen) in fields.iter() {
                     map.insert(name.clone(), field_gen.generate(&mut rng));
@@ -140,14 +140,14 @@ impl FieldGenerator {
         }
     }
 
-    fn generate(&self, rng: &mut dyn rand::RngCore) -> serde_json::Value {
+    fn generate(&self, rng: &mut dyn rand::rand_core::Rng) -> serde_json::Value {
         match self {
             Self::Float { min, max } => {
-                let val = rng.gen_range(*min..=*max);
+                let val = rng.random_range(*min..=*max);
                 serde_json::Value::from(val)
             }
             Self::Int { min, max } => {
-                let val = rng.gen_range(*min..=*max);
+                let val = rng.random_range(*min..=*max);
                 serde_json::Value::from(val)
             }
             Self::Uuid => {
@@ -157,13 +157,13 @@ impl FieldGenerator {
                 serde_json::Value::String(chrono::Utc::now().to_rfc3339())
             }
             Self::Bool { probability } => {
-                serde_json::Value::Bool(rng.gen_bool(*probability))
+                serde_json::Value::Bool(rng.random_bool(*probability))
             }
             Self::Enum { values } => {
                 if values.is_empty() {
                     serde_json::Value::Null
                 } else {
-                    let idx = rng.gen_range(0..values.len());
+                    let idx = rng.random_range(0..values.len());
                     serde_json::Value::String(values[idx].clone())
                 }
             }
@@ -177,7 +177,7 @@ impl FieldGenerator {
 
 /// Expand `{N-M}` range patterns in a string.
 /// E.g. `"rack-{0-99}"` → `"rack-42"`.
-fn expand_pattern(pattern: &str, rng: &mut dyn rand::RngCore) -> String {
+fn expand_pattern(pattern: &str, rng: &mut dyn rand::Rng) -> String {
     let mut result = String::new();
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -195,7 +195,7 @@ fn expand_pattern(pattern: &str, rng: &mut dyn rand::RngCore) -> String {
             if found_close {
                 if let Some((min_s, max_s)) = range_str.split_once('-') {
                     if let (Ok(min), Ok(max)) = (min_s.parse::<i64>(), max_s.parse::<i64>()) {
-                        let val = rng.gen_range(min..=max);
+                        let val = rng.random_range(min..=max);
                         result.push_str(&val.to_string());
                         continue;
                     }

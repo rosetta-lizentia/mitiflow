@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -177,8 +177,8 @@ impl ChaosScheduler {
 
             ChaosAction::KillRandom => {
                 if !def.pool.is_empty() {
-                    let mut rng = rand::thread_rng();
-                    let idx = rng.gen_range(0..def.pool.len());
+                    let mut rng = rand::rng();
+                    let idx = rng.random_range(0..def.pool.len());
                     let target = &def.pool[idx];
                     info!("Chaos: kill_random selected {}", target);
 

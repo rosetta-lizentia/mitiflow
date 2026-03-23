@@ -10,6 +10,7 @@ use mitiflow::publisher::EventPublisher;
 use mitiflow::subscriber::EventSubscriber;
 use mitiflow_emulator::config::{ProcessingMode, RecoveryModeConfig};
 use mitiflow_emulator::role_config::{decode_config, ProcessorRoleConfig, ZenohRoleConfig};
+use rand::RngExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -112,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
     let subscriber = EventSubscriber::new(&session, input_config).await?;
 
     let mut processed = 0u64;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     loop {
         tokio::select! {
@@ -132,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
                             ProcessingMode::Filter => {
                                 let drop_prob = config.drop_probability.unwrap_or(0.0);
                                 use rand::Rng;
-                                if !rng.gen_bool(drop_prob.min(1.0)) {
+                                if !rng.random_bool(drop_prob.min(1.0)) {
                                     let _ = publisher.publish_bytes(event.payload.clone()).await;
                                 }
                             }
