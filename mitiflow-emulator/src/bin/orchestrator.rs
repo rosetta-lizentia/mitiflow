@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         data_dir: config.data_dir.clone(),
         lag_interval: Duration::from_millis(config.lag_interval_ms),
         admin_prefix: None, // Use default.
+        http_bind: None,
     };
 
     tracing::info!(
@@ -70,6 +71,8 @@ async fn main() -> anyhow::Result<()> {
             replication_factor: topic.replication_factor,
             retention: RetentionPolicy::default(),
             compaction: CompactionPolicy::default(),
+            required_labels: std::collections::HashMap::new(),
+            excluded_labels: std::collections::HashMap::new(),
         };
         if let Err(e) = orchestrator.create_topic(topic_config).await {
             tracing::warn!("Failed to create topic {}: {}", topic.name, e);

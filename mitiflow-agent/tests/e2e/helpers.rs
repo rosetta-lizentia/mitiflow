@@ -76,7 +76,7 @@ impl TestCluster {
 
     /// Gracefully stop agent at the given slot.
     pub async fn stop_agent(&mut self, idx: usize) {
-        if let Some(slot) = self.agents[idx].take() {
+        if let Some(mut slot) = self.agents[idx].take() {
             slot.agent.shutdown().await.unwrap();
             slot.session.close().await.unwrap();
         }

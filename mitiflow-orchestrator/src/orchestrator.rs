@@ -28,6 +28,8 @@ pub struct OrchestratorConfig {
     pub lag_interval: Duration,
     /// Admin API key prefix (default: `{key_prefix}/_admin`).
     pub admin_prefix: Option<String>,
+    /// Bind address for optional HTTP API (e.g. `0.0.0.0:8080`).
+    pub http_bind: Option<std::net::SocketAddr>,
 }
 
 /// The orchestrator control-plane service.
@@ -126,8 +128,40 @@ impl Orchestrator {
             .await;
         }));
 
+        // Start _config/** queryable so agents can discover topics on join
+        let config_prefix = format!("{}/_config", self.config.key_prefix);
+        let config_queryable = self
+            .session
+            .declare_queryable(format!("{config_prefix}/**"))
+            .await?;
+        let config_store_for_qbl = Arc::clone(&self.config_store);
+        let cancel_for_config = self.cancel.clone();
+
+        self.tasks.push(tokio::spawn(async move {
+            run_config_queryable(
+                config_queryable,
+                config_store_for_qbl,
+                &config_prefix,
+                cancel_for_config,
+            )
+            .await;
+        }));
+
         // Distribute existing configs on startup
         self.publish_all_configs().await;
+
+        // Optionally start HTTP API
+        if let Some(bind_addr) = self.config.http_bind {
+            let http_nodes = self.cluster_view.as_ref().map(|cv| cv.nodes_handle());
+            let http_handle = crate::http::start_http(
+                Arc::clone(&self.config_store),
+                http_nodes,
+                bind_addr,
+                self.cancel.clone(),
+            )
+            .await;
+            self.tasks.push(http_handle);
+        }
 
         info!(
             key_prefix = %self.config.key_prefix,
@@ -406,4 +440,61 @@ async fn run_admin_queryable(
         }
     }
     debug!("admin queryable stopped");
+}
+
+/// Handle `_config/**` queries so agents can discover existing topics.
+///
+/// - `_config/*` or `_config/**` → one reply per topic
+/// - `_config/{name}` → single topic config
+async fn run_config_queryable(
+    queryable: zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>,
+    config_store: Arc<ConfigStore>,
+    config_prefix: &str,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            result = queryable.recv_async() => {
+                match result {
+                    Ok(query) => {
+                        let key = query.key_expr().as_str().to_string();
+                        let suffix = key
+                            .strip_prefix(config_prefix)
+                            .unwrap_or("")
+                            .trim_start_matches('/');
+
+                        if suffix.is_empty() || suffix == "*" || suffix == "**" {
+                            // Return all topics, one reply per topic.
+                            if let Ok(topics) = config_store.list_topics() {
+                                for topic in &topics {
+                                    let reply_key = format!("{config_prefix}/{}", topic.name);
+                                    if let Ok(bytes) = serde_json::to_vec(topic) {
+                                        let _ = query.reply(&reply_key, bytes).await;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Specific topic query.
+                            match config_store.get_topic(suffix) {
+                                Ok(Some(topic)) => {
+                                    if let Ok(bytes) = serde_json::to_vec(&topic) {
+                                        let _ = query.reply(query.key_expr(), bytes).await;
+                                    }
+                                }
+                                Ok(None) => {
+                                    // Topic not found — no reply (empty result set).
+                                }
+                                Err(e) => {
+                                    warn!("config queryable error for {suffix}: {e}");
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    debug!("config queryable stopped");
 }

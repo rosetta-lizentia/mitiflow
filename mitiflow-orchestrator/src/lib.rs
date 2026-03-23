@@ -4,9 +4,11 @@
 //! cluster view aggregation, override management, drain operations,
 //! and an admin API (Zenoh queryable). Does **not** sit in the event data path.
 
+pub mod alert_manager;
 pub mod cluster_view;
 pub mod config;
 pub mod drain;
+pub mod http;
 pub mod lag;
 pub mod lifecycle;
 pub mod orchestrator;

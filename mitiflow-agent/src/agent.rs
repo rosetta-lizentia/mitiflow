@@ -1,301 +1,129 @@
 use std::sync::Arc;
 
-use mitiflow::partition::hash_ring::{self, NodeDescriptor};
-use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tokio::sync::Mutex;
+use tracing::info;
 use zenoh::Session;
 
-use crate::config::StorageAgentConfig;
+use crate::config::{AgentConfig, StorageAgentConfig, TopicEntry};
 use crate::error::AgentResult;
-use crate::health::HealthReporter;
-use crate::membership::MembershipTracker;
-use crate::reconciler::Reconciler;
-use crate::recovery::RecoveryManager;
-use crate::status::StatusReporter;
-use crate::types::OverrideTable;
+use crate::topic_supervisor::TopicSupervisor;
+use crate::topic_watcher::TopicWatcher;
 
 /// Top-level storage agent daemon.
 ///
-/// Manages EventStore instances for assigned partitions using decentralized
-/// partition assignment (weighted rendezvous hashing) and Zenoh liveliness.
+/// Wraps a [`TopicSupervisor`] that manages one or more topics, each with
+/// its own [`TopicWorker`] owning a `MembershipTracker`, `Reconciler`,
+/// `RecoveryManager`, and `StatusReporter`.
+///
+/// When `auto_discover_topics` is enabled, a [`TopicWatcher`] subscribes to
+/// `{global_prefix}/_config/**` and auto-provisions topics published by the
+/// orchestrator.
 pub struct StorageAgent {
-    config: StorageAgentConfig,
+    supervisor: Arc<Mutex<TopicSupervisor>>,
+    watcher: Option<TopicWatcher>,
     _session: Session,
-    membership: Arc<MembershipTracker>,
-    reconciler: Arc<Reconciler>,
-    _recovery: Arc<RecoveryManager>,
-    health: HealthReporter,
-    status: StatusReporter,
-    overrides: Arc<RwLock<OverrideTable>>,
-    cancel: CancellationToken,
-    _override_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl StorageAgent {
-    /// Create and start the storage agent.
+    /// Create and start the storage agent from a legacy single-topic config.
     pub async fn start(session: &Session, config: StorageAgentConfig) -> AgentResult<Self> {
-        let key_prefix = config.key_prefix().to_string();
-        let cancel = CancellationToken::new();
-
-        // 1. Start membership tracker.
-        let membership = MembershipTracker::new(session, &config).await?;
-        let membership_arc = Arc::new(membership);
-
-        // 3. Create recovery manager.
-        let recovery = RecoveryManager::new(session, &key_prefix);
-        let recovery_arc = Arc::new(recovery);
-
-        // 2. Create reconciler (with recovery + membership for peer data recovery).
-        let reconciler = Arc::new(
-            Reconciler::new(
-                config.node_id.clone(),
-                config.data_dir.clone(),
-                session.clone(),
-                config.bus_config.clone(),
-                config.drain_grace_period,
-            )
-            .with_recovery(Arc::clone(&recovery_arc), Arc::clone(&membership_arc)),
-        );
-
-        // 4. Start health reporter.
-        let health = HealthReporter::new(
-            session,
-            config.node_id.clone(),
-            &key_prefix,
-            config.health_interval,
-        )
-        .await?;
-
-        // 5. Start status reporter.
-        let status = StatusReporter::new(session, config.node_id.clone(), &key_prefix).await?;
-
-        // 6. Subscribe to override updates.
-        let overrides: Arc<RwLock<OverrideTable>> =
-            Arc::new(RwLock::new(OverrideTable::default()));
-        let override_task = {
-            let session = session.clone();
-            let overrides = Arc::clone(&overrides);
-            let cancel = cancel.clone();
-            let override_key = config.overrides_key();
-            let reconciler = Arc::clone(&reconciler);
-            let config_clone = config.clone();
-
-            Some(tokio::spawn(async move {
-                if let Err(e) = Self::override_watcher(
-                    &session,
-                    &override_key,
-                    &overrides,
-                    &reconciler,
-                    &config_clone,
-                    &cancel,
-                )
-                .await
-                {
-                    warn!("override watcher exited: {e}");
-                }
-            }))
-        };
-
-        // 7. Compute initial assignment and reconcile.
-        let agent = Self {
-            config,
-            _session: session.clone(),
-            membership: membership_arc,
-            reconciler,
-            _recovery: recovery_arc,
-            health,
-            status,
-            overrides,
-            cancel,
-            _override_task: override_task,
-        };
-
-        agent.recompute_and_reconcile().await?;
-
-        // 8. Set up membership change callback.
-        {
-            let reconciler = Arc::clone(&agent.reconciler);
-            let config = agent.config.clone();
-            let overrides = Arc::clone(&agent.overrides);
-
-            agent
-                .membership
-                .on_change(move |nodes, event| {
-                    let reconciler = Arc::clone(&reconciler);
-                    let config = config.clone();
-                    let overrides = Arc::clone(&overrides);
-                    let mut all_nodes: Vec<NodeDescriptor> = nodes.to_vec();
-                    // Include self.
-                    all_nodes.push(NodeDescriptor {
-                        id: config.node_id.clone(),
-                        capacity: config.capacity,
-                        labels: config.labels.clone(),
-                    });
-
-                    debug!(
-                        event = ?event,
-                        nodes = all_nodes.len(),
-                        "membership changed, scheduling rebalance"
-                    );
-
-                    // Spawn async rebalance since callback is sync.
-                    tokio::spawn(async move {
-                        let overrides_snapshot = overrides.read().await;
-                        let desired = Self::compute_desired_assignment(
-                            &config.node_id,
-                            config.num_partitions,
-                            config.replication_factor,
-                            &all_nodes,
-                            &overrides_snapshot,
-                        );
-                        drop(overrides_snapshot);
-                        if let Err(e) = reconciler.reconcile(&desired).await {
-                            warn!("reconcile after membership change failed: {e}");
-                        }
-                    });
-                })
-                .await;
-        }
-
-        info!(node_id = %agent.config.node_id, "storage agent started");
-        Ok(agent)
+        let agent_config: AgentConfig = config.into();
+        Self::start_multi(session, agent_config).await
     }
 
-    /// Recompute assignment based on current membership and reconcile.
-    pub async fn recompute_and_reconcile(&self) -> AgentResult<()> {
-        let nodes = self.membership.current_nodes().await;
-        let overrides = self.overrides.read().await;
-        let desired = Self::compute_desired_assignment(
-            &self.config.node_id,
-            self.config.num_partitions,
-            self.config.replication_factor,
-            &nodes,
-            &overrides,
+    /// Create and start the storage agent from a multi-topic configuration.
+    pub async fn start_multi(session: &Session, config: AgentConfig) -> AgentResult<Self> {
+        let auto_discover = config.auto_discover_topics;
+        let global_prefix = config.global_prefix.clone();
+        let labels = config.labels.clone();
+
+        let supervisor = TopicSupervisor::start(session, &config).await?;
+
+        info!(
+            node_id = %config.node_id,
+            topics = supervisor.topics().len(),
+            auto_discover = auto_discover,
+            "storage agent started"
         );
-        drop(overrides);
 
-        let actions = self.reconciler.reconcile(&desired).await?;
+        let supervisor = Arc::new(Mutex::new(supervisor));
 
-        if !actions.is_empty() {
-            // Report status after reconciliation.
-            let statuses = self.reconciler.partition_statuses().await;
-            if let Err(e) = self.status.report(&statuses).await {
-                warn!("failed to report status: {e}");
+        // Optionally start topic watcher for dynamic provisioning.
+        let watcher = if auto_discover {
+            Some(
+                TopicWatcher::start(
+                    session,
+                    &global_prefix,
+                    Arc::clone(&supervisor),
+                    labels,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        Ok(Self {
+            supervisor,
+            watcher,
+            _session: session.clone(),
+        })
+    }
+
+    /// Get the current partition assignment for this node (across all topics).
+    pub async fn assigned_partitions(&self) -> Vec<(u32, u32)> {
+        let sup = self.supervisor.lock().await;
+        let topics = sup.topics();
+        if topics.len() == 1 {
+            if let Some(worker) = sup.worker(&topics[0]) {
+                return worker.assigned_partitions().await;
             }
-
-            // Update health reporter.
-            self.health
-                .update(statuses.len() as u32, 0, 0, 0, 0)
-                .await;
         }
+        let mut all = Vec::new();
+        for name in &topics {
+            if let Some(worker) = sup.worker(name) {
+                all.extend(worker.assigned_partitions().await);
+            }
+        }
+        all
+    }
 
+    /// Recompute assignment for all topics and reconcile.
+    pub async fn recompute_and_reconcile(&self) -> AgentResult<()> {
+        let sup = self.supervisor.lock().await;
+        for name in sup.topics() {
+            if let Some(worker) = sup.worker(&name) {
+                worker.recompute_and_reconcile().await?;
+            }
+        }
         Ok(())
     }
 
-    /// Compute which (partition, replica) tuples this node should own.
-    fn compute_desired_assignment(
-        self_node_id: &str,
-        num_partitions: u32,
-        replication_factor: u32,
-        nodes: &[NodeDescriptor],
-        overrides: &OverrideTable,
-    ) -> Vec<(u32, u32)> {
-        let mut desired = Vec::new();
-
-        for p in 0..num_partitions {
-            for r in 0..replication_factor {
-                // Check overrides first.
-                if let Some(entry) = overrides.entries.iter().find(|e| e.partition == p && e.replica == r)
-                {
-                    if entry.node_id == self_node_id {
-                        desired.push((p, r));
-                    }
-                    continue;
-                }
-
-                // Use rack-aware assignment if any node has rack labels.
-                let has_rack_labels = nodes.iter().any(|n| n.labels.contains_key("rack"));
-                let replicas = if has_rack_labels {
-                    hash_ring::assign_replicas_rack_aware(p, replication_factor, nodes)
-                } else {
-                    hash_ring::assign_replicas(p, replication_factor, nodes)
-                };
-
-                if let Some(assigned_node) = replicas.get(r as usize) {
-                    if assigned_node == self_node_id {
-                        desired.push((p, r));
-                    }
-                }
-            }
-        }
-
-        desired
+    /// Add a topic at runtime (for dynamic provisioning).
+    pub async fn add_topic(&self, entry: TopicEntry) -> AgentResult<()> {
+        self.supervisor.lock().await.add_topic_from_entry(&entry).await
     }
 
-    /// Get the node ID of this agent.
-    pub fn node_id(&self) -> &str {
-        &self.config.node_id
+    /// Remove a topic at runtime.
+    pub async fn remove_topic(&self, name: &str) -> AgentResult<bool> {
+        self.supervisor.lock().await.remove_topic(name).await
     }
 
-    /// Get the current partition assignment for this node.
-    pub async fn assigned_partitions(&self) -> Vec<(u32, u32)> {
-        self.reconciler.active_stores().await
+    /// List managed topics.
+    pub async fn topics(&self) -> Vec<String> {
+        self.supervisor.lock().await.topics()
+    }
+
+    /// Check whether a topic is managed.
+    pub async fn has_topic(&self, name: &str) -> bool {
+        self.supervisor.lock().await.has_topic(name)
     }
 
     /// Shutdown the storage agent gracefully.
-    pub async fn shutdown(&self) -> AgentResult<()> {
-        info!(node_id = %self.config.node_id, "shutting down storage agent");
-        self.cancel.cancel();
-        self.membership.shutdown().await;
-        self.health.shutdown().await;
-        self.status.shutdown().await;
-        self.reconciler.shutdown_all().await?;
-        Ok(())
-    }
-
-    // --- Internal ---
-
-    async fn override_watcher(
-        session: &Session,
-        override_key: &str,
-        overrides: &Arc<RwLock<OverrideTable>>,
-        _reconciler: &Arc<Reconciler>,
-        _config: &StorageAgentConfig,
-        cancel: &CancellationToken,
-    ) -> AgentResult<()> {
-        let subscriber = session.declare_subscriber(override_key).await?;
-
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => break,
-                result = subscriber.recv_async() => {
-                    match result {
-                        Ok(sample) => {
-                            let payload = sample.payload().to_bytes();
-                            match serde_json::from_slice::<OverrideTable>(&payload) {
-                                Ok(table) => {
-                                    let mut guard = overrides.write().await;
-                                    if table.epoch > guard.epoch {
-                                        *guard = table;
-                                        info!("received override update (epoch={})", guard.epoch);
-                                        drop(guard);
-
-                                        // Trigger re-reconciliation (we don't have
-                                        // membership snapshot here, but the reconciler
-                                        // can be driven from the main agent loop).
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("failed to parse override table: {e}");
-                                }
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
+    pub async fn shutdown(&mut self) -> AgentResult<()> {
+        if let Some(ref watcher) = self.watcher {
+            watcher.shutdown().await;
         }
-        Ok(())
+        self.supervisor.lock().await.shutdown().await
     }
 }

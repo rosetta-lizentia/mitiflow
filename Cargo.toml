@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench", "mitiflow-orchestrator", "mitiflow-agent", "mitiflow-emulator"]
+members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench", "mitiflow-orchestrator", "mitiflow-agent", "mitiflow-emulator", "mitiflow-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,8 @@ license = "Apache-2.0"
 rust-version = "1.85"
 
 [workspace.dependencies]
+mitiflow = { path = "mitiflow"}
+mitiflow-agent = { path = "mitiflow-agent"}
 # Zenoh
 zenoh = "1.8"
 
@@ -63,6 +65,12 @@ humantime = "2"
 humantime-serde = "1"
 async-trait = "0.1"
 clap = "4"
+serde_yaml = "0.9"
+axum = "0.8"
+tower = "0.5"
+tower-http = "0.6"
+http-body-util = "0.1"
 
 base64 = "0.22"
 nix = "0.31"
+miette = "7"

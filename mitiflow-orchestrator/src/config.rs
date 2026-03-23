@@ -1,5 +1,6 @@
 //! Topic and partition configuration management.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -18,6 +19,16 @@ pub struct TopicConfig {
     pub replication_factor: u32,
     pub retention: RetentionPolicy,
     pub compaction: CompactionPolicy,
+    /// Labels that an agent **must** have to serve this topic.
+    /// An agent serves this topic only if its own labels contain all
+    /// of these key-value pairs.
+    #[serde(default)]
+    pub required_labels: HashMap<String, String>,
+    /// Labels that **exclude** an agent from serving this topic.
+    /// If an agent's labels match any of these key-value pairs, it
+    /// will not serve this topic.
+    #[serde(default)]
+    pub excluded_labels: HashMap<String, String>,
 }
 
 /// Retention policy for events.

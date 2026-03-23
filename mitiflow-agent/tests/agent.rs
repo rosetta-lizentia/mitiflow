@@ -36,7 +36,7 @@ async fn agent_starts_and_owns_all_partitions_single_node() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let (_tmp, config) = agent_config("agent_single", "node-only", 4, 1);
 
-    let agent = StorageAgent::start(&session, config).await.unwrap();
+    let mut agent = StorageAgent::start(&session, config).await.unwrap();
 
     // Single node should own all 4 partitions.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -67,9 +67,9 @@ async fn agent_two_nodes_split_partitions() {
     let (_tmp1, config1) = agent_config("agent_split", "node-a", 8, 1);
     let (_tmp2, config2) = agent_config("agent_split", "node-b", 8, 1);
 
-    let agent1 = StorageAgent::start(&session1, config1).await.unwrap();
+    let mut agent1 = StorageAgent::start(&session1, config1).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let agent2 = StorageAgent::start(&session2, config2).await.unwrap();
+    let mut agent2 = StorageAgent::start(&session2, config2).await.unwrap();
 
     // Wait for rebalance to propagate.
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -123,11 +123,11 @@ async fn agent_node_leave_triggers_rebalance() {
     let (_tmp2, config2) = agent_config("agent_leave", "node-b", 6, 1);
     let (_tmp3, config3) = agent_config("agent_leave", "node-c", 6, 1);
 
-    let agent1 = StorageAgent::start(&session1, config1).await.unwrap();
+    let mut agent1 = StorageAgent::start(&session1, config1).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let agent2 = StorageAgent::start(&session2, config2).await.unwrap();
+    let mut agent2 = StorageAgent::start(&session2, config2).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let agent3 = StorageAgent::start(&session3, config3).await.unwrap();
+    let mut agent3 = StorageAgent::start(&session3, config3).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -169,7 +169,7 @@ async fn agent_shutdown_drains_stores() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let (_tmp, config) = agent_config("agent_drain_shutdown", "node-only", 4, 1);
 
-    let agent = StorageAgent::start(&session, config).await.unwrap();
+    let mut agent = StorageAgent::start(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     assert_eq!(agent.assigned_partitions().await.len(), 4);
@@ -193,9 +193,9 @@ async fn agent_respects_overrides() {
     let (_tmp1, config1) = agent_config("agent_override", "node-a", 4, 1);
     let (_tmp2, config2) = agent_config("agent_override", "node-b", 4, 1);
 
-    let agent1 = StorageAgent::start(&session, config1).await.unwrap();
+    let mut agent1 = StorageAgent::start(&session, config1).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let agent2 = StorageAgent::start(&session, config2).await.unwrap();
+    let mut agent2 = StorageAgent::start(&session, config2).await.unwrap();
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Publish an override table pinning partition 0 to node-b.
@@ -271,11 +271,11 @@ async fn agent_multi_replica_rf2() {
     let (_t2, c2) = agent_config("agent_rf2", "node-b", 4, 2);
     let (_t3, c3) = agent_config("agent_rf2", "node-c", 4, 2);
 
-    let a1 = StorageAgent::start(&s1, c1).await.unwrap();
+    let mut a1 = StorageAgent::start(&s1, c1).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let a2 = StorageAgent::start(&s2, c2).await.unwrap();
+    let mut a2 = StorageAgent::start(&s2, c2).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let a3 = StorageAgent::start(&s3, c3).await.unwrap();
+    let mut a3 = StorageAgent::start(&s3, c3).await.unwrap();
 
     // Wait for rebalance.
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -345,13 +345,13 @@ async fn agent_rack_aware_placement() {
     let (_t3, c3) = agent_config_with_labels("agent_rack", "node-3", 4, 2, rack_b.clone());
     let (_t4, c4) = agent_config_with_labels("agent_rack", "node-4", 4, 2, rack_b);
 
-    let a1 = StorageAgent::start(&s1, c1).await.unwrap();
+    let mut a1 = StorageAgent::start(&s1, c1).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let a2 = StorageAgent::start(&s2, c2).await.unwrap();
+    let mut a2 = StorageAgent::start(&s2, c2).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let a3 = StorageAgent::start(&s3, c3).await.unwrap();
+    let mut a3 = StorageAgent::start(&s3, c3).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let a4 = StorageAgent::start(&s4, c4).await.unwrap();
+    let mut a4 = StorageAgent::start(&s4, c4).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(1500)).await;
     a1.recompute_and_reconcile().await.unwrap();

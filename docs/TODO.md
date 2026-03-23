@@ -88,22 +88,32 @@ Does **not** sit in the event data path.
       `online_stores()`, `offline_stores()`, `is_partition_online()`.
 - [x] **Admin API (Zenoh queryable).** `_admin/**` queryable serving
       `topics` (list all) and `topics/{name}` (get specific).
-- [ ] **Admin API (HTTP REST).** Not implemented — only Zenoh queryable exists.
-- [ ] **Automated store provisioning.** `create_topic()` → spawn N × RF store
-      instances. Currently `create_topic()` persists config and publishes it
-      but does not spawn stores.
+- [x] **Admin API (HTTP REST).** Embedded axum HTTP server in orchestrator
+      binary. Routes: `GET/POST /api/v1/topics`,
+      `GET/DELETE /api/v1/topics/{name}`, `GET /api/v1/cluster/nodes`,
+      `GET /api/v1/cluster/status`, `GET /api/v1/health`. Bind address
+      configurable via `http_bind: Option<SocketAddr>` in `OrchestratorConfig`.
+- [x] **Automated store provisioning.** `TopicWatcher` on agents subscribes
+      to `{global_prefix}/_config/**`. On new `TopicConfig`, spawns
+      `TopicWorker`. Agents filter by `required_labels` / `excluded_labels`
+      matching. Late-joiner recovery via orchestrator `_config/**` queryable.
 - [ ] **Consumer group sessions (optional).** JoinGroup/SyncGroup/Heartbeat
       protocol via Zenoh queryable. Assigns globally unique generation IDs.
       Fallback: existing liveliness-based `PartitionManager` remains default.
-- [ ] **Orchestrator HA.** Multiple replicas subscribe to same key expressions.
-      Leader election via liveliness + lowest UUID for write ops. Any replica
-      serves reads.
+- [ ] **Orchestrator HA.** Deferred. Multiple replicas subscribe to same key
+      expressions. Leader election via liveliness + lowest UUID for write ops.
+      Tracked in Multi-Topic Agent & DX § Phase F.
 
 ### Tests
 
-- `mitiflow-orchestrator/tests/orchestrator.rs` — 8 tests covering config
+- `mitiflow-orchestrator/tests/orchestrator.rs` — 28 tests covering config
   store CRUD, persistence, lag monitoring, store tracker online/offline,
-  orchestrator topic lifecycle, admin queryable, and lag integration.
+  ClusterView (6), OverrideManager (6), Drain (2), Admin API cluster
+  endpoints (3), and multi-topic ClusterViews (3).
+- `mitiflow-orchestrator/tests/http_api.rs` — 15 tests covering the embedded
+  axum HTTP API: health endpoint, topics CRUD, cluster nodes/status,
+  label creation, default values, and JSON error handling.
+- `mitiflow-orchestrator/tests/e2e_orchestrator.rs` — 7 E2E scenarios.
 
 ### Depends on
 
@@ -270,9 +280,19 @@ operations, and cluster dashboards.
 - [x] **Multi-topic support** — `TopicManager` creates per-topic `ClusterView`
       instances when `TopicConfig.key_prefix` is set. Lifecycle managed by
       Orchestrator `create_topic()` / `delete_topic()`.
-- [ ] **Rebalance operation** — load-aware override generation.
+- [x] **Multi-topic agent** — `TopicSupervisor` + `TopicWatcher` +
+      `TopicWorker` in `mitiflow-agent`. Dynamic topic discovery via
+      `_config/**` subscription. Placement-label filtering
+      (`required_labels` / `excluded_labels`). YAML config with
+      `auto_discover_topics` flag. See Multi-Topic Agent & DX §§ A–B.
+- [ ] **Rebalance operation** — load-aware override generation. Tracked in
+      Multi-Topic Agent & DX § Phase F.
 - [x] **CLI tooling** — `mitiflow-ctl` binary for cluster management.
       Commands: topics list/get, cluster nodes/assignments/drain/undrain/overrides/status.
+- [x] **Unified binary** — `mitiflow-cli` crate with `clap` subcommands:
+      `agent`, `orchestrator`, `ctl`. YAML config files (`serde_yaml` +
+      `humantime_serde`). `mitiflow ctl diagnose` health-check command.
+      `mitiflow ctl topics/cluster` admin commands.
 
 ### Tests
 
@@ -286,6 +306,17 @@ operations, and cluster dashboards.
   recover from EventStore, cache fallback, idempotency.
 - `mitiflow-agent/tests/membership.rs` — 6 tests: discovery, leave, ignore
   self, metadata propagation, consistent node list.
+- `mitiflow-agent/tests/multi_topic.rs` — multi-topic static configuration
+  and per-topic data isolation tests.
+- `mitiflow-agent/tests/topic_supervisor` — TopicSupervisor add/remove,
+  duplicate errors, runtime additions, isolated assignment, separate data dirs.
+- `mitiflow-agent/tests/topic_watcher` — TopicWatcher start/stop reaction,
+  label filtering, idempotent duplicates, late-joiner discovery.
+- `mitiflow-agent/tests/topic_worker` — TopicWorker lifecycle, RF=2,
+  two-node split, recompute after node leave, override respects, shutdown drain.
+- `mitiflow-agent/tests/yaml_config` — YAML parse (full, minimal,
+  humantime durations, auto-discover, static topics), roundtrip, validation.
+- `mitiflow-agent/tests/reporters` — health and status reporter unit tests.
 - `mitiflow-agent/tests/e2e/scenarios.rs` — 13 E2E scenarios: cluster
   formation, rebalance, crash/rejoin, data survival across graceful leave
   and crash recovery, publish during rebalance, live ingestion.
@@ -293,10 +324,121 @@ operations, and cluster dashboards.
 - `mitiflow-orchestrator/tests/orchestrator.rs` — 28 unit tests: config store,
   lag monitor, store tracker, ClusterView (6), OverrideManager (6), Drain (2),
   Admin API cluster endpoints (3), Multi-topic ClusterViews (3).
+- `mitiflow-orchestrator/tests/http_api.rs` — 15 HTTP API tests.
 - `mitiflow-orchestrator/tests/e2e_orchestrator.rs` — 7 E2E scenarios:
   orchestrator joins running cluster, drain moves partitions, override to
   offline node, override TTL expiry, full drain/maintenance/undrain roundtrip,
   orchestrator restart rebuilds view, concurrent override + crash.
+
+---
+
+## Multi-Topic Agent & Developer Experience
+
+**Status:** Done (Phases A–F complete)
+**Ref:** [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md)
+
+Evolve the single-topic-per-agent model into a broker-like multi-topic agent
+that dynamically discovers topics from the orchestrator. Consolidate all
+binaries into a unified `mitiflow` CLI with subcommands.
+
+### Phase A — Multi-Topic Agent Foundation
+
+- [x] **Extract `TopicWorker`** from `StorageAgent` internals (refactor, no
+      behavior change). Each `TopicWorker` owns its own `Reconciler`,
+      `MembershipTracker`, `RecoveryManager`, `StatusReporter`.
+- [x] **`TopicSupervisor`** — manages `HashMap<String, TopicWorker>` with
+      `add_topic()` / `remove_topic()`. Shared `HealthReporter` at node level.
+- [x] **`StorageAgentConfig` multi-topic** — accepts `Vec<TopicConfig>`via
+      `AgentConfig`. Backward compatible with single-topic usage.
+- [x] **Separate fjall per topic** — data path
+      `{data_dir}/{topic_name}/{partition}/{replica}/`. One fjall instance
+      per topic for failure isolation and independent retention.
+- [x] **YAML config file** — `serde_yaml` + `humantime_serde`. Fields:
+      `node`, `cluster`, `topics`. Env vars override YAML values.
+- [x] **Update existing tests** to use `TopicWorker` directly.
+
+### Phase B — Topic Provisioning Protocol
+
+- [x] **`TopicWatcher`** — agent subscribes to `{global_prefix}/_config/**`.
+      On new `TopicConfig`, calls `TopicSupervisor::add_topic()`. On delete,
+      calls `remove_topic()` which drains and stops the worker.
+- [x] **Orchestrator queryable for `_config/**`** — late-joining agents query
+      all existing topics via `session.get()` on startup.
+- [x] **Placement labels** — `required_labels` / `excluded_labels` on
+      `TopicConfig`. Agent's `should_serve_topic()` matches own labels.
+- [x] **Configurable global prefix** — default `"mitiflow"`, set via
+      `cluster.global_prefix` in YAML or `MITIFLOW_GLOBAL_PREFIX` env var.
+- [ ] **Topic data deletion command** — orchestrator publishes to
+      `_commands/delete_data/{topic_name}`, agents delete on-disk data and
+      ack. Requires topic in `deleted` state. Idempotent. (deferred)
+- [x] **E2E tests** — TopicWatcher integration: creates/deletes workers on
+      config events, label filtering, idempotent duplicates, startup discovery.
+
+### Phase C — Unified Binary
+
+- [x] **`mitiflow-cli` binary** with `clap` subcommands: `agent`,
+      `orchestrator`, `ctl`.
+- [x] **`mitiflow agent --config agent.yaml`** — YAML-driven agent startup.
+- [x] **`mitiflow orchestrator --config orchestrator.yaml`** — YAML-driven.
+- [x] **`mitiflow ctl`** — `topics list/get/delete`, `cluster nodes/status/
+      drain/undrain/overrides`, `diagnose`.
+- [x] **Individual crate binaries remain** for direct use.
+- [ ] **`mitiflow dev`** — co-locate orchestrator + agent + embedded Zenoh
+      router in one process. (deferred)
+
+### Phase D — Orchestrator HTTP API
+
+- [x] **Embedded axum** HTTP server in orchestrator binary. Bind address
+      configurable via `http_bind: Option<SocketAddr>` in `OrchestratorConfig`.
+- [x] **REST endpoints:** `GET/POST /api/v1/topics`,
+      `GET/DELETE /api/v1/topics/{name}`, `GET /api/v1/cluster/nodes`,
+      `GET /api/v1/cluster/status`, `GET /api/v1/health`.
+- [ ] **`DELETE /api/v1/topics/{name}/data`** — trigger on-disk cleanup.
+      (deferred, depends on delete command protocol)
+- [ ] **Topic readiness status** — `ready`, `partial`, `pending` based on
+      partition coverage from `ClusterView`. (deferred)
+
+### Phase E — Dev Experience Polish
+
+- [x] **Error diagnostics** — `miette` annotations with `#[diagnostic(code,
+      help)]` on all `mitiflow::Error` and `AgentError` variants.
+- [x] **`mitiflow ctl diagnose`** — checks Zenoh connectivity, topic
+      discovery, agent liveliness, and orchestrator admin queryable.
+- [ ] **OpenTelemetry** — `tracing-opentelemetry` for distributed traces,
+      `opentelemetry-prometheus` for metrics export. (deferred)
+
+### Phase F — Proactive Orchestrator
+
+- [x] **Under-replicated partition alerts** — `AlertManager` in
+      `mitiflow-orchestrator/src/alert_manager.rs`. Detects when live replicas
+      < replication factor (Warning) or == 0 (Critical). Configurable thresholds.
+- [x] **Node offline alerts** — detects nodes absent from health stream for
+      > grace period (Warning), escalates to Critical after longer absence.
+- [ ] **Auto-drain on node failure** — automatic override generation when
+      a node goes offline. (deferred)
+- [ ] **Rebalance advisor** — load-aware override generation. (deferred)
+- [ ] **Orchestrator HA** — leader election via liveliness + lowest UUID.
+      (deferred)
+
+### Tests
+
+- `mitiflow-agent/tests/multi_topic.rs` — multi-topic static config,
+  per-topic data isolation.
+- `mitiflow-agent/tests/topic_supervisor` — add/remove, duplicate errors,
+  runtime additions, isolated partition assignment, separate data dirs.
+- `mitiflow-agent/tests/topic_watcher` — start/stop reaction, label
+  filtering, idempotent duplicates, late-joiner discovery via queryable.
+- `mitiflow-agent/tests/topic_worker` — lifecycle, RF=2, two-node split,
+  recompute after node leave, override respects, shutdown drain.
+- `mitiflow-agent/tests/yaml_config` — full/minimal/humantime/auto-discover/
+  static-topics parse, roundtrip serialization, validation errors.
+- `mitiflow-agent/tests/reporters` — health and status reporter unit tests.
+- `mitiflow-agent/tests/e2e_tests.rs` — agent lifecycle and integration tests.
+- `mitiflow-orchestrator/tests/http_api.rs` — 15 tests: health, topics CRUD,
+  cluster nodes/status, label creation, defaults, JSON error handling.
+- `mitiflow-orchestrator/src/alert_manager.rs` — 8 unit tests: no alerts
+  baseline, node offline (warning/critical escalation), under-replicated
+  (partial/critical), multiple nodes, replication=1 correct baseline.
 
 ---
 
@@ -385,3 +527,6 @@ exist yet:
 - [x] Add [15_key_based_publishing.md](15_key_based_publishing.md) —
       key-based publishing design: key expression layout, API, store key
       index, log compaction, Kafka comparison.
+- [x] Add [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) —
+      multi-topic agent, unified binary, topic provisioning protocol,
+      orchestrator HTTP API, and developer experience improvements.

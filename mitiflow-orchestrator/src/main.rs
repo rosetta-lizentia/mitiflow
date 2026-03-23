@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         data_dir,
         lag_interval: Duration::from_millis(lag_interval_ms),
         admin_prefix: None,
+        http_bind: None,
     };
 
     let mut orchestrator = Orchestrator::new(&session, config)?;

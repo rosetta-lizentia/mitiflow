@@ -77,7 +77,7 @@ impl OrchestratorTestCluster {
     }
 
     async fn stop_agent(&mut self, idx: usize) {
-        if let Some(slot) = self.agents[idx].take() {
+        if let Some(mut slot) = self.agents[idx].take() {
             slot.agent.shutdown().await.unwrap();
             slot.session.close().await.unwrap();
         }
@@ -98,6 +98,7 @@ impl OrchestratorTestCluster {
             data_dir: dir.path().to_path_buf(),
             lag_interval: Duration::from_secs(10),
             admin_prefix: Some(format!("{}/_admin", self.prefix)),
+            http_bind: None,
         };
         let mut orch = Orchestrator::new(&session, config).unwrap();
         orch.run().await.unwrap();

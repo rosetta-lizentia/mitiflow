@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
         config.data_dir
     );
 
-    let agent = StorageAgent::start(&session, agent_config).await?;
+    let mut agent = StorageAgent::start(&session, agent_config).await?;
 
     // Wait for shutdown signal.
     let cancel = tokio_util::sync::CancellationToken::new();

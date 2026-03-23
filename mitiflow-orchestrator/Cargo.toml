@@ -21,6 +21,8 @@ uuid = { workspace = true }
 tokio-util = { workspace = true }
 flume = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+axum = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
 
 [[bin]]
 name = "mitiflow-ctl"
@@ -29,3 +31,5 @@ path = "src/bin/ctl.rs"
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+http-body-util = { workspace = true }

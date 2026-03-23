@@ -49,6 +49,8 @@ fn config_store_put_get_delete() {
         replication_factor: 3,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     };
     store.put_topic(&cfg).unwrap();
 
@@ -82,6 +84,8 @@ fn config_store_multiple_topics() {
                 replication_factor: 1,
                 retention: RetentionPolicy::default(),
                 compaction: CompactionPolicy::default(),
+                required_labels: HashMap::new(),
+                excluded_labels: HashMap::new(),
             })
             .unwrap();
     }
@@ -98,6 +102,8 @@ fn config_store_multiple_topics() {
             replication_factor: 2,
             retention: RetentionPolicy::default(),
             compaction: CompactionPolicy::default(),
+            required_labels: HashMap::new(),
+            excluded_labels: HashMap::new(),
         })
         .unwrap();
 
@@ -122,6 +128,8 @@ fn config_store_persistence() {
                 replication_factor: 1,
                 retention: RetentionPolicy::default(),
                 compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
             })
             .unwrap();
     }
@@ -257,6 +265,7 @@ async fn orchestrator_create_list_delete_topic() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -270,6 +279,8 @@ async fn orchestrator_create_list_delete_topic() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -281,6 +292,8 @@ async fn orchestrator_create_list_delete_topic() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -313,6 +326,7 @@ async fn orchestrator_admin_queryable_topics() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -326,6 +340,8 @@ async fn orchestrator_admin_queryable_topics() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -378,6 +394,7 @@ async fn orchestrator_lag_integration() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_millis(100),
         admin_prefix: None,
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -947,6 +964,7 @@ async fn admin_cluster_nodes_endpoint() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1007,6 +1025,7 @@ async fn admin_cluster_assignments_endpoint() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1073,6 +1092,7 @@ async fn admin_cluster_status_summary() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1148,6 +1168,7 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1165,6 +1186,8 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         replication_factor: 2,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -1181,6 +1204,8 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -1202,6 +1227,7 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1215,6 +1241,8 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -1240,6 +1268,7 @@ async fn multi_topic_views_pick_up_independent_agents() {
         data_dir: dir.path().to_path_buf(),
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
+        http_bind: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1256,6 +1285,8 @@ async fn multi_topic_views_pick_up_independent_agents() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -1267,6 +1298,8 @@ async fn multi_topic_views_pick_up_independent_agents() {
         replication_factor: 1,
         retention: RetentionPolicy::default(),
         compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
     })
     .await
     .unwrap();
@@ -1287,4 +1320,160 @@ async fn multi_topic_views_pick_up_independent_agents() {
     assert_eq!(view_b.online_count().await, 0, "topicB should have no agents");
 
     orch.shutdown().await;
+}
+
+// ==========================================================================
+// Config Queryable (_config/**)
+// ==========================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_config_queryable_returns_all_topics() {
+    let session = zenoh::open(zenoh::Config::default()).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let prefix = key_prefix("cfg_qbl_all");
+
+    let config = OrchestratorConfig {
+        key_prefix: prefix.clone(),
+        data_dir: dir.path().to_path_buf(),
+        lag_interval: Duration::from_secs(10),
+        admin_prefix: None,
+        http_bind: None,
+    };
+
+    let mut orch = Orchestrator::new(&session, config).unwrap();
+    orch.run().await.unwrap();
+
+    // Create two topics.
+    orch.create_topic(TopicConfig {
+        name: "alpha".into(),
+        key_prefix: String::new(),
+        num_partitions: 4,
+        replication_factor: 1,
+        retention: RetentionPolicy::default(),
+        compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
+    })
+    .await
+    .unwrap();
+
+    orch.create_topic(TopicConfig {
+        name: "beta".into(),
+        key_prefix: String::new(),
+        num_partitions: 2,
+        replication_factor: 2,
+        retention: RetentionPolicy::default(),
+        compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
+    })
+    .await
+    .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Query _config/**
+    let config_key = format!("{prefix}/_config/**");
+    let replies = session
+        .get(&config_key)
+        .consolidation(zenoh::query::ConsolidationMode::None)
+        .accept_replies(zenoh::query::ReplyKeyExpr::Any)
+        .timeout(Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    let mut topic_names = Vec::new();
+    while let Ok(reply) = replies.recv_async().await {
+        if let Ok(sample) = reply.result() {
+            let payload = sample.payload().to_bytes();
+            let cfg: TopicConfig = serde_json::from_slice(&payload).unwrap();
+            topic_names.push(cfg.name);
+        }
+    }
+    topic_names.sort();
+    assert_eq!(topic_names, vec!["alpha", "beta"]);
+
+    orch.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_config_queryable_returns_single_topic() {
+    let session = zenoh::open(zenoh::Config::default()).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let prefix = key_prefix("cfg_qbl_single");
+
+    let config = OrchestratorConfig {
+        key_prefix: prefix.clone(),
+        data_dir: dir.path().to_path_buf(),
+        lag_interval: Duration::from_secs(10),
+        admin_prefix: None,
+        http_bind: None,
+    };
+
+    let mut orch = Orchestrator::new(&session, config).unwrap();
+    orch.run().await.unwrap();
+
+    orch.create_topic(TopicConfig {
+        name: "orders".into(),
+        key_prefix: String::new(),
+        num_partitions: 8,
+        replication_factor: 3,
+        retention: RetentionPolicy::default(),
+        compaction: CompactionPolicy::default(),
+        required_labels: HashMap::new(),
+        excluded_labels: HashMap::new(),
+    })
+    .await
+    .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Query specific topic
+    let config_key = format!("{prefix}/_config/orders");
+    let replies = session
+        .get(&config_key)
+        .consolidation(zenoh::query::ConsolidationMode::None)
+        .accept_replies(zenoh::query::ReplyKeyExpr::Any)
+        .timeout(Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    let mut found = false;
+    while let Ok(reply) = replies.recv_async().await {
+        if let Ok(sample) = reply.result() {
+            let payload = sample.payload().to_bytes();
+            let cfg: TopicConfig = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(cfg.name, "orders");
+            assert_eq!(cfg.num_partitions, 8);
+            assert_eq!(cfg.replication_factor, 3);
+            found = true;
+        }
+    }
+    assert!(found, "should receive 'orders' topic config");
+
+    orch.shutdown().await;
+}
+
+#[test]
+fn topic_config_serializes_labels_roundtrip() {
+    let mut required = HashMap::new();
+    required.insert("tier".into(), "ssd".into());
+    let mut excluded = HashMap::new();
+    excluded.insert("env".into(), "staging".into());
+
+    let cfg = TopicConfig {
+        name: "labeled".into(),
+        key_prefix: "test/labeled".into(),
+        num_partitions: 4,
+        replication_factor: 2,
+        retention: RetentionPolicy::default(),
+        compaction: CompactionPolicy::default(),
+        required_labels: required,
+        excluded_labels: excluded,
+    };
+
+    let bytes = serde_json::to_vec(&cfg).unwrap();
+    let parsed: TopicConfig = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed.required_labels.get("tier").unwrap(), "ssd");
+    assert_eq!(parsed.excluded_labels.get("env").unwrap(), "staging");
 }

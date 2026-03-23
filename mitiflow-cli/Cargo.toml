@@ -1,0 +1,29 @@
+[package]
+name = "mitiflow-cli"
+description = "Unified CLI binary for mitiflow: agent, orchestrator, ctl, emulator, dev"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "mitiflow"
+path = "src/main.rs"
+
+[dependencies]
+mitiflow = { path = "../mitiflow", features = ["full"] }
+mitiflow-agent = { path = "../mitiflow-agent" }
+mitiflow-orchestrator = { path = "../mitiflow-orchestrator" }
+zenoh = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+anyhow = "1"
+miette = { workspace = true, features = ["fancy"] }
+uuid = { workspace = true }
+humantime = { workspace = true }

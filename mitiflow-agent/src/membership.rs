@@ -146,9 +146,10 @@ impl MembershipTracker {
             })
         };
 
+        let peer_count = nodes.read().await.len();
         info!(
             node_id = %config.node_id,
-            peers = nodes.read().await.len(),
+            peers = peer_count,
             "membership tracker started"
         );
 
