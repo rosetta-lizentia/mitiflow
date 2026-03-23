@@ -486,6 +486,98 @@ factor. See [13_distributed_storage.md](13_distributed_storage.md) § 7.
 
 ---
 
+## Slow Consumer Offload
+
+**Status:** Not started
+**Ref:** [17_slow_consumer_offload.md](17_slow_consumer_offload.md)
+
+Automatic pub/sub → store-query demotion for consumers that fall behind the
+live stream. The consumer transparently switches from Zenoh pub/sub to batched
+Event Store queries when lag is detected, and resumes live delivery when caught
+up. Recommended approach: Hybrid (transparent offload + observable event
+channel).
+
+### Phase 1 — Lag Detection & State Machine
+
+- [ ] **`subscriber/offload.rs` — `OffloadStateMachine`.** Three-state
+      consumer: LIVE → DRAINING → CATCHING_UP → LIVE. Manages Zenoh
+      subscriber lifecycle and store query cursor.
+- [ ] **`subscriber/offload.rs` — `LagDetector`.** Composite lag score
+      from channel fullness + heartbeat sequence delta. Debounce window
+      prevents flapping on transient bursts.
+- [ ] **`subscriber/offload_config.rs` — `OffloadConfig`.** Configuration:
+      `channel_fullness_threshold` (0.8), `seq_lag_threshold` (10,000),
+      `debounce_window` (2s), `re_subscribe_threshold` (1,000),
+      `drain_quiet_period` (50ms). Builder integration with `EventBusConfig`.
+- [ ] **`subscriber/offload.rs` — `OffloadEvent` enum.** Observable lifecycle
+      events: `LagDetected`, `Draining`, `CatchingUp`, `CaughtUp`, `Resumed`,
+      `OffloadFailed`. Published to unbounded `flume` channel.
+- [ ] **`subscriber/mod.rs` — `offload_events()`.** Public method returning
+      `flume::Receiver<OffloadEvent>` for optional observability.
+
+### Phase 2 — Store Catch-Up Reader
+
+- [ ] **`subscriber/offload.rs` — `CatchUpReader`.** Batched store queries
+      with adaptive sizing. Advances per-(publisher, partition) cursors.
+      Default batch: 10,000 events, target 100ms per batch.
+- [ ] **Adaptive batch sizer.** Auto-tunes batch size based on query
+      duration (halve on slow, double on fast).
+- [ ] **`CatchUpError` enum.** Well-typed errors: `CompactedPastCursor`
+      (store compacted past cursor), `StoreUnavailable` (all retries
+      exhausted).
+
+### Phase 3 — Switchover Protocol
+
+- [ ] **LIVE → DRAINING transition.** Drain bounded flume channel + quiet
+      period, record switchover cursor per (publisher, partition).
+- [ ] **CATCHING_UP → LIVE transition.** Overlap window: re-subscribe
+      before final store batch, dedup via cursor comparison (`seq <= cursor`
+      → skip). Disable `history_on_subscribe` (if still present) for
+      re-subscribe.
+- [ ] **Gap detector preservation.** Gap detector state is NOT reset across
+      offload cycles by default. Configurable via `reset_on_offload: bool`
+      (default `false`).
+
+### Phase 4 — Integration & Tests
+
+- [ ] **Feature gate.** Offload compiles only with `store` feature.
+      `#[cfg(feature = "store")] pub mod offload;`
+- [ ] **Consumer group compatibility.** Offloaded consumer maintains
+      liveliness token and continues committing offsets from store queries.
+- [ ] **Tests** — lag detection trigger, state transitions, catchup
+      batch queries, overlap dedup on re-subscribe, consumer group offload,
+      store unavailable fallback.
+- [ ] **Example/emulator topology** — update `08_slow_consumer_with_store.yaml`
+      or add new topology demonstrating automatic offload.
+
+### Depends on
+
+- Event Store must be running for the topic (offload queries the store).
+- Heartbeat mode must not be `Disabled` for heartbeat-based lag detection.
+
+---
+
+## Cleanup: Remove `history_on_subscribe`
+
+**Status:** Not started
+
+`history_on_subscribe` is a config field in `EventBusConfig` that is never
+read or acted upon in any subscriber code. It was a placeholder for an earlier
+design (store query on subscribe) that was never implemented.
+
+- [ ] **Remove `history_on_subscribe` field** from `EventBusConfig`.
+- [ ] **Remove builder method** `history_on_subscribe()` from
+      `EventBusConfigBuilder`.
+- [ ] **Update tests** — remove all `history_on_subscribe(false)` calls in
+      test setup (`tests/store.rs`, `tests/keyed_publish.rs`).
+- [ ] **Update `consumer_group.rs`** — remove
+      `.history_on_subscribe(config.history_on_subscribe)` in
+      `ConsumerGroupSubscriber::new()`.
+- [ ] **Update docs** — remove from `02_architecture.md` config table and
+      `implementation_plan.md` example.
+
+---
+
 ## Testing Gaps
 
 Tests listed in [implementation_plan.md](implementation_plan.md) § 3 that don't
@@ -530,3 +622,6 @@ exist yet:
 - [x] Add [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) —
       multi-topic agent, unified binary, topic provisioning protocol,
       orchestrator HTTP API, and developer experience improvements.
+- [x] Add [17_slow_consumer_offload.md](17_slow_consumer_offload.md) —
+      automatic slow consumer offload from pub/sub to store-query replay,
+      three-state consumer model, lag detection, and catch-up protocol.
