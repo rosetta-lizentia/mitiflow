@@ -127,16 +127,23 @@ pub struct EventBusConfig {
     /// synchronous I/O (e.g. fjall, redb). Defaults to `2`.
     #[cfg(feature = "store")]
     pub store_workers: usize,
+    /// Interval between automatic keyed‐compaction runs. `None` disables
+    /// automatic compaction (the default). Manual calls to
+    /// [`StorageBackend::compact_keyed`] are still allowed.
+    #[cfg(feature = "store")]
+    pub compaction_interval: Option<Duration>,
+    /// How long tombstones (empty‐payload keyed events) are retained after
+    /// compaction before garbage collection removes them. `None` means
+    /// tombstones are never removed automatically (the default).
+    #[cfg(feature = "store")]
+    pub tombstone_retention: Option<Duration>,
 
-    // -- Partition (feature = "partition") --
+    // -- Partition --
     /// Number of partitions for the hash ring.
-    #[cfg(feature = "partition")]
     pub num_partitions: u32,
     /// This worker's identity for partition assignment.
-    #[cfg(feature = "partition")]
     pub worker_id: Option<String>,
     /// Liveliness key prefix for worker presence. Defaults to `"{key_prefix}/_workers"`.
-    #[cfg(feature = "partition")]
     pub worker_liveliness_prefix: Option<String>,
 }
 
@@ -166,9 +173,24 @@ impl EventBusConfig {
     }
 
     /// Resolve the worker liveliness prefix, falling back to `"{key_prefix}/_workers"`.
-    #[cfg(feature = "partition")]
     pub fn resolved_worker_liveliness_prefix(&self) -> String {
         self.resolve_key(&self.worker_liveliness_prefix, "_workers")
+    }
+
+    /// Key expression matching a specific key across all partitions.
+    ///
+    /// Example: `config.key_expr_for_key("order-123")` with prefix `"app/events"`
+    /// returns `"app/events/p/*/k/order-123/*"`.
+    pub fn key_expr_for_key(&self, key: &str) -> String {
+        format!("{}/p/*/k/{}/*", self.key_prefix, key)
+    }
+
+    /// Key expression matching a key prefix across all partitions.
+    ///
+    /// Example: `config.key_expr_for_key_prefix("user/42")` with prefix `"app/events"`
+    /// returns `"app/events/p/*/k/user/42/**"`.
+    pub fn key_expr_for_key_prefix(&self, key_prefix: &str) -> String {
+        format!("{}/p/*/k/{}/**", self.key_prefix, key_prefix)
     }
 }
 
@@ -199,11 +221,12 @@ pub struct EventBusConfigBuilder {
     durable_urgency: Duration,
     #[cfg(feature = "store")]
     store_workers: usize,
-    #[cfg(feature = "partition")]
+    #[cfg(feature = "store")]
+    compaction_interval: Option<Duration>,
+    #[cfg(feature = "store")]
+    tombstone_retention: Option<Duration>,
     num_partitions: u32,
-    #[cfg(feature = "partition")]
     worker_id: Option<String>,
-    #[cfg(feature = "partition")]
     worker_liveliness_prefix: Option<String>,
 }
 
@@ -235,11 +258,12 @@ impl EventBusConfigBuilder {
             durable_urgency: Duration::from_millis(100),
             #[cfg(feature = "store")]
             store_workers: 2,
-            #[cfg(feature = "partition")]
+            #[cfg(feature = "store")]
+            compaction_interval: None,
+            #[cfg(feature = "store")]
+            tombstone_retention: None,
             num_partitions: 64,
-            #[cfg(feature = "partition")]
             worker_id: None,
-            #[cfg(feature = "partition")]
             worker_liveliness_prefix: None,
         }
     }
@@ -362,19 +386,28 @@ impl EventBusConfigBuilder {
         self
     }
 
-    #[cfg(feature = "partition")]
+    #[cfg(feature = "store")]
+    pub fn compaction_interval(mut self, interval: Duration) -> Self {
+        self.compaction_interval = Some(interval);
+        self
+    }
+
+    #[cfg(feature = "store")]
+    pub fn tombstone_retention(mut self, retention: Duration) -> Self {
+        self.tombstone_retention = Some(retention);
+        self
+    }
+
     pub fn num_partitions(mut self, n: u32) -> Self {
         self.num_partitions = n;
         self
     }
 
-    #[cfg(feature = "partition")]
     pub fn worker_id(mut self, id: impl Into<String>) -> Self {
         self.worker_id = Some(id.into());
         self
     }
 
-    #[cfg(feature = "partition")]
     pub fn worker_liveliness_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.worker_liveliness_prefix = Some(prefix.into());
         self
@@ -419,11 +452,12 @@ impl EventBusConfigBuilder {
             durable_urgency: self.durable_urgency,
             #[cfg(feature = "store")]
             store_workers: self.store_workers,
-            #[cfg(feature = "partition")]
+            #[cfg(feature = "store")]
+            compaction_interval: self.compaction_interval,
+            #[cfg(feature = "store")]
+            tombstone_retention: self.tombstone_retention,
             num_partitions: self.num_partitions,
-            #[cfg(feature = "partition")]
             worker_id: self.worker_id,
-            #[cfg(feature = "partition")]
             worker_liveliness_prefix: self.worker_liveliness_prefix,
         })
     }
@@ -479,5 +513,23 @@ mod tests {
         // cache_size=0 disables the publisher history cache (valid for benchmarks).
         let result = EventBusConfig::builder("x").cache_size(0).build();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn key_expr_for_key_builds_correct_expr() {
+        let config = EventBusConfig::builder("app/events").build().unwrap();
+        assert_eq!(
+            config.key_expr_for_key("order-123"),
+            "app/events/p/*/k/order-123/*"
+        );
+    }
+
+    #[test]
+    fn key_expr_for_key_prefix_builds_correct_expr() {
+        let config = EventBusConfig::builder("app/events").build().unwrap();
+        assert_eq!(
+            config.key_expr_for_key_prefix("user/42"),
+            "app/events/p/*/k/user/42/**"
+        );
     }
 }

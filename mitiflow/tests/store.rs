@@ -37,6 +37,7 @@ fn fjall_store_and_query() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
@@ -81,6 +82,7 @@ fn fjall_committed_seq_contiguous() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
@@ -105,6 +107,7 @@ fn fjall_gaps_detected() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
@@ -135,6 +138,7 @@ fn fjall_gc_removes_old_events() {
                 event_id: EventId::new(),
                 timestamp: old_time,
                 key_expr: "test/old".to_string(),
+            key: None,
                 hlc_timestamp: None,
             },
         )
@@ -151,6 +155,7 @@ fn fjall_gc_removes_old_events() {
                 event_id: EventId::new(),
                 timestamp: new_time,
                 key_expr: "test/new".to_string(),
+            key: None,
                 hlc_timestamp: None,
             },
         )
@@ -185,6 +190,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
+            key: None,
                 hlc_timestamp: None,
             },
         )
@@ -200,6 +206,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
+            key: None,
                 hlc_timestamp: None,
             },
         )
@@ -216,6 +223,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/2".to_string(),
+            key: None,
                 hlc_timestamp: None,
             },
         )
@@ -246,6 +254,7 @@ fn fjall_seq_filter_range() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: None,
         };
         backend.store(&key, &payload, meta).unwrap();
@@ -388,6 +397,7 @@ fn store_and_replay(
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: Some(*hlc),
         };
         backend.store(&key, b"{}", meta).unwrap();
@@ -484,6 +494,7 @@ fn replay_hlc_range_filter() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: Some(hlc),
         };
         backend.store(&key, b"{}", meta).unwrap();
@@ -528,6 +539,7 @@ fn replay_limit() {
             event_id: EventId::new(),
             timestamp: Utc::now(),
             key_expr: key.clone(),
+            key: None,
             hlc_timestamp: Some(hlc),
         };
         backend.store(&key, b"{}", meta).unwrap();
@@ -567,6 +579,7 @@ fn gc_cleans_replay_index() {
                 event_id: EventId::new(),
                 timestamp: old_time,
                 key_expr: "test/old".to_string(),
+            key: None,
                 hlc_timestamp: Some(HlcTimestamp {
                     physical_ns: 1_000,
                     logical: 0,
@@ -586,6 +599,7 @@ fn gc_cleans_replay_index() {
                 event_id: EventId::new(),
                 timestamp: new_time,
                 key_expr: "test/new".to_string(),
+            key: None,
                 hlc_timestamp: Some(HlcTimestamp {
                     physical_ns: 2_000,
                     logical: 0,
@@ -651,4 +665,309 @@ fn replay_stress_many_publishers_many_replicas() {
             "stress: replica {i} replay order differs from replica 0"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// query_by_key tests (Phase 2 — Store Key Index)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fjall_store_keyed_event_queryable_by_key() {
+    let dir = temp_dir("query_by_key_basic");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let payload = b"hello".to_vec();
+    let meta = EventMetadata {
+        seq: 0,
+        publisher_id: pub_id,
+        event_id: EventId::new(),
+        timestamp: Utc::now(),
+        key_expr: "test/p/0/k/order-123/0".to_string(),
+        key: Some("order-123".to_string()),
+        hlc_timestamp: None,
+    };
+    backend
+        .store("test/p/0/k/order-123/0", &payload, meta)
+        .unwrap();
+
+    let results = backend.query_by_key("order-123", None).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].metadata.key, Some("order-123".to_string()));
+    assert_eq!(results[0].payload, payload);
+}
+
+#[test]
+fn fjall_store_multiple_keys_query_correct_key() {
+    let dir = temp_dir("query_by_key_multi");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    for (i, key) in ["alpha", "beta", "alpha", "gamma", "alpha"].iter().enumerate() {
+        let seq = i as u64;
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: format!("test/p/0/k/{key}/{seq}"),
+            key: Some(key.to_string()),
+            hlc_timestamp: None,
+        };
+        backend
+            .store(&meta.key_expr.clone(), &[seq as u8], meta)
+            .unwrap();
+    }
+
+    let alpha = backend.query_by_key("alpha", None).unwrap();
+    assert_eq!(alpha.len(), 3, "should find exactly 3 alpha events");
+    for e in &alpha {
+        assert_eq!(e.metadata.key, Some("alpha".to_string()));
+    }
+
+    let beta = backend.query_by_key("beta", None).unwrap();
+    assert_eq!(beta.len(), 1);
+
+    let missing = backend.query_by_key("nonexistent", None).unwrap();
+    assert!(missing.is_empty());
+}
+
+#[test]
+fn fjall_query_by_key_with_limit() {
+    let dir = temp_dir("query_by_key_limit");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    for seq in 0..10u64 {
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: format!("test/p/0/k/mykey/{seq}"),
+            key: Some("mykey".to_string()),
+            hlc_timestamp: None,
+        };
+        backend
+            .store(&meta.key_expr.clone(), &[seq as u8], meta)
+            .unwrap();
+    }
+
+    let limited = backend.query_by_key("mykey", Some(3)).unwrap();
+    assert_eq!(limited.len(), 3, "limit should cap results");
+
+    let all = backend.query_by_key("mykey", None).unwrap();
+    assert_eq!(all.len(), 10);
+}
+
+#[test]
+fn fjall_query_by_key_unkeyed_events_excluded() {
+    let dir = temp_dir("query_by_key_unkeyed");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    // Store an unkeyed event (key: None)
+    let meta = EventMetadata {
+        seq: 0,
+        publisher_id: pub_id,
+        event_id: EventId::new(),
+        timestamp: Utc::now(),
+        key_expr: "test/p/0/0".to_string(),
+        key: None,
+        hlc_timestamp: None,
+    };
+    backend.store("test/p/0/0", &[42], meta).unwrap();
+
+    // Store a keyed event
+    let meta2 = EventMetadata {
+        seq: 1,
+        publisher_id: pub_id,
+        event_id: EventId::new(),
+        timestamp: Utc::now(),
+        key_expr: "test/p/0/k/mykey/1".to_string(),
+        key: Some("mykey".to_string()),
+        hlc_timestamp: None,
+    };
+    backend.store("test/p/0/k/mykey/1", &[99], meta2).unwrap();
+
+    let results = backend.query_by_key("mykey", None).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].payload, vec![99]);
+}
+
+// ---------------------------------------------------------------------------
+// compact_keyed + query_latest_by_keys tests (Phase 3 — Log Compaction)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fjall_compact_keyed_keeps_latest_per_key() {
+    let dir = temp_dir("compact_keyed_latest");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    for seq in 0..3u64 {
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: format!("test/p/0/k/mykey/{seq}"),
+            key: Some("mykey".to_string()),
+            hlc_timestamp: None,
+        };
+        backend
+            .store(&meta.key_expr.clone(), &[seq as u8], meta)
+            .unwrap();
+    }
+
+    let stats = backend.compact_keyed().unwrap();
+    assert_eq!(stats.retained, 1, "only the latest event should be retained");
+    assert_eq!(stats.removed, 2, "older events should be removed");
+
+    let remaining = backend.query_by_key("mykey", None).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].metadata.seq, 2, "seq 2 is the latest");
+    assert_eq!(remaining[0].payload, vec![2]);
+}
+
+#[test]
+fn fjall_compact_keyed_multiple_keys() {
+    let dir = temp_dir("compact_keyed_multi");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let mut seq = 0u64;
+    for key in ["alpha", "beta"] {
+        for _ in 0..3 {
+            let meta = EventMetadata {
+                seq,
+                publisher_id: pub_id,
+                event_id: EventId::new(),
+                timestamp: Utc::now(),
+                key_expr: format!("test/p/0/k/{key}/{seq}"),
+                key: Some(key.to_string()),
+                hlc_timestamp: None,
+            };
+            backend
+                .store(&meta.key_expr.clone(), &[seq as u8], meta)
+                .unwrap();
+            seq += 1;
+        }
+    }
+
+    let stats = backend.compact_keyed().unwrap();
+    assert_eq!(stats.retained, 2, "one per key retained");
+    assert_eq!(stats.removed, 4, "4 older events removed");
+
+    let alpha = backend.query_by_key("alpha", None).unwrap();
+    assert_eq!(alpha.len(), 1);
+    assert_eq!(alpha[0].metadata.seq, 2);
+
+    let beta = backend.query_by_key("beta", None).unwrap();
+    assert_eq!(beta.len(), 1);
+    assert_eq!(beta[0].metadata.seq, 5);
+}
+
+#[test]
+fn fjall_compact_keyed_with_tombstone() {
+    let dir = temp_dir("compact_keyed_tombstone");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    // Write a real event for "mykey"
+    let meta0 = EventMetadata {
+        seq: 0,
+        publisher_id: pub_id,
+        event_id: EventId::new(),
+        timestamp: Utc::now(),
+        key_expr: "test/p/0/k/mykey/0".to_string(),
+        key: Some("mykey".to_string()),
+        hlc_timestamp: None,
+    };
+    backend.store("test/p/0/k/mykey/0", &[42], meta0).unwrap();
+
+    // Write a tombstone (empty payload) for "mykey"
+    let meta1 = EventMetadata {
+        seq: 1,
+        publisher_id: pub_id,
+        event_id: EventId::new(),
+        timestamp: Utc::now(),
+        key_expr: "test/p/0/k/mykey/1".to_string(),
+        key: Some("mykey".to_string()),
+        hlc_timestamp: None,
+    };
+    backend.store("test/p/0/k/mykey/1", &[], meta1).unwrap();
+
+    let stats = backend.compact_keyed().unwrap();
+    assert_eq!(stats.retained, 1, "tombstone retained as latest");
+    assert_eq!(stats.removed, 1, "real event removed");
+
+    let remaining = backend.query_by_key("mykey", None).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert!(remaining[0].payload.is_empty(), "tombstone payload is empty");
+}
+
+#[test]
+fn fjall_compact_keyed_unkeyed_events_untouched() {
+    let dir = temp_dir("compact_keyed_unkeyed");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    // Store unkeyed events
+    for seq in 0..3u64 {
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: format!("test/p/0/{seq}"),
+            key: None,
+            hlc_timestamp: None,
+        };
+        backend.store(&meta.key_expr.clone(), &[seq as u8], meta).unwrap();
+    }
+
+    let stats = backend.compact_keyed().unwrap();
+    assert_eq!(stats.retained, 0, "no keyed events — nothing retained");
+    assert_eq!(stats.removed, 0, "unkeyed events should not be removed");
+
+    let all = backend.query(&QueryFilters::default()).unwrap();
+    assert_eq!(all.len(), 3, "all unkeyed events should remain");
+}
+
+#[test]
+fn fjall_query_latest_by_keys_returns_one_per_key() {
+    let dir = temp_dir("query_latest_by_keys");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let mut seq = 0u64;
+    for key in ["order-A", "order-B"] {
+        for _ in 0..3 {
+            let meta = EventMetadata {
+                seq,
+                publisher_id: pub_id,
+                event_id: EventId::new(),
+                timestamp: Utc::now(),
+                key_expr: format!("test/p/0/k/{key}/{seq}"),
+                key: Some(key.to_string()),
+                hlc_timestamp: None,
+            };
+            backend
+                .store(&meta.key_expr.clone(), &[seq as u8], meta)
+                .unwrap();
+            seq += 1;
+        }
+    }
+
+    let latest = backend
+        .query_latest_by_keys(&["order-A", "order-B", "nonexistent"])
+        .unwrap();
+    assert_eq!(latest.len(), 2, "one per existing key");
+
+    let a = latest.iter().find(|e| e.metadata.key.as_deref() == Some("order-A")).unwrap();
+    assert_eq!(a.metadata.seq, 2, "latest seq for order-A");
+
+    let b = latest.iter().find(|e| e.metadata.key.as_deref() == Some("order-B")).unwrap();
+    assert_eq!(b.metadata.seq, 5, "latest seq for order-B");
 }

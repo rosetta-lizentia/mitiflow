@@ -3,26 +3,16 @@
 //! This example demonstrates:
 //!   1. Creating multiple workers, each with a `PartitionManager`.
 //!   2. Stable partition assignment using rendezvous (HRW) hashing.
-//!   3. Publishing events to partition-specific key expressions.
+//!   3. Publishing events with application keys (`publish_keyed`) for
+//!      automatic partition routing.
 //!   4. Rebalancing when new workers join or existing ones leave.
 //!   5. Generating partition-filtered Zenoh subscription key expressions.
 //!
 //! Rendezvous hashing guarantees minimal partition movement on topology changes:
 //! only the partitions owned by the leaving/joining worker are reassigned.
 //!
-//! Requires the `partition` feature:
-//!   cargo run -p mitiflow --example consumer_groups --features partition
+//!   cargo run -p mitiflow --example consumer_groups
 
-// When the `partition` feature is disabled, emit a helpful error and exit.
-#[cfg(not(feature = "partition"))]
-fn main() {
-    eprintln!(
-        "This example requires the `partition` feature.\n\
-         Run with:\n  cargo run -p mitiflow --example consumer_groups --features partition"
-    );
-}
-
-#[cfg(feature = "partition")]
 mod inner {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -95,22 +85,21 @@ mod inner {
         let user_ids = [
             "alice", "bob", "carol", "dave", "eve", "frank", "grace", "henry",
         ];
-        println!("\n--- Event routing to partitions ---");
+        println!("\n--- Event routing to partitions (via publish_keyed) ---");
         for user_id in &user_ids {
-            let partition = worker_a.partition_for(user_id);
-            let key = format!("{KEY_PREFIX}/p/{partition}/{user_id}");
             let event = Event::new(UserAction {
                 user_id: user_id.to_string(),
                 action: "login".to_string(),
             });
-            publisher.publish_to(&key, &event).await?;
+            publisher.publish_keyed(user_id, &event).await?;
+            let partition = worker_a.partition_for(user_id);
             let owner = if worker_a.my_partitions().await.contains(&partition) {
                 "worker-a"
             } else {
                 "worker-b"
             };
             println!(
-                "  user={user_id:6}  partition={partition:2}  owner={owner}  key_suffix=…/p/{partition}/{user_id}"
+                "  user={user_id:6}  partition={partition:2}  owner={owner}"
             );
         }
         Ok(())
@@ -253,7 +242,6 @@ mod inner {
     }
 }
 
-#[cfg(feature = "partition")]
 #[tokio::main]
 async fn main() -> mitiflow::Result<()> {
     inner::run().await

@@ -116,7 +116,8 @@ pub fn decode_metadata(attachment: &ZBytes) -> Result<EventMeta> {
 
 /// Extract the partition number from a Zenoh key expression.
 ///
-/// Expected format: `{prefix}/p/{partition}/{tail}`.
+/// Expected format: `{prefix}/p/{partition}/{tail}` or
+/// `{prefix}/p/{partition}/k/{key}/{seq}` (keyed layout).
 /// Returns `0` when no `/p/` segment is found (non-partitioned mode).
 pub fn extract_partition(key: &str) -> u32 {
     // Look for "/p/" segment and parse the u32 after it.
@@ -130,6 +131,36 @@ pub fn extract_partition(key: &str) -> u32 {
     } else {
         0
     }
+}
+
+/// Validate an application key for use in keyed publishing.
+///
+/// Keys are embedded in Zenoh key expressions, so `*` and `$` are forbidden
+/// (they conflict with Zenoh wildcards). Empty keys are also rejected.
+pub fn validate_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return Err(Error::InvalidKey("key must not be empty".into()));
+    }
+    if key.contains('*') || key.contains('$') {
+        return Err(Error::InvalidKey(
+            "key must not contain * or $".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Extract the application key from a keyed Zenoh key expression.
+///
+/// Keyed layout: `{prefix}/p/{partition}/k/{key}/{seq}`.
+/// Returns `None` for unkeyed key expressions.
+pub fn extract_key(key_expr: &str) -> Option<&str> {
+    let k_pos = key_expr.find("/k/")?;
+    let after_k = &key_expr[k_pos + 3..];
+    let last_slash = after_k.rfind('/')?;
+    if last_slash == 0 {
+        return None;
+    }
+    Some(&after_k[..last_slash])
 }
 
 #[cfg(test)]
@@ -225,5 +256,81 @@ mod tests {
     fn extract_partition_invalid_number() {
         // Non-numeric partition → defaults to 0.
         assert_eq!(extract_partition("myapp/events/p/abc/42"), 0);
+    }
+
+    // -- extract_partition with keyed layout --
+
+    #[test]
+    fn extract_partition_keyed() {
+        assert_eq!(extract_partition("app/p/3/k/order-123/42"), 3);
+    }
+
+    #[test]
+    fn extract_partition_keyed_hierarchical() {
+        assert_eq!(extract_partition("app/p/0/k/user/42/orders/7"), 0);
+    }
+
+    #[test]
+    fn extract_partition_keyed_high() {
+        assert_eq!(extract_partition("x/p/127/k/foo/0"), 127);
+    }
+
+    // -- validate_key --
+
+    #[test]
+    fn validate_key_rejects_empty() {
+        assert!(validate_key("").is_err());
+    }
+
+    #[test]
+    fn validate_key_rejects_star() {
+        assert!(validate_key("order*123").is_err());
+    }
+
+    #[test]
+    fn validate_key_rejects_dollar() {
+        assert!(validate_key("order$123").is_err());
+    }
+
+    #[test]
+    fn validate_key_accepts_valid() {
+        assert!(validate_key("order-123").is_ok());
+        assert!(validate_key("user/42/orders").is_ok());
+        assert!(validate_key("hello").is_ok());
+    }
+
+    #[test]
+    fn validate_key_accepts_utf8() {
+        assert!(validate_key("订单-42").is_ok());
+    }
+
+    #[test]
+    fn validate_key_accepts_hash() {
+        assert!(validate_key("order#123").is_ok());
+    }
+
+    // -- extract_key --
+
+    #[test]
+    fn extract_key_keyed() {
+        assert_eq!(extract_key("app/p/0/k/order-123/5"), Some("order-123"));
+    }
+
+    #[test]
+    fn extract_key_hierarchical() {
+        assert_eq!(
+            extract_key("app/p/2/k/user/42/orders/5"),
+            Some("user/42/orders")
+        );
+    }
+
+    #[test]
+    fn extract_key_unkeyed() {
+        assert_eq!(extract_key("app/p/0/5"), None);
+    }
+
+    #[test]
+    fn extract_key_no_p() {
+        assert_eq!(extract_key("app/events/5"), None);
     }
 }

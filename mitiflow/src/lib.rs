@@ -18,7 +18,6 @@ pub mod types;
 #[cfg(feature = "store")]
 pub mod store;
 
-#[cfg(feature = "partition")]
 pub mod partition;
 
 // Public re-exports
@@ -29,10 +28,11 @@ pub use config::{
 };
 pub use dlq::{BackoffStrategy, DeadLetterQueue, DlqConfig, RetryOutcome};
 pub use error::{Error, Result};
-pub use event::Event;
+pub use event::{Event, RawEvent};
 pub use publisher::EventPublisher;
 pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};
+pub use attachment::{extract_key, validate_key};
 
 #[cfg(feature = "store")]
 pub use store::{EventStore, FjallBackend, OffsetCommit, StoreManager};
@@ -40,8 +40,7 @@ pub use store::{EventStore, FjallBackend, OffsetCommit, StoreManager};
 #[cfg(feature = "store")]
 pub use subscriber::checkpoint::SequenceCheckpoint;
 
-#[cfg(feature = "partition")]
 pub use partition::{NodeDescriptor, PartitionManager};
 
-#[cfg(all(feature = "store", feature = "partition"))]
+#[cfg(feature = "store")]
 pub use subscriber::consumer_group::ConsumerGroupSubscriber;

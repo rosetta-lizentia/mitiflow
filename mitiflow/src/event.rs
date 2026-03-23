@@ -74,6 +74,14 @@ pub struct RawEvent {
 }
 
 impl RawEvent {
+    /// Extract the application key from the key expression.
+    ///
+    /// Returns `Some(key)` for keyed events (`{prefix}/p/{partition}/k/{key}/{seq}`),
+    /// `None` for unkeyed events.
+    pub fn key(&self) -> Option<&str> {
+        crate::attachment::extract_key(&self.key_expr)
+    }
+
     /// Deserialize the payload into a typed `Event<T>` using the default codec.
     pub fn deserialize<T: Serialize + DeserializeOwned>(&self) -> crate::Result<Event<T>> {
         self.deserialize_with(crate::codec::CodecFormat::default())
@@ -96,5 +104,46 @@ impl RawEvent {
             payload,
             key_expr: Some(self.key_expr.clone()),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PublisherId;
+
+    fn make_raw(key_expr: &str) -> RawEvent {
+        RawEvent {
+            id: EventId::new(),
+            seq: 0,
+            publisher_id: PublisherId::new(),
+            key_expr: key_expr.to_string(),
+            payload: vec![],
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn raw_event_key_keyed() {
+        let raw = make_raw("app/p/0/k/order-123/5");
+        assert_eq!(raw.key(), Some("order-123"));
+    }
+
+    #[test]
+    fn raw_event_key_hierarchical() {
+        let raw = make_raw("app/p/2/k/user/42/orders/5");
+        assert_eq!(raw.key(), Some("user/42/orders"));
+    }
+
+    #[test]
+    fn raw_event_key_unkeyed() {
+        let raw = make_raw("app/p/0/5");
+        assert_eq!(raw.key(), None);
+    }
+
+    #[test]
+    fn raw_event_key_no_p() {
+        let raw = make_raw("app/events/5");
+        assert_eq!(raw.key(), None);
     }
 }

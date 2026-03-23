@@ -11,6 +11,7 @@ fn make_metadata(pub_id: &PublisherId, seq: u64) -> EventMetadata {
         event_id: EventId::new(),
         timestamp: chrono::Utc::now(),
         key_expr: format!("bench/events/{seq}"),
+        key: None,
         hlc_timestamp: Some(HlcTimestamp {
             physical_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
             logical: seq as u32,

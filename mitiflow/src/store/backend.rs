@@ -22,6 +22,10 @@ pub struct EventMetadata {
     pub event_id: EventId,
     pub timestamp: DateTime<Utc>,
     pub key_expr: String,
+    /// Application key extracted from the key expression's `/k/` segment.
+    /// `None` for unkeyed events (published without a key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// Zenoh HLC timestamp for deterministic cross-replica replay ordering.
     /// `None` if the source sample had no HLC timestamp (fallback to `timestamp`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,6 +102,33 @@ pub trait StorageBackend: Send + Sync {
     /// Compact the storage: keep only the latest event per key. Returns stats.
     fn compact(&self) -> Result<CompactionStats>;
 
+    /// Compact keyed events: for each application key, keep only the latest
+    /// event (by sequence number) and remove older versions.
+    ///
+    /// Unkeyed events (with `key: None`) are left untouched. Tombstones
+    /// (empty payload for a key) are retained as the "latest" value — use
+    /// [`gc`](StorageBackend::gc) to remove expired tombstones.
+    fn compact_keyed(&self) -> Result<CompactionStats> {
+        Ok(CompactionStats::default())
+    }
+
+    /// Return the latest event for each of the given application keys.
+    ///
+    /// "Latest" means highest sequence number. Returns at most one
+    /// [`StoredEvent`] per key. Keys with no stored events are silently
+    /// skipped.
+    fn query_latest_by_keys(&self, _keys: &[&str]) -> Result<Vec<StoredEvent>> {
+        Ok(Vec::new())
+    }
+
+    /// Query events stored with a specific application key.
+    ///
+    /// Returns events whose [`EventMetadata::key`] equals the given key,
+    /// ordered by sequence number. Use `limit` to cap the result count.
+    fn query_by_key(&self, _key: &str, _limit: Option<usize>) -> Result<Vec<StoredEvent>> {
+        Ok(Vec::new())
+    }
+
     /// Persist an offset commit for a consumer group.
     /// Only accepts if generation >= stored generation (fencing).
     fn commit_offsets(&self, _commit: &crate::store::offset::OffsetCommit) -> Result<()> {
@@ -149,6 +180,18 @@ impl StorageBackend for std::sync::Arc<dyn StorageBackend> {
 
     fn compact(&self) -> Result<CompactionStats> {
         (**self).compact()
+    }
+
+    fn compact_keyed(&self) -> Result<CompactionStats> {
+        (**self).compact_keyed()
+    }
+
+    fn query_latest_by_keys(&self, keys: &[&str]) -> Result<Vec<StoredEvent>> {
+        (**self).query_latest_by_keys(keys)
+    }
+
+    fn query_by_key(&self, key: &str, limit: Option<usize>) -> Result<Vec<StoredEvent>> {
+        (**self).query_by_key(key, limit)
     }
 
     fn commit_offsets(&self, commit: &crate::store::offset::OffsetCommit) -> Result<()> {
@@ -841,6 +884,132 @@ mod fjall_impl {
                 .map_err(|e| Error::StoreError(format!("compact batch commit failed: {e}")))?;
 
             Ok(CompactionStats { removed, retained })
+        }
+
+        fn query_by_key(&self, key: &str, limit: Option<usize>) -> Result<Vec<StoredEvent>> {
+            let mut results = Vec::new();
+
+            for guard in self.events.iter() {
+                let kv = guard
+                    .into_inner()
+                    .map_err(|e| Error::StoreError(format!("key query scan error: {e}")))?;
+
+                let (meta, payload) = decode_event_value(&kv.1)?;
+
+                if meta.key.as_deref() == Some(key) {
+                    results.push(StoredEvent {
+                        key: meta.key_expr.clone(),
+                        payload,
+                        metadata: meta,
+                    });
+
+                    if let Some(limit) = limit {
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Ok(results)
+        }
+
+        fn compact_keyed(&self) -> Result<CompactionStats> {
+            // Group keyed events by application key, retain only highest-seq per key.
+            let mut latest: HashMap<String, (Vec<u8>, u64)> = HashMap::new();
+            let mut keyed_entries: Vec<(Vec<u8>, String, u64)> = Vec::new();
+
+            for guard in self.events.iter() {
+                let kv = guard
+                    .into_inner()
+                    .map_err(|e| Error::StoreError(format!("compact_keyed scan error: {e}")))?;
+
+                let Some((_pub_id, seq)) = decode_event_key(&kv.0) else {
+                    continue;
+                };
+
+                let (meta, _) = decode_event_value(&kv.1)?;
+
+                if let Some(ref app_key) = meta.key {
+                    let event_key = kv.0.to_vec();
+                    keyed_entries.push((event_key.clone(), app_key.clone(), seq));
+                    let entry = latest.entry(app_key.clone()).or_insert((event_key.clone(), seq));
+                    if seq > entry.1 {
+                        *entry = (event_key, seq);
+                    }
+                }
+            }
+
+            let mut removed = 0usize;
+            let mut retained = 0usize;
+
+            let mut batch = self.db.batch();
+            for (event_key, app_key, _seq) in &keyed_entries {
+                if let Some((latest_key, _)) = latest.get(app_key) {
+                    if event_key != latest_key {
+                        // Also remove from replay index if the event has HLC.
+                        if let Some(value) = self.events.get(event_key.as_slice())
+                            .map_err(|e| Error::StoreError(format!("compact_keyed lookup error: {e}")))?
+                        {
+                            let (meta, _) = decode_event_value(&value)?;
+                            if let (Some(hlc), Some((pub_id, seq))) = (&meta.hlc_timestamp, decode_event_key(event_key)) {
+                                let replay_key = encode_replay_key(hlc, &pub_id, seq);
+                                batch.remove(&self.replay, replay_key);
+                            }
+                        }
+                        batch.remove(&self.events, event_key.as_slice());
+                        batch.remove(&self.keys, event_key.as_slice());
+                        removed += 1;
+                    } else {
+                        retained += 1;
+                    }
+                }
+            }
+            batch
+                .commit()
+                .map_err(|e| Error::StoreError(format!("compact_keyed batch commit failed: {e}")))?;
+
+            Ok(CompactionStats { removed, retained })
+        }
+
+        fn query_latest_by_keys(&self, keys: &[&str]) -> Result<Vec<StoredEvent>> {
+            let key_set: std::collections::HashSet<&str> = keys.iter().copied().collect();
+            let mut latest: HashMap<String, StoredEvent> = HashMap::new();
+
+            for guard in self.events.iter() {
+                let kv = guard
+                    .into_inner()
+                    .map_err(|e| Error::StoreError(format!("query_latest scan error: {e}")))?;
+
+                let (meta, payload) = decode_event_value(&kv.1)?;
+
+                if let Some(ref app_key) = meta.key {
+                    if key_set.contains(app_key.as_str()) {
+                        let seq = meta.seq;
+                        let entry = latest.entry(app_key.clone());
+                        match entry {
+                            std::collections::hash_map::Entry::Vacant(v) => {
+                                v.insert(StoredEvent {
+                                    key: meta.key_expr.clone(),
+                                    payload,
+                                    metadata: meta,
+                                });
+                            }
+                            std::collections::hash_map::Entry::Occupied(mut o) => {
+                                if seq > o.get().metadata.seq {
+                                    *o.get_mut() = StoredEvent {
+                                        key: meta.key_expr.clone(),
+                                        payload,
+                                        metadata: meta,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(latest.into_values().collect())
         }
 
         fn commit_offsets(

@@ -5,7 +5,7 @@ pub mod gap_detector;
 #[cfg(feature = "store")]
 pub mod checkpoint;
 
-#[cfg(all(feature = "store", feature = "partition"))]
+#[cfg(feature = "store")]
 pub mod consumer_group;
 
 use std::collections::HashSet;
@@ -249,6 +249,46 @@ impl EventSubscriber {
                 .collect()
         };
         Self::init(session, config, &key_exprs).await
+    }
+
+    /// Create a subscriber for events with a specific application key.
+    ///
+    /// Uses [`EventBusConfig::key_expr_for_key`] to build the Zenoh key
+    /// expression, so only events published with that exact key are received.
+    pub async fn new_keyed(
+        session: &Session,
+        config: EventBusConfig,
+        key: &str,
+    ) -> Result<Self> {
+        let key_expr = config.key_expr_for_key(key);
+        Self::init(session, config, &[key_expr]).await
+    }
+
+    /// Create a subscriber for events matching a key prefix.
+    ///
+    /// Uses [`EventBusConfig::key_expr_for_key_prefix`] to build the Zenoh
+    /// key expression, so events whose key starts with the given prefix are
+    /// received (hierarchical key matching via `**`).
+    pub async fn new_key_prefix(
+        session: &Session,
+        config: EventBusConfig,
+        key_prefix: &str,
+    ) -> Result<Self> {
+        let key_expr = config.key_expr_for_key_prefix(key_prefix);
+        Self::init(session, config, &[key_expr]).await
+    }
+
+    /// Create a subscriber with explicit Zenoh key expressions.
+    ///
+    /// This is the most flexible constructor — pass any key expressions
+    /// and the subscriber will listen on all of them. Heartbeat listening
+    /// is still derived from the config's key prefix.
+    pub async fn init_with_key_exprs(
+        session: &Session,
+        config: EventBusConfig,
+        key_exprs: &[String],
+    ) -> Result<Self> {
+        Self::init(session, config, key_exprs).await
     }
 
     /// Shared initialization: create one Zenoh subscriber per key expression,

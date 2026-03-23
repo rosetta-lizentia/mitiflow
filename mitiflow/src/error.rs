@@ -63,6 +63,10 @@ pub enum Error {
         commit_gen: u64,
         stored_gen: u64,
     },
+
+    /// An event key is invalid (empty, contains `*` or `$`).
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
 }
 
 impl From<serde_json::Error> for Error {

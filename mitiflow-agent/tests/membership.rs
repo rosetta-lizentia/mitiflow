@@ -198,25 +198,44 @@ async fn tracker_ignores_self() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tracker_provides_consistent_node_list() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
+    // Use a separate session for peer tokens so liveliness events propagate
+    // reliably through the Zenoh routing layer.
+    let peer_session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = agent_config("membership_consistent", "node-self");
     let tracker = MembershipTracker::new(&session, &config).await.unwrap();
 
-    // Declare and drop several peers in quick succession.
+    // Declare several peers on the separate session.
     let mut tokens = Vec::new();
     for i in 0..5 {
         let t = declare_agent_token(
-            &session,
+            &peer_session,
             "test/membership_consistent",
             &format!("node-{i}"),
         )
         .await;
         tokens.push(t);
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Drop half.
+    // Wait until all 5 peers are visible to the tracker (self + 5 = 6).
+    for _ in 0..50 {
+        let nodes = tracker.current_nodes().await;
+        if nodes.len() >= 6 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let nodes = tracker.current_nodes().await;
+    assert!(
+        nodes.len() >= 6,
+        "expected at least 6 nodes (self + 5 peers), got {}",
+        nodes.len()
+    );
+
+    // Drop half (node-4, node-3, node-2).
     for _ in 0..3 {
-        tokens.pop();
+        if let Some(t) = tokens.pop() {
+            t.undeclare().await.unwrap();
+        }
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -239,6 +258,7 @@ async fn tracker_provides_consistent_node_list() {
     assert!(ids.contains(&"node-1"), "node-1 should still be present");
 
     tracker.shutdown().await;
+    peer_session.close().await.unwrap();
     session.close().await.unwrap();
 }
 

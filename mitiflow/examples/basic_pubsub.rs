@@ -77,6 +77,21 @@ async fn main() -> mitiflow::Result<()> {
 
     println!("\nAll {num_events} events received successfully!");
 
+    // ── Bonus: keyed publish ──
+    println!("\n--- Keyed publish demo ---");
+    let keyed_event = Event::new(SensorReading {
+        sensor_id: "sensor-0".into(),
+        temperature: 25.0,
+        humidity: 50.0,
+    });
+    let seq = publisher.publish_keyed("sensor-0", &keyed_event).await?;
+    println!("Published keyed event: key=sensor-0, seq={seq}");
+
+    let raw = tokio::time::timeout(Duration::from_secs(5), subscriber.recv_raw())
+        .await
+        .expect("timed out")?;
+    println!("Received keyed event: key={:?}, seq={}", raw.key(), raw.seq);
+
     // Drop publisher and subscriber to cancel background tasks.
     drop(publisher);
     drop(subscriber);

@@ -10,8 +10,7 @@ rust-version.workspace = true
 default = ["store"]
 store = ["dep:fjall"]
 wal = ["dep:fjall"]
-partition = []
-full = ["store", "wal", "partition"]
+full = ["store", "wal"]
 
 [dependencies]
 zenoh = { workspace = true }
@@ -51,7 +50,6 @@ harness = false
 [[bench]]
 name = "partition"
 harness = false
-required-features = ["partition"]
 
 [[bench]]
 name = "event"

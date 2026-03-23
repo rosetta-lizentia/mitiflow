@@ -328,6 +328,94 @@ impl EventPublisher {
         self.wait_for_watermark(partition, seq).await
     }
 
+    /// Publish a keyed event. Partition is determined by `hash(key) % num_partitions`.
+    ///
+    /// The key is embedded in the Zenoh key expression as
+    /// `{prefix}/p/{partition}/k/{key}/{seq}`, enabling Zenoh-native key
+    /// filtering without any wire overhead.
+    pub async fn publish_keyed<T: Serialize>(
+        &self,
+        key: &str,
+        event: &Event<T>,
+    ) -> Result<u64> {
+        crate::attachment::validate_key(key)?;
+        let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
+        let seq = self.next_seq_for(partition);
+        let key_expr = format!(
+            "{}/p/{}/k/{}/{}",
+            self.config.key_prefix, partition, key, seq
+        );
+        self.publish_inner(&key_expr, event, seq, NO_URGENCY).await?;
+        Ok(seq)
+    }
+
+    /// Publish pre-serialised bytes with a key.
+    ///
+    /// Raw-bytes variant of [`publish_keyed`] — skips codec encoding.
+    pub async fn publish_bytes_keyed(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> Result<u64> {
+        crate::attachment::validate_key(key)?;
+        let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
+        let seq = self.next_seq_for(partition);
+        let key_expr = format!(
+            "{}/p/{}/k/{}/{}",
+            self.config.key_prefix, partition, key, seq
+        );
+        let event_id = crate::types::EventId::new();
+        let timestamp = chrono::Utc::now();
+        self.put_payload(&key_expr, bytes, seq, event_id, timestamp, NO_URGENCY)
+            .await?;
+        Ok(seq)
+    }
+
+    /// Publish a keyed event and wait for watermark confirmation.
+    ///
+    /// Durable variant of [`publish_keyed`].
+    #[cfg(feature = "store")]
+    pub async fn publish_keyed_durable<T: Serialize>(
+        &self,
+        key: &str,
+        event: &Event<T>,
+    ) -> Result<u64> {
+        crate::attachment::validate_key(key)?;
+        let urgency_ms = self.urgency_ms();
+        let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
+        let seq = self.next_seq_for(partition);
+        let key_expr = format!(
+            "{}/p/{}/k/{}/{}",
+            self.config.key_prefix, partition, key, seq
+        );
+        self.publish_inner(&key_expr, event, seq, urgency_ms).await?;
+        self.wait_for_watermark(partition, seq).await
+    }
+
+    /// Publish pre-serialised bytes with a key and wait for watermark confirmation.
+    ///
+    /// Raw-bytes durable variant of [`publish_keyed`].
+    #[cfg(feature = "store")]
+    pub async fn publish_bytes_keyed_durable(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> Result<u64> {
+        crate::attachment::validate_key(key)?;
+        let urgency_ms = self.urgency_ms();
+        let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
+        let seq = self.next_seq_for(partition);
+        let key_expr = format!(
+            "{}/p/{}/k/{}/{}",
+            self.config.key_prefix, partition, key, seq
+        );
+        let event_id = crate::types::EventId::new();
+        let timestamp = chrono::Utc::now();
+        self.put_payload(&key_expr, bytes, seq, event_id, timestamp, urgency_ms)
+            .await?;
+        self.wait_for_watermark(partition, seq).await
+    }
+
     /// Publish an event on the configured key prefix (fast path).
     ///
     /// Assigns a monotonic sequence number, attaches metadata, inserts into

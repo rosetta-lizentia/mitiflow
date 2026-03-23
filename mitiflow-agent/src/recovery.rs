@@ -158,6 +158,7 @@ impl RecoveryManager {
             event_id: meta.event_id,
             timestamp: meta.timestamp,
             key_expr: key.clone(),
+            key: mitiflow::extract_key(&key).map(|s| s.to_owned()),
             hlc_timestamp: None,
         };
 

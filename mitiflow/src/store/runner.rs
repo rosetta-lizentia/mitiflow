@@ -372,6 +372,7 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
                 event_id: meta.event_id,
                 timestamp: meta.timestamp,
                 key_expr: key.to_string(),
+                key: crate::attachment::extract_key(key).map(|s| s.to_owned()),
                 hlc_timestamp,
             },
         },
