@@ -69,11 +69,10 @@ impl StorageAgent {
     pub async fn assigned_partitions(&self) -> Vec<(u32, u32)> {
         let sup = self.supervisor.lock().await;
         let topics = sup.topics();
-        if topics.len() == 1 {
-            if let Some(worker) = sup.worker(&topics[0]) {
+        if topics.len() == 1
+            && let Some(worker) = sup.worker(&topics[0]) {
                 return worker.assigned_partitions().await;
             }
-        }
         let mut all = Vec::new();
         for name in &topics {
             if let Some(worker) = sup.worker(name) {

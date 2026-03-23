@@ -1,6 +1,6 @@
 //! Payload generation strategies for emulator producers.
 
-use rand::{Rng, RngExt};
+use rand::RngExt;
 use serde_json::json;
 
 use crate::config::{GeneratorType, PayloadConfig, SchemaFieldDef, SchemaFieldType};
@@ -177,15 +177,13 @@ fn expand_pattern(pattern: &str, rng: &mut dyn rand::Rng) -> String {
                 }
                 range_str.push(inner);
             }
-            if found_close {
-                if let Some((min_s, max_s)) = range_str.split_once('-') {
-                    if let (Ok(min), Ok(max)) = (min_s.parse::<i64>(), max_s.parse::<i64>()) {
+            if found_close
+                && let Some((min_s, max_s)) = range_str.split_once('-')
+                    && let (Ok(min), Ok(max)) = (min_s.parse::<i64>(), max_s.parse::<i64>()) {
                         let val = rng.random_range(min..=max);
                         result.push_str(&val.to_string());
                         continue;
                     }
-                }
-            }
             // Fallback: not a valid range.
             result.push('{');
             result.push_str(&range_str);

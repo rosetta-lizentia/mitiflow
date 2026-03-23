@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use rand::{Rng, RngExt};
+use rand::RngExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -97,7 +97,7 @@ impl ChaosScheduler {
             let event = &mut self.events[idx];
             event.fired = true;
             if let Some(interval) = event.def.every {
-                event.next_fire = event.next_fire + interval;
+                event.next_fire += interval;
             }
         }
     }
@@ -131,8 +131,8 @@ impl ChaosScheduler {
             }
 
             ChaosAction::Pause => {
-                if let Some(target) = &def.target {
-                    if let Some(handle) = lookup(target, def.instance) {
+                if let Some(target) = &def.target
+                    && let Some(handle) = lookup(target, def.instance) {
                         if let Err(e) = handle.pause().await {
                             error!("Chaos pause failed for {}: {}", target, e);
                         }
@@ -151,18 +151,15 @@ impl ChaosScheduler {
                             }
                         }
                     }
-                }
             }
 
             ChaosAction::Restart => {
-                if let Some(target) = &def.target {
-                    if let Some(handle) = lookup(target, def.instance) {
-                        if let Err(e) = handle.stop().await {
+                if let Some(target) = &def.target
+                    && let Some(handle) = lookup(target, def.instance)
+                        && let Err(e) = handle.stop().await {
                             warn!("Chaos restart stop failed for {}: {}", target, e);
                         }
                         // The supervisor should detect the exit and handle restart.
-                    }
-                }
             }
 
             ChaosAction::Slow => {
@@ -183,11 +180,10 @@ impl ChaosScheduler {
                     let target = &def.pool[idx];
                     info!("Chaos: kill_random selected {}", target);
 
-                    if let Some(handle) = lookup(target, None) {
-                        if let Err(e) = handle.kill().await {
+                    if let Some(handle) = lookup(target, None)
+                        && let Err(e) = handle.kill().await {
                             error!("Chaos kill_random failed for {}: {}", target, e);
                         }
-                    }
                 }
             }
         }

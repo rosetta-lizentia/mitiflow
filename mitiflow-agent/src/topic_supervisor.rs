@@ -167,11 +167,10 @@ impl TopicSupervisor {
 
         let names: Vec<String> = self.workers.keys().cloned().collect();
         for name in names {
-            if let Some(worker) = self.workers.remove(&name) {
-                if let Err(e) = worker.shutdown().await {
+            if let Some(worker) = self.workers.remove(&name)
+                && let Err(e) = worker.shutdown().await {
                     warn!(topic = %name, "failed to shut down topic worker: {e}");
                 }
-            }
         }
 
         self.health.shutdown().await;

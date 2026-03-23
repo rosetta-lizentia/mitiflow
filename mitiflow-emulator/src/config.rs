@@ -177,16 +177,13 @@ pub enum RecoveryModeConfig {
 /// Execution isolation backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum IsolationMode {
+    #[default]
     Process,
     Container,
 }
 
-impl Default for IsolationMode {
-    fn default() -> Self {
-        Self::Process
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -250,33 +247,27 @@ pub enum LogMode {
 /// Log line format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LogFormat {
+    #[default]
     Text,
     Json,
 }
 
-impl Default for LogFormat {
-    fn default() -> Self {
-        Self::Text
-    }
-}
 
 /// Log level filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LogLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
 }
 
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Topics
@@ -655,6 +646,7 @@ pub enum OutputMode {
 
 /// Chaos engineering configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ChaosConfig {
     /// Whether chaos is enabled.
     #[serde(default)]
@@ -665,14 +657,6 @@ pub struct ChaosConfig {
     pub schedule: Vec<ChaosEventDef>,
 }
 
-impl Default for ChaosConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            schedule: Vec::new(),
-        }
-    }
-}
 
 /// A single chaos event definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]

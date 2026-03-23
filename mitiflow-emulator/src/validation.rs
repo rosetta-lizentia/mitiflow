@@ -62,9 +62,9 @@ pub fn validate(config: &TopologyConfig) -> crate::error::Result<ValidationResul
 }
 
 /// Build a topic registry from the topic definitions.
-fn build_topic_registry<'a>(
-    topics: &'a [TopicDef],
-) -> crate::error::Result<HashMap<&'a str, &'a TopicDef>> {
+fn build_topic_registry(
+    topics: &[TopicDef],
+) -> crate::error::Result<HashMap<&str, &TopicDef>> {
     let mut registry = HashMap::new();
     for topic in topics {
         if registry.insert(topic.name.as_str(), topic).is_some() {
@@ -171,15 +171,14 @@ fn validate_no_cycles(
     let mut all_nodes: HashSet<&str> = HashSet::new();
 
     for comp in components {
-        if comp.kind == ComponentKind::Processor {
-            if let (Some(input), Some(output)) =
+        if comp.kind == ComponentKind::Processor
+            && let (Some(input), Some(output)) =
                 (comp.input_topic.as_deref(), comp.output_topic.as_deref())
             {
                 edges.entry(input).or_default().push(output);
                 all_nodes.insert(input);
                 all_nodes.insert(output);
             }
-        }
     }
 
     if all_nodes.is_empty() {
@@ -260,24 +259,22 @@ fn validate_source_coverage(
     for comp in components {
         match comp.kind {
             ComponentKind::Consumer => {
-                if let Some(t) = comp.topic.as_deref() {
-                    if !produced.contains(t) {
+                if let Some(t) = comp.topic.as_deref()
+                    && !produced.contains(t) {
                         return Err(EmulatorError::Validation(format!(
                             "consumer \"{}\" subscribes to topic \"{}\" which has no producer or processor writing to it",
                             comp.name, t
                         )));
                     }
-                }
             }
             ComponentKind::Processor => {
-                if let Some(t) = comp.input_topic.as_deref() {
-                    if !produced.contains(t) {
+                if let Some(t) = comp.input_topic.as_deref()
+                    && !produced.contains(t) {
                         return Err(EmulatorError::Validation(format!(
                             "processor \"{}\" subscribes to topic \"{}\" which has no producer or processor writing to it",
                             comp.name, t
                         )));
                     }
-                }
             }
             _ => {}
         }
@@ -318,14 +315,13 @@ fn validate_chaos_targets(
     let names: HashSet<&str> = components.iter().map(|c| c.name.as_str()).collect();
 
     for event in schedule {
-        if let Some(target) = &event.target {
-            if !names.contains(target.as_str()) {
+        if let Some(target) = &event.target
+            && !names.contains(target.as_str()) {
                 return Err(EmulatorError::Validation(format!(
                     "chaos event targets unknown component: \"{}\"",
                     target
                 )));
             }
-        }
         for pool_target in &event.pool {
             if !names.contains(pool_target.as_str()) {
                 return Err(EmulatorError::Validation(format!(

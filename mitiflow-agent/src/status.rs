@@ -74,7 +74,7 @@ impl StatusReporter {
             .put(&self.status_key, bytes)
             .congestion_control(CongestionControl::Drop)
             .await
-            .map_err(|e| crate::error::AgentError::Zenoh(e))?;
+            .map_err(crate::error::AgentError::Zenoh)?;
         Ok(())
     }
 

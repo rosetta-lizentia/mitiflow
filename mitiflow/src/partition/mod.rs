@@ -88,11 +88,10 @@ impl PartitionManager {
         while let Ok(reply) = replies.recv_async().await {
             if let Ok(sample) = reply.result() {
                 let key = sample.key_expr().as_str();
-                if let Some(wid) = key.strip_prefix(&format!("{liveliness_prefix}/")) {
-                    if !initial_workers.contains(&wid.to_string()) {
+                if let Some(wid) = key.strip_prefix(&format!("{liveliness_prefix}/"))
+                    && !initial_workers.contains(&wid.to_string()) {
                         initial_workers.push(wid.to_string());
                     }
-                }
             }
         }
         initial_workers.sort();

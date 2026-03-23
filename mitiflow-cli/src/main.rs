@@ -387,8 +387,8 @@ async fn run_diagnose(
     // Try each discovered topic's prefix for liveliness
     let mut checked_prefixes = std::collections::HashSet::new();
     for t in &topics {
-        if let Some(kp) = t["key_prefix"].as_str() {
-            if checked_prefixes.insert(kp.to_string()) {
+        if let Some(kp) = t["key_prefix"].as_str()
+            && checked_prefixes.insert(kp.to_string()) {
                 let token_key = format!("{kp}/_agents/*");
                 if let Ok(sub) = session.liveliness().get(&token_key).timeout(timeout).await {
                     while let Ok(reply) = sub.recv_async().await {
@@ -398,7 +398,6 @@ async fn run_diagnose(
                     }
                 }
             }
-        }
     }
 
     if agent_count == 0 {

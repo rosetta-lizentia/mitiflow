@@ -463,17 +463,14 @@ mod fjall_impl {
                     .offsets
                     .get(key)
                     .map_err(|e| Error::StoreError(format!("offset read failed: {e}")))?
-                {
-                    if let Some((_, stored_gen)) = Self::decode_offset_value(existing.as_ref()) {
-                        if commit.generation < stored_gen {
+                    && let Some((_, stored_gen)) = Self::decode_offset_value(existing.as_ref())
+                        && commit.generation < stored_gen {
                             return Err(Error::StaleFencedCommit {
                                 group: commit.group_id.clone(),
                                 commit_gen: commit.generation,
                                 stored_gen,
                             });
                         }
-                    }
-                }
 
                 let value = Self::encode_offset_value(*seq, commit.generation, commit.timestamp);
                 batch.insert(&self.offsets, key, value);
@@ -688,32 +685,28 @@ mod fjall_impl {
                 // When doing a full scan (no publisher_id filter in range),
                 // apply publisher_id and sequence filters manually.
                 if filters.publisher_id.is_none() {
-                    if let Some(after) = filters.after_seq {
-                        if seq <= after {
+                    if let Some(after) = filters.after_seq
+                        && seq <= after {
                             continue;
                         }
-                    }
-                    if let Some(before) = filters.before_seq {
-                        if seq >= before {
+                    if let Some(before) = filters.before_seq
+                        && seq >= before {
                             continue;
                         }
-                    }
                 }
                 let _ = pub_id; // used above in filter
 
                 let (meta, payload) = decode_event_value(&kv.1)?;
 
                 // Apply time filters.
-                if let Some(after_time) = filters.after_time {
-                    if meta.timestamp <= after_time {
+                if let Some(after_time) = filters.after_time
+                    && meta.timestamp <= after_time {
                         continue;
                     }
-                }
-                if let Some(before_time) = filters.before_time {
-                    if meta.timestamp >= before_time {
+                if let Some(before_time) = filters.before_time
+                    && meta.timestamp >= before_time {
                         continue;
                     }
-                }
 
                 results.push(StoredEvent {
                     key: meta.key_expr.clone(),
@@ -721,11 +714,10 @@ mod fjall_impl {
                     metadata: meta,
                 });
 
-                if let Some(limit) = filters.limit {
-                    if results.len() >= limit {
+                if let Some(limit) = filters.limit
+                    && results.len() >= limit {
                         break;
                     }
-                }
             }
 
             Ok(results)
@@ -744,16 +736,14 @@ mod fjall_impl {
                 };
 
                 // Apply HLC range filters.
-                if let Some(ref after) = filters.after_hlc {
-                    if hlc <= *after {
+                if let Some(ref after) = filters.after_hlc
+                    && hlc <= *after {
                         continue;
                     }
-                }
-                if let Some(ref before) = filters.before_hlc {
-                    if hlc >= *before {
+                if let Some(ref before) = filters.before_hlc
+                    && hlc >= *before {
                         break; // replay keys are sorted, no more matches
                     }
-                }
 
                 // Look up full event from primary index.
                 let event_key_bytes = kv.1.to_vec();
@@ -774,11 +764,10 @@ mod fjall_impl {
                     metadata: meta,
                 });
 
-                if let Some(limit) = filters.limit {
-                    if results.len() >= limit {
+                if let Some(limit) = filters.limit
+                    && results.len() >= limit {
                         break;
                     }
-                }
             }
 
             Ok(results)
@@ -889,11 +878,10 @@ mod fjall_impl {
                         metadata: meta,
                     });
 
-                    if let Some(limit) = limit {
-                        if results.len() >= limit {
+                    if let Some(limit) = limit
+                        && results.len() >= limit {
                             break;
                         }
-                    }
                 }
             }
 
@@ -973,8 +961,8 @@ mod fjall_impl {
 
                 let (meta, payload) = decode_event_value(&kv.1)?;
 
-                if let Some(ref app_key) = meta.key {
-                    if key_set.contains(app_key.as_str()) {
+                if let Some(ref app_key) = meta.key
+                    && key_set.contains(app_key.as_str()) {
                         let seq = meta.seq;
                         let entry = latest.entry(app_key.clone());
                         match entry {
@@ -996,7 +984,6 @@ mod fjall_impl {
                             }
                         }
                     }
-                }
             }
 
             Ok(latest.into_values().collect())

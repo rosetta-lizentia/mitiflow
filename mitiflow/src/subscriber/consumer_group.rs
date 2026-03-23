@@ -363,8 +363,7 @@ impl ConsumerGroupSubscriber {
             if let Ok(sample) = reply.result() {
                 let body = sample.payload().to_bytes();
                 let body_str = std::str::from_utf8(&body).unwrap_or("");
-                if body_str.starts_with("error:") {
-                    let msg = &body_str[6..];
+                if let Some(msg) = body_str.strip_prefix("error:") {
                     if msg.contains("stale fenced commit") {
                         // Parse as a fenced error
                         return Err(Error::StaleFencedCommit {
@@ -557,10 +556,9 @@ async fn do_commit_async(
             "{}/_offsets/{}/{}",
             config.key_prefix, partition, group_config.group_id
         );
-        if let Ok(payload) = serde_json::to_vec(&commit) {
-            if let Err(e) = session.put(&key, payload).await {
+        if let Ok(payload) = serde_json::to_vec(&commit)
+            && let Err(e) = session.put(&key, payload).await {
                 warn!("auto-commit failed: {e}");
             }
-        }
     }
 }

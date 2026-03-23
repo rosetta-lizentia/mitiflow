@@ -94,14 +94,13 @@ impl Orchestrator {
         let mut topic_manager = TopicManager::new(&self.session);
         if let Ok(topics) = self.config_store.list_topics() {
             for topic in &topics {
-                if !topic.key_prefix.is_empty() {
-                    if let Err(e) = topic_manager
+                if !topic.key_prefix.is_empty()
+                    && let Err(e) = topic_manager
                         .add_topic(&topic.name, &topic.key_prefix)
                         .await
                     {
                         warn!(topic = %topic.name, "failed to create per-topic cluster view: {e}");
                     }
-                }
             }
         }
         self.topic_manager = Some(topic_manager);
@@ -188,11 +187,10 @@ impl Orchestrator {
         self.session.put(&key, bytes).await?;
 
         // Create per-topic cluster view if applicable
-        if let Some(ref mut tm) = self.topic_manager {
-            if !config.key_prefix.is_empty() {
+        if let Some(ref mut tm) = self.topic_manager
+            && !config.key_prefix.is_empty() {
                 tm.add_topic(&config.name, &config.key_prefix).await?;
             }
-        }
 
         info!(topic = %config.name, "topic created");
         Ok(())
@@ -297,11 +295,10 @@ impl Orchestrator {
         if let Ok(topics) = self.config_store.list_topics() {
             for topic in topics {
                 let key = format!("{}/_config/{}", self.config.key_prefix, topic.name);
-                if let Ok(bytes) = serde_json::to_vec(&topic) {
-                    if let Err(e) = self.session.put(&key, bytes).await {
+                if let Ok(bytes) = serde_json::to_vec(&topic)
+                    && let Err(e) = self.session.put(&key, bytes).await {
                         warn!("failed to publish config for {}: {e}", topic.name);
                     }
-                }
             }
         }
     }

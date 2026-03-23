@@ -99,14 +99,13 @@ async fn run_heartbeat_task(
                     partition_seqs: seqs,
                     timestamp: chrono::Utc::now(),
                 };
-                if let Ok(bytes) = serde_json::to_vec(&beacon) {
-                    if let Err(e) = session.put(&key, bytes)
+                if let Ok(bytes) = serde_json::to_vec(&beacon)
+                    && let Err(e) = session.put(&key, bytes)
                         .congestion_control(CongestionControl::Drop)
                         .await
                     {
                         warn!("heartbeat publish failed: {e}");
                     }
-                }
             }
         }
     }

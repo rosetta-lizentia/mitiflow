@@ -227,14 +227,13 @@ fn maybe_evict(
     sample_count: u64,
     publisher_ttl: Option<std::time::Duration>,
 ) {
-    if let Some(ttl) = publisher_ttl {
-        if sample_count % 10_000 == 0 {
+    if let Some(ttl) = publisher_ttl
+        && sample_count.is_multiple_of(10_000) {
             let evicted = gd.evict_older_than(ttl);
             if evicted > 0 {
                 debug!(shard_evicted = evicted, "evicted stale publisher entries");
             }
         }
-    }
 }
 
 /// Subscribes to events with gap detection, automatic recovery, and dedup.
@@ -401,12 +400,11 @@ impl EventSubscriber {
                         hb_result = async { hb_sub.as_ref().unwrap().recv_async().await }, if has_hb => {
                             match hb_result {
                                 Ok(sample) => {
-                                    if let Some(beacon) = decode_heartbeat(&sample) {
-                                        if recovery_enabled {
+                                    if let Some(beacon) = decode_heartbeat(&sample)
+                                        && recovery_enabled {
                                             let misses = gd.on_heartbeat(&beacon.pub_id, &beacon.partition_seqs);
                                             handle_heartbeat_gaps(misses, &sess, &rc, &tx);
                                         }
-                                    }
                                 }
                                 Err(_) => break,
                             }

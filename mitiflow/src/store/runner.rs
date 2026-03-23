@@ -336,8 +336,8 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
         // Convert to nanoseconds since Unix epoch (1970-01-01).
         // NTP epoch offset: 70 years = 2_208_988_800 seconds.
         const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
-        let seconds = (ntp64 >> 32) as u64;
-        let fraction = (ntp64 & 0xFFFF_FFFF) as u64;
+        let seconds = (ntp64 >> 32);
+        let fraction = (ntp64 & 0xFFFF_FFFF);
         let unix_seconds = seconds.saturating_sub(NTP_UNIX_OFFSET);
         let nanos = (fraction * 1_000_000_000) >> 32;
         let physical_ns = unix_seconds * 1_000_000_000 + nanos;
@@ -549,11 +549,10 @@ async fn run_watermark_task(
             epoch: 0,
         };
 
-        if let Ok(bytes) = serde_json::to_vec(&watermark) {
-            if let Err(e) = session.put(&watermark_key, bytes).await {
+        if let Ok(bytes) = serde_json::to_vec(&watermark)
+            && let Err(e) = session.put(&watermark_key, bytes).await {
                 warn!("watermark publish failed: {e}");
             }
-        }
     }
     debug!("store watermark task stopped");
 }
@@ -676,7 +675,7 @@ async fn run_offset_task(
 }
 
 /// Extract a parameter value from a query parameter string like "key1=val1&key2=val2".
-fn extract_param<'a>(params: &'a str, key: &str) -> Option<String> {
+fn extract_param(params: &str, key: &str) -> Option<String> {
     params.split('&').find_map(|pair| {
         let (k, v) = pair.split_once('=')?;
         (k == key).then(|| v.to_string())

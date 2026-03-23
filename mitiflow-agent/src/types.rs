@@ -60,6 +60,7 @@ pub struct PartitionStatus {
 
 /// Override table published by the orchestrator, consumed by agents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct OverrideTable {
     pub entries: Vec<OverrideEntry>,
     pub epoch: u64,
@@ -75,12 +76,3 @@ pub struct OverrideEntry {
     pub reason: String,
 }
 
-impl Default for OverrideTable {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            epoch: 0,
-            expires_at: None,
-        }
-    }
-}

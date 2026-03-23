@@ -121,11 +121,10 @@ impl AlertManager {
                                     "{key_prefix}/_cluster/alerts/{:?}/{}",
                                     alert.severity, alert.id
                                 );
-                                if let Ok(bytes) = serde_json::to_vec(alert) {
-                                    if let Err(e) = session.put(&alert_key, bytes).await {
+                                if let Ok(bytes) = serde_json::to_vec(alert)
+                                    && let Err(e) = session.put(&alert_key, bytes).await {
                                         warn!(error = %e, "failed to publish alert");
                                     }
-                                }
                             }
 
                             let mut store = alerts_handle.write().await;

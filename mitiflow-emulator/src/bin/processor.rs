@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                             ProcessingMode::Filter => {
                                 let drop_prob = config.drop_probability.unwrap_or(0.0);
-                                use rand::Rng;
+                                
                                 if !rng.random_bool(drop_prob.min(1.0)) {
                                     let _ = publisher.publish_bytes(event.payload.clone()).await;
                                 }
@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                         processed += 1;
-                        if processed % 1000 == 0 {
+                        if processed.is_multiple_of(1000) {
                             tracing::info!("Processor: {} events processed", processed);
                         }
                     }

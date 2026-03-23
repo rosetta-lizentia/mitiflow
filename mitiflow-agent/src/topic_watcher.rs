@@ -196,11 +196,10 @@ pub fn should_serve_topic(
     }
     // Check excluded labels.
     for (k, v) in &config.excluded_labels {
-        if let Some(agent_v) = agent_labels.get(k) {
-            if agent_v == v {
+        if let Some(agent_v) = agent_labels.get(k)
+            && agent_v == v {
                 return false;
             }
-        }
     }
     true
 }

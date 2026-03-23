@@ -33,6 +33,7 @@ pub struct TopicConfig {
 
 /// Retention policy for events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct RetentionPolicy {
     /// Max age of events before GC.
     pub max_age: Option<Duration>,
@@ -42,32 +43,16 @@ pub struct RetentionPolicy {
     pub max_events: Option<u64>,
 }
 
-impl Default for RetentionPolicy {
-    fn default() -> Self {
-        Self {
-            max_age: None,
-            max_bytes: None,
-            max_events: None,
-        }
-    }
-}
 
 /// Compaction policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CompactionPolicy {
     pub enabled: bool,
     /// Compaction interval.
     pub interval: Option<Duration>,
 }
 
-impl Default for CompactionPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            interval: None,
-        }
-    }
-}
 
 /// Persistent config store backed by fjall.
 pub struct ConfigStore {
@@ -115,8 +100,7 @@ impl ConfigStore {
                 guard
                     .into_inner()
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             format!("iter error: {e:?}"),
                         ))
                     })?;
