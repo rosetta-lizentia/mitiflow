@@ -82,8 +82,8 @@ async fn publisher_id_is_stable() {
     let publisher = EventPublisher::new(&session, config).await.unwrap();
 
     // Publisher ID should not change between calls.
-    let id1 = publisher.publisher_id().clone();
-    let id2 = publisher.publisher_id().clone();
+    let id1 = *publisher.publisher_id();
+    let id2 = *publisher.publisher_id();
     assert_eq!(id1, id2);
 
     // Current seq starts at 0.

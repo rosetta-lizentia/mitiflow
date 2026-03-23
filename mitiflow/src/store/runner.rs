@@ -336,8 +336,8 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
         // Convert to nanoseconds since Unix epoch (1970-01-01).
         // NTP epoch offset: 70 years = 2_208_988_800 seconds.
         const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
-        let seconds = (ntp64 >> 32);
-        let fraction = (ntp64 & 0xFFFF_FFFF);
+        let seconds = ntp64 >> 32;
+        let fraction = ntp64 & 0xFFFF_FFFF;
         let unix_seconds = seconds.saturating_sub(NTP_UNIX_OFFSET);
         let nanos = (fraction * 1_000_000_000) >> 32;
         let physical_ns = unix_seconds * 1_000_000_000 + nanos;

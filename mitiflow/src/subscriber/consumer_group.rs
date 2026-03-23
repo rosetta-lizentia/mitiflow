@@ -489,6 +489,7 @@ async fn fetch_offsets_from_store(
 }
 
 /// Background auto-commit loop.
+#[allow(clippy::too_many_arguments)]
 async fn auto_commit_loop(
     session: &Session,
     config: &EventBusConfig,

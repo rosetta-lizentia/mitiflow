@@ -371,7 +371,7 @@ mod tests {
         ];
         let table = assignments_replicated(&nodes, 64, 1);
         assert_eq!(table.len(), 64);
-        for (_, replicas) in &table {
+        for replicas in table.values() {
             assert_eq!(replicas.len(), 1);
             assert!(["a", "b", "c"].contains(&replicas[0].as_str()));
         }
@@ -402,7 +402,7 @@ mod tests {
             NodeDescriptor::new("w3"),
         ];
         let table = assignments_replicated(&nodes, 64, 1);
-        for (_, replicas) in &table {
+        for replicas in table.values() {
             assert_eq!(replicas.len(), 1);
         }
         // All partitions covered

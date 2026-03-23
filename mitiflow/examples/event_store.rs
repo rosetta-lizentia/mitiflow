@@ -69,7 +69,7 @@ async fn publish_durable_events(
         let event = Event::new(MetricPoint {
             host: hosts[(i as usize) % hosts.len()].to_string(),
             metric: metrics[(i as usize) % metrics.len()].to_string(),
-            value: 10.0 * i as f64 + (i % 7) as f64 * 3.14,
+            value: 10.0 * i as f64 + (i % 7) as f64 * std::f64::consts::PI,
         });
         let seq = publisher.publish_durable(&event).await?;
         println!(

@@ -29,6 +29,10 @@ pub struct LagReport {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+type OffsetMap = Arc<RwLock<HashMap<(String, u32, PublisherId), u64>>>;
+
+type WaterMarkMap = Arc<RwLock<HashMap<(u32, PublisherId), u64>>>;
+
 /// Lag monitor that aggregates watermarks and committed offsets.
 pub struct LagMonitor {
     #[allow(dead_code)]
@@ -36,9 +40,9 @@ pub struct LagMonitor {
     #[allow(dead_code)]
     key_prefix: String,
     /// Latest watermark per (partition, publisher).
-    watermarks: Arc<RwLock<HashMap<(u32, PublisherId), u64>>>,
+    watermarks: WaterMarkMap,
     /// Latest committed offset per (group_id, partition, publisher).
-    offsets: Arc<RwLock<HashMap<(String, u32, PublisherId), u64>>>,
+    offsets: OffsetMap,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -53,7 +57,7 @@ impl LagMonitor {
         let cancel = CancellationToken::new();
         let watermarks: Arc<RwLock<HashMap<(u32, PublisherId), u64>>> =
             Arc::new(RwLock::new(HashMap::new()));
-        let offsets: Arc<RwLock<HashMap<(String, u32, PublisherId), u64>>> =
+        let offsets: OffsetMap =
             Arc::new(RwLock::new(HashMap::new()));
 
         let mut tasks = Vec::new();

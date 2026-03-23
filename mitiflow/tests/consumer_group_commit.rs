@@ -119,7 +119,7 @@ async fn commit_and_fetch_round_trip() {
     assert!(!offsets.is_empty(), "should have committed offsets");
 
     // The committed offset should be >= 19 (seq for the 20th event)
-    for (_, seq) in &offsets {
+    for seq in offsets.values() {
         assert!(*seq >= 19, "committed offset should be >= 19, got {seq}");
     }
 
@@ -497,7 +497,7 @@ async fn commit_sync_vs_async() {
 
     let offsets2 = c0.load_offsets(0).await.unwrap();
     // The offset should have advanced beyond the first commit
-    for (_, seq) in &offsets2 {
+    for seq in offsets2.values() {
         assert!(*seq >= 14, "async commit should advance offsets, got {seq}");
     }
 
@@ -553,7 +553,7 @@ async fn store_crash_and_offset_recovery() {
             .unwrap();
         let offsets = c1.load_offsets(0).await.unwrap();
         assert!(!offsets.is_empty(), "offsets should survive store restart");
-        for (_, seq) in &offsets {
+        for seq in offsets.values() {
             assert!(*seq >= 9, "recovered offset should be >= 9, got {seq}");
         }
 

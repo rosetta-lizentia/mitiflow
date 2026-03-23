@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
@@ -59,7 +59,7 @@ impl TopicWorkerConfig {
     /// Derive per-topic config from an agent-level config and a [`TopicEntry`].
     pub fn from_entry(
         entry: &TopicEntry,
-        base_data_dir: &PathBuf,
+        base_data_dir: &Path,
         capacity: u32,
         labels: &HashMap<String, String>,
         drain_grace_period: Duration,
