@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-mitiflow = { path = "../mitiflow", features = ["full"] }
-mitiflow-agent = { path = "../mitiflow-agent" }
+mitiflow = { workspace = true, features = ["full"] }
+mitiflow-agent = { workspace = true }
 zenoh = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

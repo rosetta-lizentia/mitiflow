@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["mitiflow", "mitiflow-gateway", "mitiflow-bench", "mitiflow-orchestrator", "mitiflow-agent", "mitiflow-emulator", "mitiflow-cli"]
+members = [
+    "mitiflow",
+    "mitiflow-gateway",
+    "mitiflow-bench",
+    "mitiflow-orchestrator",
+    "mitiflow-agent",
+    "mitiflow-emulator",
+    "mitiflow-cli",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,9 +18,9 @@ license = "Apache-2.0"
 rust-version = "1.85"
 
 [workspace.dependencies]
-mitiflow = { path = "mitiflow"}
-mitiflow-agent = { path = "mitiflow-agent"}
-mitiflow-orchestrator = { path = "../mitiflow-orchestrator" }
+mitiflow = { path = "mitiflow" }
+mitiflow-agent = { path = "mitiflow-agent" }
+mitiflow-orchestrator = { path = "mitiflow-orchestrator" }
 
 
 # Zenoh
