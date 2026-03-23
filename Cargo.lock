@@ -1908,9 +1908,11 @@ name = "mitiflow-orchestrator"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "fjall",
  "flume 0.11.1",
  "mitiflow",
+ "mitiflow-agent",
  "serde",
  "serde_json",
  "tempfile",

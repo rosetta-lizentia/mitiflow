@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicConfig {
     pub name: String,
+    /// Per-topic Zenoh key prefix. When set, the orchestrator creates a
+    /// dedicated [`ClusterView`] for this prefix.  Defaults to `""` for
+    /// backwards-compatible configs that share the orchestrator-level prefix.
+    #[serde(default)]
+    pub key_prefix: String,
     pub num_partitions: u32,
     pub replication_factor: u32,
     pub retention: RetentionPolicy,

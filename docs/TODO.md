@@ -148,7 +148,7 @@ hard requirement for users.
 
 ## Distributed Storage Management
 
-**Status:** Tier 1 done, Tier 2 not started
+**Status:** Tier 1 done, Tier 2 done
 **Ref:** [13_distributed_storage.md](13_distributed_storage.md), [05_replication.md](05_replication.md)
 
 Two-tier architecture: decentralized StorageAgent (Tier 1) handles partition
@@ -197,19 +197,26 @@ operations, and cluster dashboards.
 
 ### Tier 2 — Orchestrator Extensions (Phase 3)
 
-- [ ] **ClusterView** — aggregate status/health streams into cluster-wide view.
-- [ ] **OverrideManager** — publish assignment overrides via
-      `_cluster/overrides`.
-- [ ] **Drain operation** — compute overrides to evacuate a node for
-      maintenance.
-- [ ] **Admin API extensions** — cluster endpoints on `_admin/cluster/**`.
+- [x] **ClusterView** — aggregate status/health streams into cluster-wide view.
+      `cluster_view.rs` subscribes to `_cluster/status/*`, `_cluster/health/*`,
+      watches `_agents/*` liveliness. Provides `assignments()`, `online_nodes()`,
+      `online_count()` APIs.
+- [x] **OverrideManager** — publish assignment overrides via
+      `_cluster/overrides`. Auto-incrementing epoch, add/remove/clear entries.
+- [x] **Drain operation** — compute overrides to evacuate a node for
+      maintenance. `drain_node()` / `undrain_node()` in `drain.rs`.
+- [x] **Admin API extensions** — cluster endpoints on `_admin/cluster/**`.
+      `cluster/nodes`, `cluster/assignments`, `cluster/status` queryable endpoints.
 - [ ] **Orchestrator HA** — liveliness-based leader election.
 
 ### Tier 1+2 Polish (Phase 4)
 
-- [ ] **Multi-topic support** — topic discovery via `_config/*`.
+- [x] **Multi-topic support** — `TopicManager` creates per-topic `ClusterView`
+      instances when `TopicConfig.key_prefix` is set. Lifecycle managed by
+      Orchestrator `create_topic()` / `delete_topic()`.
 - [ ] **Rebalance operation** — load-aware override generation.
-- [ ] **CLI tooling** — `mitiflow-ctl` for cluster management.
+- [x] **CLI tooling** — `mitiflow-ctl` binary for cluster management.
+      Commands: topics list/get, cluster nodes/assignments/drain/undrain/overrides/status.
 
 ### Tests
 
@@ -227,6 +234,13 @@ operations, and cluster dashboards.
   formation, rebalance, crash/rejoin, data survival across graceful leave
   and crash recovery, publish during rebalance, live ingestion.
 - `mitiflow-agent/tests/smoke/scenarios.rs` — 3 smoke tests.
+- `mitiflow-orchestrator/tests/orchestrator.rs` — 28 unit tests: config store,
+  lag monitor, store tracker, ClusterView (6), OverrideManager (6), Drain (2),
+  Admin API cluster endpoints (3), Multi-topic ClusterViews (3).
+- `mitiflow-orchestrator/tests/e2e_orchestrator.rs` — 7 E2E scenarios:
+  orchestrator joins running cluster, drain moves partitions, override to
+  offline node, override TTL expiry, full drain/maintenance/undrain roundtrip,
+  orchestrator restart rebuilds view, concurrent override + crash.
 
 ---
 

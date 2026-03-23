@@ -1,16 +1,22 @@
 //! Main orchestrator that ties together config management, lag monitoring,
-//! store lifecycle tracking, and the admin API (Zenoh queryable).
+//! store lifecycle tracking, cluster view, override management,
+//! and the admin API (Zenoh queryable).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use zenoh::Session;
 
+use crate::cluster_view::ClusterView;
 use crate::config::ConfigStore;
 use crate::lag::LagMonitor;
 use crate::lifecycle::StoreTracker;
+use crate::override_manager::OverrideManager;
+use crate::topic_manager::TopicManager;
 
 /// Orchestrator configuration.
 pub struct OrchestratorConfig {
@@ -31,6 +37,9 @@ pub struct Orchestrator {
     config_store: Arc<ConfigStore>,
     lag_monitor: Option<LagMonitor>,
     store_tracker: Option<StoreTracker>,
+    cluster_view: Option<ClusterView>,
+    override_manager: Option<OverrideManager>,
+    topic_manager: Option<TopicManager>,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -45,12 +54,15 @@ impl Orchestrator {
             config_store,
             lag_monitor: None,
             store_tracker: None,
+            cluster_view: None,
+            override_manager: None,
+            topic_manager: None,
             cancel: CancellationToken::new(),
             tasks: Vec::new(),
         })
     }
 
-    /// Start all background tasks: lag monitoring, store tracking, admin API.
+    /// Start all background tasks: lag monitoring, store tracking, cluster view, admin API.
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Start lag monitor
         let lag_monitor = LagMonitor::new(
@@ -66,6 +78,29 @@ impl Orchestrator {
             StoreTracker::new(&self.session, &self.config.key_prefix).await?;
         self.store_tracker = Some(store_tracker);
 
+        // Start cluster view
+        let cluster_view =
+            ClusterView::new(&self.session, &self.config.key_prefix).await?;
+        self.cluster_view = Some(cluster_view);
+
+        // Start override manager
+        let override_manager =
+            OverrideManager::new(&self.session, &self.config.key_prefix);
+        self.override_manager = Some(override_manager);
+
+        // Start topic manager and bootstrap per-topic cluster views
+        let mut topic_manager = TopicManager::new(&self.session);
+        if let Ok(topics) = self.config_store.list_topics() {
+            for topic in &topics {
+                if !topic.key_prefix.is_empty() {
+                    if let Err(e) = topic_manager.add_topic(&topic.name, &topic.key_prefix).await {
+                        warn!(topic = %topic.name, "failed to create per-topic cluster view: {e}");
+                    }
+                }
+            }
+        }
+        self.topic_manager = Some(topic_manager);
+
         // Start admin queryable
         let admin_prefix = self.config.admin_prefix.clone().unwrap_or_else(|| {
             format!("{}/_admin", self.config.key_prefix)
@@ -77,11 +112,18 @@ impl Orchestrator {
 
         let cancel = self.cancel.clone();
         let config_store = Arc::clone(&self.config_store);
-        let _session = self.session.clone();
-        let _key_prefix = self.config.key_prefix.clone();
+        // Share cluster view and override manager with admin queryable
+        let cv_nodes = self.cluster_view.as_ref().unwrap().nodes_handle();
 
         self.tasks.push(tokio::spawn(async move {
-            run_admin_queryable(admin_queryable, config_store, &admin_prefix, cancel).await;
+            run_admin_queryable(
+                admin_queryable,
+                config_store,
+                cv_nodes,
+                &admin_prefix,
+                cancel,
+            )
+            .await;
         }));
 
         // Distribute existing configs on startup
@@ -96,7 +138,7 @@ impl Orchestrator {
 
     /// Create a topic and persist its configuration.
     pub async fn create_topic(
-        &self,
+        &mut self,
         config: crate::config::TopicConfig,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.config_store.put_topic(&config)?;
@@ -106,17 +148,30 @@ impl Orchestrator {
         let bytes = serde_json::to_vec(&config)?;
         self.session.put(&key, bytes).await?;
 
+        // Create per-topic cluster view if applicable
+        if let Some(ref mut tm) = self.topic_manager {
+            if !config.key_prefix.is_empty() {
+                tm.add_topic(&config.name, &config.key_prefix).await?;
+            }
+        }
+
         info!(topic = %config.name, "topic created");
         Ok(())
     }
 
     /// Delete a topic configuration.
-    pub async fn delete_topic(&self, name: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn delete_topic(&mut self, name: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let deleted = self.config_store.delete_topic(name)?;
         if deleted {
             // Publish delete via Zenoh
             let key = format!("{}/_config/{}", self.config.key_prefix, name);
             self.session.delete(&key).await?;
+
+            // Remove per-topic cluster view
+            if let Some(ref mut tm) = self.topic_manager {
+                tm.remove_topic(name).await;
+            }
+
             info!(topic = %name, "topic deleted");
         }
         Ok(deleted)
@@ -146,6 +201,50 @@ impl Orchestrator {
         self.store_tracker.as_ref()
     }
 
+    /// Get the cluster view.
+    pub fn cluster_view(&self) -> Option<&ClusterView> {
+        self.cluster_view.as_ref()
+    }
+
+    /// Get the override manager.
+    pub fn override_manager(&self) -> Option<&OverrideManager> {
+        self.override_manager.as_ref()
+    }
+
+    /// Get the topic manager.
+    pub fn topic_manager(&self) -> Option<&TopicManager> {
+        self.topic_manager.as_ref()
+    }
+
+    /// Drain a node: compute overrides to move all its partitions elsewhere.
+    pub async fn drain_node(
+        &self,
+        node_id: &str,
+        replication_factor: u32,
+    ) -> Result<Vec<mitiflow_agent::OverrideEntry>, Box<dyn std::error::Error + Send + Sync>> {
+        let cv = self
+            .cluster_view
+            .as_ref()
+            .ok_or("cluster view not started")?;
+        let om = self
+            .override_manager
+            .as_ref()
+            .ok_or("override manager not started")?;
+        crate::drain::drain_node(node_id, cv, om, replication_factor).await
+    }
+
+    /// Undrain a node: remove drain overrides so it regains partitions via HRW.
+    pub async fn undrain_node(
+        &self,
+        node_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let om = self
+            .override_manager
+            .as_ref()
+            .ok_or("override manager not started")?;
+        crate::drain::undrain_node(node_id, om).await
+    }
+
     /// Publish all stored configs via Zenoh.
     async fn publish_all_configs(&self) {
         if let Ok(topics) = self.config_store.list_topics() {
@@ -172,6 +271,12 @@ impl Orchestrator {
         if let Some(tracker) = self.store_tracker.take() {
             tracker.shutdown().await;
         }
+        if let Some(cv) = self.cluster_view.take() {
+            cv.shutdown().await;
+        }
+        if let Some(tm) = self.topic_manager.take() {
+            tm.shutdown().await;
+        }
         info!("orchestrator shut down");
     }
 }
@@ -182,10 +287,19 @@ impl Drop for Orchestrator {
     }
 }
 
+/// Cluster-wide status summary returned by `_admin/cluster/status`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClusterStatusSummary {
+    pub total_nodes: usize,
+    pub online_nodes: usize,
+    pub total_partitions: usize,
+}
+
 /// Handle admin queries via Zenoh queryable.
 async fn run_admin_queryable(
     queryable: zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>,
     config_store: Arc<ConfigStore>,
+    cv_nodes: Arc<tokio::sync::RwLock<HashMap<String, crate::cluster_view::NodeInfo>>>,
     admin_prefix: &str,
     cancel: CancellationToken,
 ) {
@@ -203,7 +317,6 @@ async fn run_admin_queryable(
 
                         match suffix {
                             "topics" => {
-                                // List all topics
                                 match config_store.list_topics() {
                                     Ok(topics) => {
                                         if let Ok(bytes) = serde_json::to_vec(&topics) {
@@ -212,16 +325,12 @@ async fn run_admin_queryable(
                                     }
                                     Err(e) => {
                                         let _ = query
-                                            .reply(
-                                                query.key_expr(),
-                                                format!("error:{e}").into_bytes(),
-                                            )
+                                            .reply(query.key_expr(), format!("error:{e}").into_bytes())
                                             .await;
                                     }
                                 }
                             }
                             s if s.starts_with("topics/") => {
-                                // Get specific topic
                                 let topic_name = &s["topics/".len()..];
                                 match config_store.get_topic(topic_name) {
                                     Ok(Some(topic)) => {
@@ -231,28 +340,62 @@ async fn run_admin_queryable(
                                     }
                                     Ok(None) => {
                                         let _ = query
-                                            .reply(
-                                                query.key_expr(),
-                                                b"error:topic not found".to_vec(),
-                                            )
+                                            .reply(query.key_expr(), b"error:topic not found".to_vec())
                                             .await;
                                     }
                                     Err(e) => {
                                         let _ = query
-                                            .reply(
-                                                query.key_expr(),
-                                                format!("error:{e}").into_bytes(),
-                                            )
+                                            .reply(query.key_expr(), format!("error:{e}").into_bytes())
                                             .await;
                                     }
                                 }
                             }
+                            "cluster/nodes" => {
+                                let nodes = cv_nodes.read().await;
+                                if let Ok(bytes) = serde_json::to_vec(&*nodes) {
+                                    let _ = query.reply(query.key_expr(), bytes).await;
+                                }
+                            }
+                            "cluster/assignments" => {
+                                let nodes: tokio::sync::RwLockReadGuard<'_, HashMap<String, crate::cluster_view::NodeInfo>> = cv_nodes.read().await;
+                                let mut all_assignments: Vec<crate::cluster_view::AssignmentInfo> = Vec::new();
+                                for (node_id, info) in nodes.iter() {
+                                    if let Some(ref status) = info.status {
+                                        for ps in &status.partitions {
+                                            all_assignments.push(crate::cluster_view::AssignmentInfo {
+                                                partition: ps.partition,
+                                                replica: ps.replica,
+                                                node_id: node_id.clone(),
+                                                state: ps.state,
+                                                source: crate::cluster_view::AssignmentSource::Computed,
+                                            });
+                                        }
+                                    }
+                                }
+                                if let Ok(bytes) = serde_json::to_vec(&all_assignments) {
+                                    let _ = query.reply(query.key_expr(), bytes).await;
+                                }
+                            }
+                            "cluster/status" => {
+                                let nodes: tokio::sync::RwLockReadGuard<'_, HashMap<String, crate::cluster_view::NodeInfo>> = cv_nodes.read().await;
+                                let online = nodes.values().filter(|n| n.online).count();
+                                let total_partitions: usize = nodes
+                                    .values()
+                                    .filter_map(|n| n.status.as_ref())
+                                    .map(|s| s.partitions.len())
+                                    .sum();
+                                let summary = ClusterStatusSummary {
+                                    total_nodes: nodes.len(),
+                                    online_nodes: online,
+                                    total_partitions,
+                                };
+                                if let Ok(bytes) = serde_json::to_vec(&summary) {
+                                    let _ = query.reply(query.key_expr(), bytes).await;
+                                }
+                            }
                             _ => {
                                 let _ = query
-                                    .reply(
-                                        query.key_expr(),
-                                        b"error:unknown endpoint".to_vec(),
-                                    )
+                                    .reply(query.key_expr(), b"error:unknown endpoint".to_vec())
                                     .await;
                             }
                         }

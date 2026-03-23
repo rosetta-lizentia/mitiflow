@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 mitiflow = { path = "../mitiflow", features = ["full"] }
+mitiflow-agent = { path = "../mitiflow-agent" }
 zenoh = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -19,6 +20,11 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 tokio-util = { workspace = true }
 flume = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+
+[[bin]]
+name = "mitiflow-ctl"
+path = "src/bin/ctl.rs"
 
 [dev-dependencies]
 tokio-test = { workspace = true }
