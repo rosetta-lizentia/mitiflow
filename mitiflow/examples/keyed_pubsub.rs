@@ -40,8 +40,7 @@ async fn main() -> mitiflow::Result<()> {
     let all_sub = EventSubscriber::new(&session, config.clone()).await?;
 
     // ── 2. Key-filtered subscriber (receives only "order-123" events) ──
-    let filtered_sub =
-        EventSubscriber::new_keyed(&session, config.clone(), "order-123").await?;
+    let filtered_sub = EventSubscriber::new_keyed(&session, config.clone(), "order-123").await?;
 
     let publisher = EventPublisher::new(&session, config).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -124,7 +123,10 @@ async fn main() -> mitiflow::Result<()> {
 
     // order-456 and user/42/orders should NOT appear
     let extra = tokio::time::timeout(Duration::from_millis(300), filtered_sub.recv_raw()).await;
-    assert!(extra.is_err(), "filtered subscriber should not get other keys");
+    assert!(
+        extra.is_err(),
+        "filtered subscriber should not get other keys"
+    );
     println!("  (no extra events — filter works!)");
 
     println!("\nDone!");

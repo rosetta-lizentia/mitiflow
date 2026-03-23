@@ -192,7 +192,11 @@ async fn main() -> mitiflow::Result<()> {
         let tx = &event.payload;
         let seq = raw.seq;
 
-        println!("  ┌─ seq={seq:02}  {}  ${:.2}", tx.tx_id, tx.amount_cents as f64 / 100.0);
+        println!(
+            "  ┌─ seq={seq:02}  {}  ${:.2}",
+            tx.tx_id,
+            tx.amount_cents as f64 / 100.0
+        );
 
         // Inner retry loop for this event.
         loop {
@@ -211,7 +215,10 @@ async fn main() -> mitiflow::Result<()> {
             let outcome = dlq.on_failure(&raw).await?;
 
             match outcome {
-                RetryOutcome::Retry { attempt: att, delay } => {
+                RetryOutcome::Retry {
+                    attempt: att,
+                    delay,
+                } => {
                     println!("  │  ↺  attempt {att} failed — retrying in {delay:.0?}");
                     tokio::time::sleep(delay).await;
                     // Loop again with incremented attempt counter.
@@ -237,9 +244,9 @@ async fn main() -> mitiflow::Result<()> {
     while let Ok(Some(sample)) = dlq_monitor.try_recv() {
         dlq_count += 1;
         // The DLQ payload is the raw Event<T> JSON exactly as published.
-        if let Ok(event) = serde_json::from_slice::<Event<Transaction>>(
-            &sample.payload().to_bytes(),
-        ) {
+        if let Ok(event) =
+            serde_json::from_slice::<Event<Transaction>>(&sample.payload().to_bytes())
+        {
             println!(
                 "  [DLQ #{dlq_count}]  key={}  tx_id={}  amount=${:.2}  behavior={:?}",
                 sample.key_expr(),

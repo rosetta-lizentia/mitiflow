@@ -77,12 +77,10 @@ impl TopicWorker {
         );
 
         // 4. Status reporter.
-        let status =
-            StatusReporter::new(session, node_id.to_string(), &key_prefix).await?;
+        let status = StatusReporter::new(session, node_id.to_string(), &key_prefix).await?;
 
         // 5. Override subscription.
-        let overrides: Arc<RwLock<OverrideTable>> =
-            Arc::new(RwLock::new(OverrideTable::default()));
+        let overrides: Arc<RwLock<OverrideTable>> = Arc::new(RwLock::new(OverrideTable::default()));
         let override_task = {
             let session = session.clone();
             let overrides = Arc::clone(&overrides);
@@ -91,8 +89,7 @@ impl TopicWorker {
 
             Some(tokio::spawn(async move {
                 if let Err(e) =
-                    Self::override_watcher(&session, &override_key, &overrides, &cancel)
-                        .await
+                    Self::override_watcher(&session, &override_key, &overrides, &cancel).await
                 {
                     warn!(
                         override_key = %override_key,
@@ -239,16 +236,17 @@ impl TopicWorker {
         let mut desired = Vec::new();
         for p in 0..num_partitions {
             for r in 0..replication_factor {
-                if let Some(entry) =
-                    overrides.entries.iter().find(|e| e.partition == p && e.replica == r)
+                if let Some(entry) = overrides
+                    .entries
+                    .iter()
+                    .find(|e| e.partition == p && e.replica == r)
                 {
                     if entry.node_id == self_node_id {
                         desired.push((p, r));
                     }
                     continue;
                 }
-                let has_rack_labels =
-                    nodes.iter().any(|n| n.labels.contains_key("rack"));
+                let has_rack_labels = nodes.iter().any(|n| n.labels.contains_key("rack"));
                 let replicas = if has_rack_labels {
                     hash_ring::assign_replicas_rack_aware(p, replication_factor, nodes)
                 } else {

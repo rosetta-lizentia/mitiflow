@@ -1,6 +1,5 @@
 //! Log aggregation — line-buffered multiplexer with colored prefixes.
 
-
 use tokio::sync::mpsc;
 
 use crate::config::{LogFormat, LogMode, LoggingConfig};
@@ -115,15 +114,11 @@ impl LogAggregator {
 
         while let Some(log_line) = rx.recv().await {
             let formatted = match config.format {
-                LogFormat::Json => {
-                    serde_json::to_string(&log_line).unwrap_or_default() + "\n"
-                }
+                LogFormat::Json => serde_json::to_string(&log_line).unwrap_or_default() + "\n",
                 LogFormat::Text => {
                     format!(
                         "[{}:{}] {}\n",
-                        log_line.component,
-                        log_line.instance,
-                        log_line.line
+                        log_line.component, log_line.instance, log_line.line
                     )
                 }
             };

@@ -44,22 +44,23 @@ impl ChaosScheduler {
     ///
     /// `lookup` resolves a component name + optional instance to a handle.
     /// The scheduler runs until `cancel` is triggered.
-    pub async fn run<F>(
-        &mut self,
-        cancel: CancellationToken,
-        start: Instant,
-        mut lookup: F,
-    ) where
+    pub async fn run<F>(&mut self, cancel: CancellationToken, start: Instant, mut lookup: F)
+    where
         F: FnMut(&str, Option<usize>) -> Option<HandleRef>,
     {
         loop {
             // Find the next event to fire.
-            let next = self.events.iter().enumerate().filter(|(_, e)| {
-                if e.fired && e.def.every.is_none() {
-                    return false; // One-shot already fired.
-                }
-                true
-            }).min_by_key(|(_, e)| e.next_fire);
+            let next = self
+                .events
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| {
+                    if e.fired && e.def.every.is_none() {
+                        return false; // One-shot already fired.
+                    }
+                    true
+                })
+                .min_by_key(|(_, e)| e.next_fire);
 
             let Some((idx, _)) = next else {
                 // No more events.

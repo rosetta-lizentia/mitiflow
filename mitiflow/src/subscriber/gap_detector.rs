@@ -44,7 +44,11 @@ pub trait SequenceTracker: Send + Sync {
     /// Process a heartbeat beacon from a publisher. For each partition the publisher
     /// has written to, if the advertised seq is ahead of our last-seen value,
     /// return the missing ranges.
-    fn on_heartbeat(&mut self, pub_id: &PublisherId, partition_seqs: &HashMap<u32, u64>) -> Vec<MissInfo>;
+    fn on_heartbeat(
+        &mut self,
+        pub_id: &PublisherId,
+        partition_seqs: &HashMap<u32, u64>,
+    ) -> Vec<MissInfo>;
 
     /// Return the last sequence number seen from the given publisher on a partition, if any.
     fn last_seen(&self, pub_id: &PublisherId, partition: u32) -> Option<u64>;
@@ -129,7 +133,11 @@ impl SequenceTracker for GapDetector {
         }
     }
 
-    fn on_heartbeat(&mut self, pub_id: &PublisherId, partition_seqs: &HashMap<u32, u64>) -> Vec<MissInfo> {
+    fn on_heartbeat(
+        &mut self,
+        pub_id: &PublisherId,
+        partition_seqs: &HashMap<u32, u64>,
+    ) -> Vec<MissInfo> {
         let mut misses = Vec::new();
         for (&partition, &current_seq) in partition_seqs {
             let key = (*pub_id, partition);

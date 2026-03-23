@@ -1,8 +1,6 @@
 //! Tests for payload generation.
 
-use mitiflow_emulator::config::{
-    GeneratorType, PayloadConfig, SchemaFieldDef, SchemaFieldType,
-};
+use mitiflow_emulator::config::{GeneratorType, PayloadConfig, SchemaFieldDef, SchemaFieldType};
 use mitiflow_emulator::generator::PayloadGenerator;
 use std::collections::HashMap;
 
@@ -165,11 +163,7 @@ fn schema_int_field() {
         let payload = generator.generate();
         let val: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         let count = val["count"].as_i64().unwrap();
-        assert!(
-            (0..=10).contains(&count),
-            "count out of range: {}",
-            count
-        );
+        assert!((0..=10).contains(&count), "count out of range: {}", count);
     }
 }
 
@@ -259,11 +253,7 @@ fn schema_enum_field() {
         let payload = generator.generate();
         let val: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         let region = val["region"].as_str().unwrap();
-        assert!(
-            expected.contains(&region),
-            "unexpected region: {}",
-            region
-        );
+        assert!(expected.contains(&region), "unexpected region: {}", region);
     }
 }
 
@@ -295,11 +285,7 @@ fn schema_string_pattern_expansion() {
         let rack = val["rack"].as_str().unwrap();
         assert!(rack.starts_with("rack-"), "bad prefix: {}", rack);
         let num: i64 = rack.strip_prefix("rack-").unwrap().parse().unwrap();
-        assert!(
-            (0..=99).contains(&num),
-            "rack number out of range: {}",
-            num
-        );
+        assert!((0..=99).contains(&num), "rack number out of range: {}", num);
     }
 }
 
@@ -329,7 +315,11 @@ fn schema_datetime_field() {
     let val: serde_json::Value = serde_json::from_slice(&payload).unwrap();
     let ts = val["ts"].as_str().unwrap();
     // Should be a valid RFC 3339 datetime.
-    assert!(ts.contains('T') && ts.contains('+') || ts.contains('Z'), "bad datetime: {}", ts);
+    assert!(
+        ts.contains('T') && ts.contains('+') || ts.contains('Z'),
+        "bad datetime: {}",
+        ts
+    );
 }
 
 #[test]

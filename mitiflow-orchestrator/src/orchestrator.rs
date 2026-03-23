@@ -48,7 +48,10 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     /// Create a new orchestrator. Call [`run`] to start background tasks.
-    pub fn new(session: &Session, config: OrchestratorConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        session: &Session,
+        config: OrchestratorConfig,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config_store = Arc::new(ConfigStore::open(&config.data_dir)?);
         Ok(Self {
             session: session.clone(),
@@ -76,18 +79,15 @@ impl Orchestrator {
         self.lag_monitor = Some(lag_monitor);
 
         // Start store tracker
-        let store_tracker =
-            StoreTracker::new(&self.session, &self.config.key_prefix).await?;
+        let store_tracker = StoreTracker::new(&self.session, &self.config.key_prefix).await?;
         self.store_tracker = Some(store_tracker);
 
         // Start cluster view
-        let cluster_view =
-            ClusterView::new(&self.session, &self.config.key_prefix).await?;
+        let cluster_view = ClusterView::new(&self.session, &self.config.key_prefix).await?;
         self.cluster_view = Some(cluster_view);
 
         // Start override manager
-        let override_manager =
-            OverrideManager::new(&self.session, &self.config.key_prefix);
+        let override_manager = OverrideManager::new(&self.session, &self.config.key_prefix);
         self.override_manager = Some(override_manager);
 
         // Start topic manager and bootstrap per-topic cluster views
@@ -95,7 +95,10 @@ impl Orchestrator {
         if let Ok(topics) = self.config_store.list_topics() {
             for topic in &topics {
                 if !topic.key_prefix.is_empty() {
-                    if let Err(e) = topic_manager.add_topic(&topic.name, &topic.key_prefix).await {
+                    if let Err(e) = topic_manager
+                        .add_topic(&topic.name, &topic.key_prefix)
+                        .await
+                    {
                         warn!(topic = %topic.name, "failed to create per-topic cluster view: {e}");
                     }
                 }
@@ -104,9 +107,11 @@ impl Orchestrator {
         self.topic_manager = Some(topic_manager);
 
         // Start admin queryable
-        let admin_prefix = self.config.admin_prefix.clone().unwrap_or_else(|| {
-            format!("{}/_admin", self.config.key_prefix)
-        });
+        let admin_prefix = self
+            .config
+            .admin_prefix
+            .clone()
+            .unwrap_or_else(|| format!("{}/_admin", self.config.key_prefix));
         let admin_queryable = self
             .session
             .declare_queryable(format!("{admin_prefix}/**"))
@@ -194,7 +199,10 @@ impl Orchestrator {
     }
 
     /// Delete a topic configuration.
-    pub async fn delete_topic(&mut self, name: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn delete_topic(
+        &mut self,
+        name: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let deleted = self.config_store.delete_topic(name)?;
         if deleted {
             // Publish delete via Zenoh
@@ -212,12 +220,17 @@ impl Orchestrator {
     }
 
     /// List all topics.
-    pub fn list_topics(&self) -> Result<Vec<crate::config::TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn list_topics(
+        &self,
+    ) -> Result<Vec<crate::config::TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
         self.config_store.list_topics()
     }
 
     /// Get a specific topic.
-    pub fn get_topic(&self, name: &str) -> Result<Option<crate::config::TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_topic(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::config::TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
         self.config_store.get_topic(name)
     }
 

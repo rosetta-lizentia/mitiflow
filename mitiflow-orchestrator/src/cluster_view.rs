@@ -61,8 +61,7 @@ impl ClusterView {
         session: &Session,
         key_prefix: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let nodes: Arc<RwLock<HashMap<String, NodeInfo>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let nodes: Arc<RwLock<HashMap<String, NodeInfo>>> = Arc::new(RwLock::new(HashMap::new()));
         let cancel = CancellationToken::new();
         let mut tasks = Vec::new();
 

@@ -49,8 +49,12 @@ pub struct CreateTopicRequest {
     pub excluded_labels: std::collections::HashMap<String, String>,
 }
 
-fn default_partitions() -> u32 { 16 }
-fn default_rf() -> u32 { 1 }
+fn default_partitions() -> u32 {
+    16
+}
+fn default_rf() -> u32 {
+    1
+}
 
 /// Cluster status summary.
 #[derive(Debug, Serialize)]
@@ -101,9 +105,7 @@ pub async fn start_http(
 // Handlers
 // =========================================================================
 
-async fn list_topics(
-    State(state): State<HttpState>,
-) -> Result<Json<Vec<TopicConfig>>, AppError> {
+async fn list_topics(State(state): State<HttpState>) -> Result<Json<Vec<TopicConfig>>, AppError> {
     let topics = state.config_store.list_topics()?;
     Ok(Json(topics))
 }
@@ -147,9 +149,7 @@ async fn delete_topic(
     }
 }
 
-async fn cluster_nodes(
-    State(state): State<HttpState>,
-) -> Result<impl IntoResponse, AppError> {
+async fn cluster_nodes(State(state): State<HttpState>) -> Result<impl IntoResponse, AppError> {
     match state.nodes {
         Some(ref nodes) => {
             let nodes = nodes.read().await;
@@ -159,9 +159,7 @@ async fn cluster_nodes(
     }
 }
 
-async fn cluster_status(
-    State(state): State<HttpState>,
-) -> Result<Json<ClusterStatus>, AppError> {
+async fn cluster_status(State(state): State<HttpState>) -> Result<Json<ClusterStatus>, AppError> {
     match state.nodes {
         Some(ref nodes) => {
             let nodes = nodes.read().await;

@@ -51,13 +51,8 @@ impl StorageAgent {
         // Optionally start topic watcher for dynamic provisioning.
         let watcher = if auto_discover {
             Some(
-                TopicWatcher::start(
-                    session,
-                    &global_prefix,
-                    Arc::clone(&supervisor),
-                    labels,
-                )
-                .await?,
+                TopicWatcher::start(session, &global_prefix, Arc::clone(&supervisor), labels)
+                    .await?,
             )
         } else {
             None
@@ -101,7 +96,11 @@ impl StorageAgent {
 
     /// Add a topic at runtime (for dynamic provisioning).
     pub async fn add_topic(&self, entry: TopicEntry) -> AgentResult<()> {
-        self.supervisor.lock().await.add_topic_from_entry(&entry).await
+        self.supervisor
+            .lock()
+            .await
+            .add_topic_from_entry(&entry)
+            .await
     }
 
     /// Remove a topic at runtime.

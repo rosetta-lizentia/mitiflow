@@ -35,8 +35,6 @@
 
 use std::time::Duration;
 
-#[cfg(feature = "kafka")]
-use std::sync::Arc;
 use clap::Parser;
 use lightbench::ProducerConsumerBenchmark;
 use mitiflow::{EventBusConfig, HeartbeatMode};
@@ -44,13 +42,16 @@ use mitiflow::{EventBusConfig, HeartbeatMode};
 use mitiflow_bench::kafka_topic;
 use mitiflow_bench::transport;
 use mitiflow_bench::{DurablePubSubCli, DurableTransport, zenoh_config};
+#[cfg(feature = "kafka")]
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("lightbench=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("lightbench=info".parse().unwrap()),
+        )
         .with_ansi(false)
         .init();
     let cli = DurablePubSubCli::parse();
@@ -77,10 +78,10 @@ async fn main() {
                 .expect("failed to build mitiflow config");
 
             // Spawn EventStore sidecar (same pattern as bench_durable).
-            let tmp_dir = std::env::temp_dir()
-                .join(format!("mitiflow-bench-store-{}", std::process::id()));
-            let backend = mitiflow::FjallBackend::open(&tmp_dir, 0)
-                .expect("failed to open fjall backend");
+            let tmp_dir =
+                std::env::temp_dir().join(format!("mitiflow-bench-store-{}", std::process::id()));
+            let backend =
+                mitiflow::FjallBackend::open(&tmp_dir, 0).expect("failed to open fjall backend");
             let mut store = mitiflow::EventStore::new(&pub_session, backend, config.clone());
             store.run().await.expect("failed to start event store");
 
@@ -175,7 +176,10 @@ async fn run_durable_pubsub<P, C>(
         .rate(0f64)
         .show_ramp_progress(!config.hide_ramp_progress);
 
-    println!("Running durable pub/sub benchmark with config: {:#?}", config);
+    println!(
+        "Running durable pub/sub benchmark with config: {:#?}",
+        config
+    );
     if let Some(rate) = config.rate {
         bench = bench.rate(rate);
     } else if let Some(rate) = config.rate_per_worker {

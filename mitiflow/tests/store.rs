@@ -138,7 +138,7 @@ fn fjall_gc_removes_old_events() {
                 event_id: EventId::new(),
                 timestamp: old_time,
                 key_expr: "test/old".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: None,
             },
         )
@@ -155,7 +155,7 @@ fn fjall_gc_removes_old_events() {
                 event_id: EventId::new(),
                 timestamp: new_time,
                 key_expr: "test/new".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: None,
             },
         )
@@ -190,7 +190,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: None,
             },
         )
@@ -206,7 +206,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/1".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: None,
             },
         )
@@ -223,7 +223,7 @@ fn fjall_compact_keeps_latest_per_key() {
                 event_id: EventId::new(),
                 timestamp: Utc::now(),
                 key_expr: "test/sensor/2".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: None,
             },
         )
@@ -342,7 +342,12 @@ async fn event_store_persists_and_publishes_watermark() {
 
     let wm: mitiflow::store::CommitWatermark =
         serde_json::from_slice(&wm_sample.payload().to_bytes()).unwrap();
-    let max_committed = wm.publishers.values().map(|pw| pw.committed_seq).max().unwrap_or(0);
+    let max_committed = wm
+        .publishers
+        .values()
+        .map(|pw| pw.committed_seq)
+        .max()
+        .unwrap_or(0);
     assert!(max_committed >= 1, "watermark should cover events");
 
     store.shutdown();
@@ -370,8 +375,7 @@ fn generate_interleaved_events(
     // pub_2 gets physical_ns 1002, 1005, 1008, ...
     for seq in 0..events_per_publisher {
         for (pub_idx, pub_id) in publishers.iter().enumerate() {
-            let physical_ns =
-                1_000_000_000 + seq * (num_publishers as u64) + pub_idx as u64;
+            let physical_ns = 1_000_000_000 + seq * (num_publishers as u64) + pub_idx as u64;
             let hlc = HlcTimestamp {
                 physical_ns,
                 logical: 0,
@@ -403,9 +407,7 @@ fn store_and_replay(
         backend.store(&key, b"{}", meta).unwrap();
     }
 
-    let replayed = backend
-        .query_replay(&ReplayFilters::default())
-        .unwrap();
+    let replayed = backend.query_replay(&ReplayFilters::default()).unwrap();
 
     replayed
         .iter()
@@ -417,8 +419,8 @@ fn store_and_replay(
 /// orders must produce IDENTICAL replay output.
 #[test]
 fn replay_order_deterministic_across_replicas() {
-    use rand::seq::SliceRandom;
     use rand::SeedableRng;
+    use rand::seq::SliceRandom;
 
     let canonical_events = generate_interleaved_events(3, 10);
 
@@ -454,9 +456,7 @@ fn replay_order_deterministic_across_replicas() {
     let backend = FjallBackend::open(dir.path(), 0).unwrap();
     let _ = store_and_replay(&backend, &canonical_events);
 
-    let replayed = backend
-        .query_replay(&ReplayFilters::default())
-        .unwrap();
+    let replayed = backend.query_replay(&ReplayFilters::default()).unwrap();
 
     let hlc_timestamps: Vec<HlcTimestamp> = replayed
         .iter()
@@ -579,7 +579,7 @@ fn gc_cleans_replay_index() {
                 event_id: EventId::new(),
                 timestamp: old_time,
                 key_expr: "test/old".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: Some(HlcTimestamp {
                     physical_ns: 1_000,
                     logical: 0,
@@ -599,7 +599,7 @@ fn gc_cleans_replay_index() {
                 event_id: EventId::new(),
                 timestamp: new_time,
                 key_expr: "test/new".to_string(),
-            key: None,
+                key: None,
                 hlc_timestamp: Some(HlcTimestamp {
                     physical_ns: 2_000,
                     logical: 0,
@@ -609,9 +609,7 @@ fn gc_cleans_replay_index() {
         .unwrap();
 
     // Before GC: 2 events in replay index.
-    let before = backend
-        .query_replay(&ReplayFilters::default())
-        .unwrap();
+    let before = backend.query_replay(&ReplayFilters::default()).unwrap();
     assert_eq!(before.len(), 2);
 
     // GC removes the old event.
@@ -620,9 +618,7 @@ fn gc_cleans_replay_index() {
     assert_eq!(removed, 1);
 
     // After GC: only 1 event in replay index.
-    let after = backend
-        .query_replay(&ReplayFilters::default())
-        .unwrap();
+    let after = backend.query_replay(&ReplayFilters::default()).unwrap();
     assert_eq!(after.len(), 1);
     assert_eq!(after[0].metadata.seq, 1);
 }
@@ -631,8 +627,8 @@ fn gc_cleans_replay_index() {
 /// Verifies replay determinism at scale.
 #[test]
 fn replay_stress_many_publishers_many_replicas() {
-    use rand::seq::SliceRandom;
     use rand::SeedableRng;
+    use rand::seq::SliceRandom;
 
     let canonical_events = generate_interleaved_events(4, 50);
     let num_replicas = 5;
@@ -703,7 +699,10 @@ fn fjall_store_multiple_keys_query_correct_key() {
     let backend = FjallBackend::open(dir.path(), 0).unwrap();
 
     let pub_id = PublisherId::new();
-    for (i, key) in ["alpha", "beta", "alpha", "gamma", "alpha"].iter().enumerate() {
+    for (i, key) in ["alpha", "beta", "alpha", "gamma", "alpha"]
+        .iter()
+        .enumerate()
+    {
         let seq = i as u64;
         let meta = EventMetadata {
             seq,
@@ -821,7 +820,10 @@ fn fjall_compact_keyed_keeps_latest_per_key() {
     }
 
     let stats = backend.compact_keyed().unwrap();
-    assert_eq!(stats.retained, 1, "only the latest event should be retained");
+    assert_eq!(
+        stats.retained, 1,
+        "only the latest event should be retained"
+    );
     assert_eq!(stats.removed, 2, "older events should be removed");
 
     let remaining = backend.query_by_key("mykey", None).unwrap();
@@ -904,7 +906,10 @@ fn fjall_compact_keyed_with_tombstone() {
 
     let remaining = backend.query_by_key("mykey", None).unwrap();
     assert_eq!(remaining.len(), 1);
-    assert!(remaining[0].payload.is_empty(), "tombstone payload is empty");
+    assert!(
+        remaining[0].payload.is_empty(),
+        "tombstone payload is empty"
+    );
 }
 
 #[test]
@@ -924,7 +929,9 @@ fn fjall_compact_keyed_unkeyed_events_untouched() {
             key: None,
             hlc_timestamp: None,
         };
-        backend.store(&meta.key_expr.clone(), &[seq as u8], meta).unwrap();
+        backend
+            .store(&meta.key_expr.clone(), &[seq as u8], meta)
+            .unwrap();
     }
 
     let stats = backend.compact_keyed().unwrap();
@@ -965,9 +972,15 @@ fn fjall_query_latest_by_keys_returns_one_per_key() {
         .unwrap();
     assert_eq!(latest.len(), 2, "one per existing key");
 
-    let a = latest.iter().find(|e| e.metadata.key.as_deref() == Some("order-A")).unwrap();
+    let a = latest
+        .iter()
+        .find(|e| e.metadata.key.as_deref() == Some("order-A"))
+        .unwrap();
     assert_eq!(a.metadata.seq, 2, "latest seq for order-A");
 
-    let b = latest.iter().find(|e| e.metadata.key.as_deref() == Some("order-B")).unwrap();
+    let b = latest
+        .iter()
+        .find(|e| e.metadata.key.as_deref() == Some("order-B"))
+        .unwrap();
     assert_eq!(b.metadata.seq, 5, "latest seq for order-B");
 }

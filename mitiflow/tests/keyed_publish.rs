@@ -27,7 +27,9 @@ fn keyed_config(test_name: &str) -> EventBusConfig {
 async fn publish_keyed_delivers_to_subscriber() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = keyed_config("keyed_deliver");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -50,7 +52,9 @@ async fn publish_keyed_delivers_to_subscriber() {
 async fn publish_keyed_key_in_key_expr() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = keyed_config("keyed_key_expr");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -76,7 +80,9 @@ async fn publish_keyed_key_in_key_expr() {
 async fn publish_keyed_partition_affinity() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = keyed_config("keyed_affinity");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -112,7 +118,9 @@ async fn publish_keyed_partition_affinity() {
 async fn publish_keyed_and_unkeyed_coexist() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = keyed_config("keyed_coexist");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -168,13 +176,10 @@ async fn publish_keyed_key_filter_subscribe() {
 
     // Create a filtered subscriber for key "alpha" only
     let filter_key_expr = sub_config.key_expr_for_key("alpha");
-    let filtered_sub = EventSubscriber::init_with_key_exprs(
-        &session,
-        sub_config,
-        &[filter_key_expr],
-    )
-    .await
-    .unwrap();
+    let filtered_sub =
+        EventSubscriber::init_with_key_exprs(&session, sub_config, &[filter_key_expr])
+            .await
+            .unwrap();
 
     let publisher = EventPublisher::new(&session, pub_config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -218,7 +223,9 @@ async fn publish_keyed_key_filter_subscribe() {
 async fn publish_keyed_roundtrip_raw_event_key() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = keyed_config("keyed_roundtrip");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -242,7 +249,9 @@ async fn publish_keyed_roundtrip_raw_event_key() {
 async fn publish_bytes_keyed_works() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = keyed_config("bytes_keyed");
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -510,11 +519,9 @@ mod durable_keyed {
             .unwrap();
 
         let tmp = common::temp_dir("store_query_by_key");
-        let backend: std::sync::Arc<dyn StorageBackend> = std::sync::Arc::new(
-            mitiflow::FjallBackend::open(tmp.path(), 0).unwrap(),
-        );
-        let mut store =
-            mitiflow::EventStore::new(&session, backend.clone(), config.clone());
+        let backend: std::sync::Arc<dyn StorageBackend> =
+            std::sync::Arc::new(mitiflow::FjallBackend::open(tmp.path(), 0).unwrap());
+        let mut store = mitiflow::EventStore::new(&session, backend.clone(), config.clone());
         store.run().await.unwrap();
         let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(200)).await;

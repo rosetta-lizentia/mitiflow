@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use zenoh::Session;
 
-use super::{hash_ring, RebalanceCb};
+use super::{RebalanceCb, hash_ring};
 
 /// Shared state and configuration for the membership watcher.
 pub struct MembershipContext {
@@ -35,7 +35,8 @@ pub struct MembershipContext {
 /// It subscribes to liveliness events for workers, and on any change
 /// recomputes the HRW assignment and updates the shared state.
 pub async fn membership_watcher(ctx: MembershipContext) -> crate::error::Result<()> {
-    let subscriber = ctx.session
+    let subscriber = ctx
+        .session
         .liveliness()
         .declare_subscriber(format!("{}/*", ctx.liveliness_prefix))
         .history(true)

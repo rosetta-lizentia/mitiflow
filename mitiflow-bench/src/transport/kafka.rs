@@ -285,9 +285,8 @@ impl ProducerWork for KafkaPartitionedProducer {
         let key = format!("k{}", state.counter % state.num_partitions);
         state.counter = state.counter.wrapping_add(1);
         let payload = build_payload(state.payload_size, now_unix_ns_estimate());
-        let record: FutureRecord<'_, String, Vec<u8>> = FutureRecord::to(&state.topic)
-            .payload(&payload)
-            .key(&key);
+        let record: FutureRecord<'_, String, Vec<u8>> =
+            FutureRecord::to(&state.topic).payload(&payload).key(&key);
         state
             .producer
             .send(record, Duration::from_secs(5))
@@ -339,9 +338,8 @@ impl ProducerWork for KafkaDurablePartitionedProducer {
         let key = format!("k{}", state.counter % state.num_partitions);
         state.counter = state.counter.wrapping_add(1);
         let payload = build_payload(state.payload_size, now_unix_ns_estimate());
-        let record: FutureRecord<'_, String, Vec<u8>> = FutureRecord::to(&state.topic)
-            .payload(&payload)
-            .key(&key);
+        let record: FutureRecord<'_, String, Vec<u8>> =
+            FutureRecord::to(&state.topic).payload(&payload).key(&key);
         state
             .producer
             .send(record, Duration::from_secs(10))

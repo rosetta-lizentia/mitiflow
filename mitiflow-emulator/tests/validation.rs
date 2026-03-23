@@ -30,10 +30,12 @@ components:
     );
     let result = validate(&config).unwrap();
     // Should warn about no storage agent.
-    assert!(result
-        .warnings
-        .iter()
-        .any(|w| w.message.contains("no storage_agent")));
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("no storage_agent"))
+    );
 }
 
 #[test]
@@ -436,7 +438,10 @@ components:
     let topic = &config.topics[0];
     let comp = &config.components[0];
     let resolved = resolve_component_config(comp, Some(topic), &config.defaults);
-    assert_eq!(resolved.codec, mitiflow_emulator::config::CodecConfig::Msgpack);
+    assert_eq!(
+        resolved.codec,
+        mitiflow_emulator::config::CodecConfig::Msgpack
+    );
     assert_eq!(resolved.cache_size, 512);
     assert_eq!(resolved.heartbeat_ms, 2000);
     assert_eq!(resolved.key_prefix, "demo/events");
@@ -467,7 +472,10 @@ components:
     let topic = &config.topics[0];
     let comp = &config.components[0];
     let resolved = resolve_component_config(comp, Some(topic), &config.defaults);
-    assert_eq!(resolved.codec, mitiflow_emulator::config::CodecConfig::Postcard);
+    assert_eq!(
+        resolved.codec,
+        mitiflow_emulator::config::CodecConfig::Postcard
+    );
     assert_eq!(resolved.cache_size, 1024);
     assert_eq!(resolved.heartbeat_ms, 500);
 }
@@ -493,7 +501,10 @@ components:
     let topic = &config.topics[0];
     let comp = &config.components[0];
     let resolved = resolve_component_config(comp, Some(topic), &config.defaults);
-    assert_eq!(resolved.codec, mitiflow_emulator::config::CodecConfig::Msgpack);
+    assert_eq!(
+        resolved.codec,
+        mitiflow_emulator::config::CodecConfig::Msgpack
+    );
 }
 
 #[test]

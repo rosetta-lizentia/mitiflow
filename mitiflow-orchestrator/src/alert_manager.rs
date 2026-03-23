@@ -193,7 +193,8 @@ async fn check_cluster_health(
         if !info.online {
             let offline_duration = now.signed_duration_since(info.last_seen);
             let severity = if offline_duration
-                > chrono::Duration::from_std(config.offline_grace_period).unwrap_or(chrono::Duration::seconds(60))
+                > chrono::Duration::from_std(config.offline_grace_period)
+                    .unwrap_or(chrono::Duration::seconds(60))
             {
                 AlertSeverity::Critical
             } else {
@@ -239,9 +240,7 @@ async fn check_cluster_health(
                 if let Some(ref status) = info.status {
                     for ps in &status.partitions {
                         if ps.partition < topic.num_partitions {
-                            *partition_replicas
-                                .entry(ps.partition)
-                                .or_insert(0) += 1;
+                            *partition_replicas.entry(ps.partition).or_insert(0) += 1;
                         }
                     }
                 }
@@ -324,13 +323,16 @@ mod tests {
 
         {
             let mut map = nodes.write().await;
-            map.insert("node-1".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: None,
-                online: true,
-                last_seen: Utc::now(),
-            });
+            map.insert(
+                "node-1".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: None,
+                    online: true,
+                    last_seen: Utc::now(),
+                },
+            );
         }
 
         let alerts = check_cluster_health(&nodes, &store, &config).await;
@@ -345,13 +347,16 @@ mod tests {
 
         {
             let mut map = nodes.write().await;
-            map.insert("node-1".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: None,
-                online: false,
-                last_seen: Utc::now(),
-            });
+            map.insert(
+                "node-1".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: None,
+                    online: false,
+                    last_seen: Utc::now(),
+                },
+            );
         }
 
         let alerts = check_cluster_health(&nodes, &store, &config).await;
@@ -372,20 +377,20 @@ mod tests {
         // Only 1 node online with 1 replica per partition
         {
             let mut map = nodes.write().await;
-            map.insert("node-1".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: Some(NodeStatus {
-                    node_id: "node-1".to_string(),
-                    partitions: vec![
-                        make_partition_status(0, 0),
-                        make_partition_status(1, 0),
-                    ],
-                    timestamp: Utc::now(),
-                }),
-                online: true,
-                last_seen: Utc::now(),
-            });
+            map.insert(
+                "node-1".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: Some(NodeStatus {
+                        node_id: "node-1".to_string(),
+                        partitions: vec![make_partition_status(0, 0), make_partition_status(1, 0)],
+                        timestamp: Utc::now(),
+                    }),
+                    online: true,
+                    last_seen: Utc::now(),
+                },
+            );
         }
 
         let alerts = check_cluster_health(&nodes, &store, &config).await;
@@ -394,7 +399,11 @@ mod tests {
             .filter(|a| a.category == AlertCategory::UnderReplicated)
             .collect();
         assert_eq!(under_rep.len(), 2); // Both partitions under-replicated
-        assert!(under_rep.iter().all(|a| a.severity == AlertSeverity::Warning));
+        assert!(
+            under_rep
+                .iter()
+                .all(|a| a.severity == AlertSeverity::Warning)
+        );
     }
 
     #[tokio::test]
@@ -443,34 +452,34 @@ mod tests {
         // 2 nodes, each owning 1 replica of each partition
         {
             let mut map = nodes.write().await;
-            map.insert("node-1".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: Some(NodeStatus {
-                    node_id: "node-1".to_string(),
-                    partitions: vec![
-                        make_partition_status(0, 0),
-                        make_partition_status(1, 0),
-                    ],
-                    timestamp: Utc::now(),
-                }),
-                online: true,
-                last_seen: Utc::now(),
-            });
-            map.insert("node-2".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: Some(NodeStatus {
-                    node_id: "node-2".to_string(),
-                    partitions: vec![
-                        make_partition_status(0, 1),
-                        make_partition_status(1, 1),
-                    ],
-                    timestamp: Utc::now(),
-                }),
-                online: true,
-                last_seen: Utc::now(),
-            });
+            map.insert(
+                "node-1".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: Some(NodeStatus {
+                        node_id: "node-1".to_string(),
+                        partitions: vec![make_partition_status(0, 0), make_partition_status(1, 0)],
+                        timestamp: Utc::now(),
+                    }),
+                    online: true,
+                    last_seen: Utc::now(),
+                },
+            );
+            map.insert(
+                "node-2".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: Some(NodeStatus {
+                        node_id: "node-2".to_string(),
+                        partitions: vec![make_partition_status(0, 1), make_partition_status(1, 1)],
+                        timestamp: Utc::now(),
+                    }),
+                    online: true,
+                    last_seen: Utc::now(),
+                },
+            );
         }
 
         let alerts = check_cluster_health(&nodes, &store, &config).await;
@@ -489,13 +498,16 @@ mod tests {
         {
             let mut map = nodes.write().await;
             // Node offline for more than grace period
-            map.insert("node-1".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: None,
-                online: false,
-                last_seen: Utc::now() - chrono::Duration::seconds(120),
-            });
+            map.insert(
+                "node-1".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: None,
+                    online: false,
+                    last_seen: Utc::now() - chrono::Duration::seconds(120),
+                },
+            );
         }
 
         let alerts = check_cluster_health(&nodes, &store, &config).await;
@@ -517,17 +529,20 @@ mod tests {
         // One node covers events p0 only
         {
             let mut map = nodes.write().await;
-            map.insert("node-1".to_string(), NodeInfo {
-                metadata: None,
-                health: None,
-                status: Some(NodeStatus {
-                    node_id: "node-1".to_string(),
-                    partitions: vec![make_partition_status(0, 0)],
-                    timestamp: Utc::now(),
-                }),
-                online: true,
-                last_seen: Utc::now(),
-            });
+            map.insert(
+                "node-1".to_string(),
+                NodeInfo {
+                    metadata: None,
+                    health: None,
+                    status: Some(NodeStatus {
+                        node_id: "node-1".to_string(),
+                        partitions: vec![make_partition_status(0, 0)],
+                        timestamp: Utc::now(),
+                    }),
+                    online: true,
+                    last_seen: Utc::now(),
+                },
+            );
         }
 
         let alerts = check_cluster_health(&nodes, &store, &config).await;

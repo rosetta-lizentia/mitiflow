@@ -58,12 +58,7 @@ pub fn encode_metadata(
     buf[0..8].copy_from_slice(&seq.to_be_bytes());
     buf[8..24].copy_from_slice(&pub_id.to_bytes());
     buf[24..40].copy_from_slice(&event_id.to_bytes());
-    buf[40..48].copy_from_slice(
-        &timestamp
-            .timestamp_nanos_opt()
-            .unwrap_or(0)
-            .to_be_bytes(),
-    );
+    buf[40..48].copy_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
     buf[48..50].copy_from_slice(&urgency_ms.to_be_bytes());
     ZBytes::from(buf.to_vec())
 }
@@ -142,9 +137,7 @@ pub fn validate_key(key: &str) -> Result<()> {
         return Err(Error::InvalidKey("key must not be empty".into()));
     }
     if key.contains('*') || key.contains('$') {
-        return Err(Error::InvalidKey(
-            "key must not contain * or $".into(),
-        ));
+        return Err(Error::InvalidKey("key must not contain * or $".into()));
     }
     Ok(())
 }

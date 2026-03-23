@@ -8,9 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::backend::{ComponentHandle, ComponentSpec, ExecutionBackend};
-use crate::config::{
-    ComponentDef, ComponentKind, IsolationMode, TopologyConfig,
-};
+use crate::config::{ComponentDef, ComponentKind, IsolationMode, TopologyConfig};
 use crate::log_aggregator::LogAggregator;
 use crate::role_config::{
     ConsumerGroupRoleConfig, ConsumerRoleConfig, OrchestratorRoleConfig, OutputRoleConfig,
@@ -112,8 +110,7 @@ impl Supervisor {
                         .and_then(|t| topic_map.get(t).copied()),
                 };
 
-                let resolved =
-                    resolve_component_config(comp, topic, &self.config.defaults);
+                let resolved = resolve_component_config(comp, topic, &self.config.defaults);
 
                 for instance in 0..comp.instances {
                     let spec = self.build_spec(comp, instance as usize, &resolved, &topic_map)?;
@@ -125,15 +122,14 @@ impl Supervisor {
                         comp.kind.binary_name()
                     );
 
-                    let isolation = comp
-                        .isolation
-                        .unwrap_or(self.config.defaults.isolation);
+                    let isolation = comp.isolation.unwrap_or(self.config.defaults.isolation);
 
                     let backend: &dyn ExecutionBackend = match isolation {
                         IsolationMode::Process => self.backend.as_ref(),
-                        IsolationMode::Container => {
-                            self.container_backend.as_deref().unwrap_or(self.backend.as_ref())
-                        }
+                        IsolationMode::Container => self
+                            .container_backend
+                            .as_deref()
+                            .unwrap_or(self.backend.as_ref()),
                     };
 
                     let mut handle = backend.spawn(&spec).await?;
@@ -147,10 +143,7 @@ impl Supervisor {
                     }
 
                     // Store handle grouped by component.
-                    if let Some(entry) = self
-                        .handles
-                        .iter_mut()
-                        .find(|(c, _)| c.name == comp.name)
+                    if let Some(entry) = self.handles.iter_mut().find(|(c, _)| c.name == comp.name)
                     {
                         entry.1.push(handle);
                     } else {
@@ -169,13 +162,14 @@ impl Supervisor {
         self.log_aggregator = Some(log_agg);
 
         // Start chaos scheduler if enabled.
-        let chaos_enabled = self
-            .chaos_enabled
-            .unwrap_or(self.config.chaos.enabled);
+        let chaos_enabled = self.chaos_enabled.unwrap_or(self.config.chaos.enabled);
 
         let _chaos_cancel = self.cancel.clone();
         let _chaos_enabled = if chaos_enabled && !self.config.chaos.schedule.is_empty() {
-            info!("Chaos engineering enabled with {} events", self.config.chaos.schedule.len());
+            info!(
+                "Chaos engineering enabled with {} events",
+                self.config.chaos.schedule.len()
+            );
             true
         } else {
             false
@@ -288,11 +282,8 @@ impl Supervisor {
                     .as_deref()
                     .and_then(|t| topic_map.get(t).copied());
 
-                let output_resolved = resolve_component_config(
-                    comp,
-                    output_topic,
-                    &self.config.defaults,
-                );
+                let output_resolved =
+                    resolve_component_config(comp, output_topic, &self.config.defaults);
 
                 let processing = comp.processing.as_ref();
 
@@ -473,7 +464,14 @@ impl Supervisor {
             tiers[comp.kind.tier() as usize].push(comp);
         }
 
-        let tier_names = ["", "Orchestrator", "Storage Agents", "Producers", "Processors", "Consumers"];
+        let tier_names = [
+            "",
+            "Orchestrator",
+            "Storage Agents",
+            "Producers",
+            "Processors",
+            "Consumers",
+        ];
 
         for (tier_idx, tier) in tiers.iter().enumerate() {
             if tier.is_empty() {
@@ -488,10 +486,7 @@ impl Supervisor {
                     .unwrap_or("-");
                 println!(
                     "  {} (kind={:?}, instances={}, topic={})",
-                    comp.name,
-                    comp.kind,
-                    comp.instances,
-                    topic_name
+                    comp.name, comp.kind, comp.instances, topic_name
                 );
             }
             println!();

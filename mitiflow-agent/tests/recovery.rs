@@ -116,8 +116,7 @@ async fn recovery_from_cache_no_queryable() {
     let recovery = RecoveryManager::new(&session, "test/recovery_cache_empty");
 
     let tmp = tempfile::tempdir().unwrap();
-    let backend: Arc<dyn StorageBackend> =
-        Arc::new(FjallBackend::open(tmp.path(), 0).unwrap());
+    let backend: Arc<dyn StorageBackend> = Arc::new(FjallBackend::open(tmp.path(), 0).unwrap());
 
     let recovered = recovery.recover_from_cache(0, &backend).await.unwrap();
     assert_eq!(recovered, 0, "no cache queryable = 0 recovered");
@@ -176,11 +175,7 @@ async fn recovery_idempotent() {
 
     // But the backend should still only have 3 distinct events.
     let events = local_backend.query(&QueryFilters::default()).unwrap();
-    assert_eq!(
-        events.len(),
-        3,
-        "idempotent: 3 events, not 6"
-    );
+    assert_eq!(events.len(), 3, "idempotent: 3 events, not 6");
 
     peer_store.shutdown();
     session.close().await.unwrap();

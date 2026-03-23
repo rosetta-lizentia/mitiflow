@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-
 /// Specification for spawning a component.
 #[derive(Debug, Clone)]
 pub struct ComponentSpec {
@@ -56,10 +55,14 @@ pub trait ComponentHandle: Send + Sync {
     async fn restart(&mut self) -> crate::error::Result<()>;
 
     /// Take the stdout reader (can only be called once).
-    fn take_stdout(&mut self) -> Option<tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>>;
+    fn take_stdout(
+        &mut self,
+    ) -> Option<tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>>;
 
     /// Take the stderr reader (can only be called once).
-    fn take_stderr(&mut self) -> Option<tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStderr>>>;
+    fn take_stderr(
+        &mut self,
+    ) -> Option<tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStderr>>>;
 }
 
 /// Backend for spawning components.

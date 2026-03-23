@@ -108,20 +108,14 @@ async fn e2e_node_join_minimal_disruption() {
     cluster.wait_for_stable(Duration::from_millis(1500)).await;
 
     let before = cluster.get_assignment_snapshot().await;
-    let stable_before: Vec<(u32, u32)> = before
-        .get("node-0")
-        .cloned()
-        .unwrap_or_default();
+    let stable_before: Vec<(u32, u32)> = before.get("node-0").cloned().unwrap_or_default();
 
     // Add third node.
     cluster.start_agent(2).await;
     cluster.wait_for_stable(Duration::from_millis(1500)).await;
 
     let after = cluster.get_assignment_snapshot().await;
-    let stable_after: Vec<(u32, u32)> = after
-        .get("node-0")
-        .cloned()
-        .unwrap_or_default();
+    let stable_after: Vec<(u32, u32)> = after.get("node-0").cloned().unwrap_or_default();
 
     // HRW minimal disruption: node-0 should keep most partitions.
     // When going from 2→3 nodes, each existing node should lose ~1/3.
@@ -180,7 +174,10 @@ async fn e2e_crash_and_rejoin() {
     cluster.kill_agent(2).await;
     // Poll until remaining 2 nodes cover all 6 partitions (up to 10s).
     let total = cluster.wait_for_coverage(6, Duration::from_secs(10)).await;
-    assert!(total >= 6, "2 nodes should cover 6 partitions after crash, got {total}");
+    assert!(
+        total >= 6,
+        "2 nodes should cover 6 partitions after crash, got {total}"
+    );
 
     // Restart node-2.
     cluster.start_agent(2).await;
@@ -192,10 +189,7 @@ async fn e2e_crash_and_rejoin() {
     // Restarted node should own some partitions again.
     let snapshot = cluster.get_assignment_snapshot().await;
     let node2_parts = snapshot.get("node-2").map(|v| v.len()).unwrap_or(0);
-    assert!(
-        node2_parts > 0,
-        "restarted node should own some partitions"
-    );
+    assert!(node2_parts > 0, "restarted node should own some partitions");
 
     cluster.shutdown_all().await;
 }
@@ -249,7 +243,10 @@ async fn e2e_all_nodes_restart() {
         let mut a: Vec<(u32, u32)> = after.get(node).cloned().unwrap_or_default();
         b.sort();
         a.sort();
-        assert_eq!(b, a, "assignment for {node} should be deterministic after full restart");
+        assert_eq!(
+            b, a,
+            "assignment for {node} should be deterministic after full restart"
+        );
     }
 
     cluster.shutdown_all().await;
@@ -447,7 +444,10 @@ async fn e2e_data_survives_crash_and_recovery() {
 
     // Node-0 should take over all partitions.
     let total = cluster.wait_for_coverage(4, Duration::from_secs(5)).await;
-    assert!(total >= 4, "node-0 should cover all 4 partitions, got {total}");
+    assert!(
+        total >= 4,
+        "node-0 should cover all 4 partitions, got {total}"
+    );
 
     // Publish new events after crash.
     for p in 0..4u32 {

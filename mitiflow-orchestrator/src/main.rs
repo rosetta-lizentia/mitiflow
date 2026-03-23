@@ -13,8 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX")
-        .unwrap_or_else(|_| "mitiflow".to_string());
+    let key_prefix =
+        std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".to_string());
     let data_dir = std::env::var("MITIFLOW_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("./orchestrator_data"));

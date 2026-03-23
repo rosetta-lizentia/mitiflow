@@ -20,16 +20,14 @@ async fn smoke_3_node_cluster_starts() {
     // Observer session to check health and liveliness.
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
-    let healthy = cluster.wait_healthy(&session, Duration::from_secs(15)).await;
+    let healthy = cluster
+        .wait_healthy(&session, Duration::from_secs(15))
+        .await;
     assert!(healthy, "all 3 agents should become healthy within 15s");
 
     // Verify all 3 agents are live.
     let live = cluster.get_live_agents(&session).await;
-    assert_eq!(
-        live.len(),
-        3,
-        "3 agents should be live, got: {live:?}"
-    );
+    assert_eq!(live.len(), 3, "3 agents should be live, got: {live:?}");
 
     cluster.kill_all().await;
     session.close().await.unwrap();
@@ -44,14 +42,14 @@ async fn smoke_graceful_shutdown() {
 
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
-    let healthy = cluster.wait_healthy(&session, Duration::from_secs(10)).await;
+    let healthy = cluster
+        .wait_healthy(&session, Duration::from_secs(10))
+        .await;
     assert!(healthy, "agent should become healthy");
 
     // Send SIGTERM.
     cluster.agents[0].terminate();
-    let status = cluster.agents[0]
-        .wait_exit(Duration::from_secs(10))
-        .await;
+    let status = cluster.agents[0].wait_exit(Duration::from_secs(10)).await;
     assert!(
         status.is_some(),
         "agent should exit after SIGTERM within 10s"
@@ -78,14 +76,14 @@ async fn smoke_process_crash() {
 
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
-    let healthy = cluster.wait_healthy(&session, Duration::from_secs(10)).await;
+    let healthy = cluster
+        .wait_healthy(&session, Duration::from_secs(10))
+        .await;
     assert!(healthy, "both agents should become healthy");
 
     // Kill agent-1 (SIGKILL).
     cluster.agents[1].kill();
-    let status = cluster.agents[1]
-        .wait_exit(Duration::from_secs(5))
-        .await;
+    let status = cluster.agents[1].wait_exit(Duration::from_secs(5)).await;
     assert!(status.is_some(), "killed agent should exit");
 
     // Wait for liveliness to expire.

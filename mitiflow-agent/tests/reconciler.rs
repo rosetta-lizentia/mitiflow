@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
-use mitiflow_agent::reconciler::{ReconcileAction, Reconciler};
 use mitiflow_agent::StoreState;
+use mitiflow_agent::reconciler::{ReconcileAction, Reconciler};
 
 fn bus_config(test_name: &str) -> EventBusConfig {
     EventBusConfig::builder(format!("test/{test_name}"))
@@ -36,8 +36,14 @@ async fn reconciler_starts_stores_for_assigned_partitions() {
 
     // Should have started 2 stores.
     assert_eq!(actions.len(), 2);
-    assert!(actions.contains(&ReconcileAction::Start { partition: 0, replica: 0 }));
-    assert!(actions.contains(&ReconcileAction::Start { partition: 3, replica: 0 }));
+    assert!(actions.contains(&ReconcileAction::Start {
+        partition: 0,
+        replica: 0
+    }));
+    assert!(actions.contains(&ReconcileAction::Start {
+        partition: 3,
+        replica: 0
+    }));
 
     // Active stores should match.
     let active = reconciler.active_stores().await;
@@ -69,7 +75,10 @@ async fn reconciler_stops_stores_for_lost_partitions() {
     // New desired: only p0. p3 should drain.
     let actions = reconciler.reconcile(&[(0, 0)]).await.unwrap();
     assert_eq!(actions.len(), 1);
-    assert!(actions.contains(&ReconcileAction::Drain { partition: 3, replica: 0 }));
+    assert!(actions.contains(&ReconcileAction::Drain {
+        partition: 3,
+        replica: 0
+    }));
 
     // After grace period, the drained store should be removed.
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -125,8 +134,14 @@ async fn reconciler_handles_simultaneous_gain_and_loss() {
 
     // New desired: p0, p5. Should start p5 and drain p3.
     let actions = reconciler.reconcile(&[(0, 0), (5, 0)]).await.unwrap();
-    assert!(actions.contains(&ReconcileAction::Start { partition: 5, replica: 0 }));
-    assert!(actions.contains(&ReconcileAction::Drain { partition: 3, replica: 0 }));
+    assert!(actions.contains(&ReconcileAction::Start {
+        partition: 5,
+        replica: 0
+    }));
+    assert!(actions.contains(&ReconcileAction::Drain {
+        partition: 3,
+        replica: 0
+    }));
 
     // Verify p5 is active.
     let active = reconciler.active_stores().await;
@@ -155,7 +170,10 @@ async fn reconciler_drain_grace_period() {
 
     // Remove p0 → should enter Draining.
     let actions = reconciler.reconcile(&[]).await.unwrap();
-    assert!(actions.contains(&ReconcileAction::Drain { partition: 0, replica: 0 }));
+    assert!(actions.contains(&ReconcileAction::Drain {
+        partition: 0,
+        replica: 0
+    }));
 
     // Immediately check: partition should be in Draining state.
     let statuses = reconciler.partition_statuses().await;
@@ -165,7 +183,10 @@ async fn reconciler_drain_grace_period() {
     // Before grace period elapses, store still exists.
     tokio::time::sleep(Duration::from_millis(100)).await;
     let statuses = reconciler.partition_statuses().await;
-    assert!(!statuses.is_empty(), "store should still exist during drain");
+    assert!(
+        !statuses.is_empty(),
+        "store should still exist during drain"
+    );
 
     // After grace period, store should be gone.
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -252,37 +273,42 @@ async fn reconciler_shutdown_all_stops_everything() {
         Duration::from_secs(5),
     );
 
-    reconciler.reconcile(&[(0, 0), (1, 0), (2, 0)]).await.unwrap();
+    reconciler
+        .reconcile(&[(0, 0), (1, 0), (2, 0)])
+        .await
+        .unwrap();
     assert_eq!(reconciler.active_stores().await.len(), 3);
 
     reconciler.shutdown_all().await.unwrap();
-    assert!(reconciler.active_stores().await.is_empty(), "all stores stopped after shutdown");
+    assert!(
+        reconciler.active_stores().await.is_empty(),
+        "all stores stopped after shutdown"
+    );
 
     session.close().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconciler_triggers_recovery_on_start() {
-    use std::sync::Arc;
+    use mitiflow_agent::config::StorageAgentConfig;
     use mitiflow_agent::membership::MembershipTracker;
     use mitiflow_agent::recovery::RecoveryManager;
-    use mitiflow_agent::config::StorageAgentConfig;
+    use std::sync::Arc;
 
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let config = bus_config("reconciler_recovery");
 
-    let agent_config = StorageAgentConfig::builder(
-        tmp.path().to_path_buf(),
-        config.clone(),
-    )
-    .node_id("recovery-test")
-    .num_partitions(4)
-    .build()
-    .unwrap();
+    let agent_config = StorageAgentConfig::builder(tmp.path().to_path_buf(), config.clone())
+        .node_id("recovery-test")
+        .num_partitions(4)
+        .build()
+        .unwrap();
 
     let membership = Arc::new(
-        MembershipTracker::new(&session, &agent_config).await.unwrap(),
+        MembershipTracker::new(&session, &agent_config)
+            .await
+            .unwrap(),
     );
     let recovery = Arc::new(RecoveryManager::new(&session, "test/reconciler_recovery"));
 

@@ -2,18 +2,18 @@
 //!
 //! Subscribes to a topic and counts/logs/writes received events.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use mitiflow::codec::CodecFormat;
 use mitiflow::config::{
     CommitMode, ConsumerGroupConfig, EventBusConfig, HeartbeatMode, OffsetReset, RecoveryMode,
 };
-use mitiflow::codec::CodecFormat;
 use mitiflow::subscriber::EventSubscriber;
 use mitiflow::subscriber::consumer_group::ConsumerGroupSubscriber;
 use mitiflow_emulator::config::{OutputMode, RecoveryModeConfig};
-use mitiflow_emulator::role_config::{decode_config, ConsumerRoleConfig, ZenohRoleConfig};
+use mitiflow_emulator::role_config::{ConsumerRoleConfig, ZenohRoleConfig, decode_config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -33,9 +33,15 @@ async fn main() -> anyhow::Result<()> {
     let mut zc = zenoh::Config::default();
     let me = |e: Box<dyn std::error::Error + Send + Sync>| anyhow::anyhow!("{e}");
     match zenoh_cfg.mode.as_str() {
-        "client" => { zc.insert_json5("mode", r#""client""#).map_err(&me)?; }
-        "router" => { zc.insert_json5("mode", r#""router""#).map_err(&me)?; }
-        _ => { zc.insert_json5("mode", r#""peer""#).map_err(&me)?; }
+        "client" => {
+            zc.insert_json5("mode", r#""client""#).map_err(&me)?;
+        }
+        "router" => {
+            zc.insert_json5("mode", r#""router""#).map_err(&me)?;
+        }
+        _ => {
+            zc.insert_json5("mode", r#""peer""#).map_err(&me)?;
+        }
     }
     if !zenoh_cfg.listen.is_empty() {
         let json = serde_json::to_string(&zenoh_cfg.listen)?;
@@ -56,9 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     let recovery_mode = match config.recovery_mode {
         RecoveryModeConfig::Heartbeat => RecoveryMode::Heartbeat,
-        RecoveryModeConfig::PeriodicQuery => {
-            RecoveryMode::PeriodicQuery(Duration::from_secs(1))
-        }
+        RecoveryModeConfig::PeriodicQuery => RecoveryMode::PeriodicQuery(Duration::from_secs(1)),
         RecoveryModeConfig::Both => RecoveryMode::Both,
     };
 
@@ -85,9 +89,8 @@ async fn main() -> anyhow::Result<()> {
     {
         let cancel_sig = cancel.clone();
         tokio::spawn(async move {
-            let mut sig =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to register SIGTERM handler");
+            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
             sig.recv().await;
             cancel_sig.cancel();
         });
@@ -129,10 +132,13 @@ async fn main() -> anyhow::Result<()> {
             offset_reset: OffsetReset::Latest,
         };
 
-        let subscriber =
-            ConsumerGroupSubscriber::new(&session, bus_config, group_config).await?;
+        let subscriber = ConsumerGroupSubscriber::new(&session, bus_config, group_config).await?;
 
-        tracing::info!("Consumer (group={}) started: prefix={}", cg.group_id, config.key_prefix);
+        tracing::info!(
+            "Consumer (group={}) started: prefix={}",
+            cg.group_id,
+            config.key_prefix
+        );
 
         loop {
             tokio::select! {
@@ -187,11 +193,7 @@ fn handle_event(event: &mitiflow::event::RawEvent, mode: OutputMode) {
     match mode {
         OutputMode::Count => {} // Handled by periodic reporter.
         OutputMode::Log => {
-            tracing::info!(
-                "Event seq={} id={}",
-                event.seq,
-                event.id,
-            );
+            tracing::info!("Event seq={} id={}", event.seq, event.id,);
         }
         OutputMode::Discard => {}
         OutputMode::File => {

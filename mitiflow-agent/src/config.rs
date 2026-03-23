@@ -65,14 +65,16 @@ impl TopicWorkerConfig {
         drain_grace_period: Duration,
     ) -> Result<Self, AgentError> {
         if entry.num_partitions == 0 {
-            return Err(AgentError::Config(
-                format!("topic '{}': num_partitions must be > 0", entry.name),
-            ));
+            return Err(AgentError::Config(format!(
+                "topic '{}': num_partitions must be > 0",
+                entry.name
+            )));
         }
         if entry.replication_factor == 0 {
-            return Err(AgentError::Config(
-                format!("topic '{}': replication_factor must be > 0", entry.name),
-            ));
+            return Err(AgentError::Config(format!(
+                "topic '{}': replication_factor must be > 0",
+                entry.name
+            )));
         }
         let bus_config = EventBusConfig::builder(&entry.key_prefix)
             .cache_size(100)
@@ -349,14 +351,10 @@ impl StorageAgentConfigBuilder {
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
 
         if self.num_partitions == 0 {
-            return Err(AgentError::Config(
-                "num_partitions must be > 0".into(),
-            ));
+            return Err(AgentError::Config("num_partitions must be > 0".into()));
         }
         if self.replication_factor == 0 {
-            return Err(AgentError::Config(
-                "replication_factor must be > 0".into(),
-            ));
+            return Err(AgentError::Config("replication_factor must be > 0".into()));
         }
 
         Ok(StorageAgentConfig {
@@ -518,14 +516,30 @@ pub struct TopicYamlEntry {
     pub replication_factor: u32,
 }
 
-fn default_auto() -> String { "auto".into() }
-fn default_data_dir() -> PathBuf { PathBuf::from("/tmp/mitiflow-agent") }
-fn default_capacity() -> u32 { 100 }
-fn default_health_interval() -> Duration { Duration::from_secs(10) }
-fn default_drain_grace() -> Duration { Duration::from_secs(30) }
-fn default_global_prefix() -> String { "mitiflow".into() }
-fn default_num_partitions() -> u32 { 16 }
-fn default_replication_factor() -> u32 { 1 }
+fn default_auto() -> String {
+    "auto".into()
+}
+fn default_data_dir() -> PathBuf {
+    PathBuf::from("/tmp/mitiflow-agent")
+}
+fn default_capacity() -> u32 {
+    100
+}
+fn default_health_interval() -> Duration {
+    Duration::from_secs(10)
+}
+fn default_drain_grace() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_global_prefix() -> String {
+    "mitiflow".into()
+}
+fn default_num_partitions() -> u32 {
+    16
+}
+fn default_replication_factor() -> u32 {
+    1
+}
 
 impl AgentYamlConfig {
     /// Parse from a YAML string.
@@ -544,8 +558,7 @@ impl AgentYamlConfig {
     /// Convert to [`AgentConfig`], applying env-var overrides.
     pub fn into_agent_config(self) -> Result<AgentConfig, AgentError> {
         let node_id = if self.node.id == "auto" {
-            std::env::var("MITIFLOW_NODE_ID")
-                .unwrap_or_else(|_| uuid::Uuid::now_v7().to_string())
+            std::env::var("MITIFLOW_NODE_ID").unwrap_or_else(|_| uuid::Uuid::now_v7().to_string())
         } else {
             self.node.id
         };
@@ -554,8 +567,8 @@ impl AgentYamlConfig {
             .map(PathBuf::from)
             .unwrap_or(self.node.data_dir);
 
-        let global_prefix = std::env::var("MITIFLOW_GLOBAL_PREFIX")
-            .unwrap_or(self.cluster.global_prefix);
+        let global_prefix =
+            std::env::var("MITIFLOW_GLOBAL_PREFIX").unwrap_or(self.cluster.global_prefix);
 
         let topics: Vec<TopicEntry> = self
             .topics

@@ -4,12 +4,12 @@
 
 use std::time::Duration;
 
-use mitiflow::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
 use mitiflow::codec::CodecFormat;
-use mitiflow_agent::StorageAgentConfig;
+use mitiflow::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
 use mitiflow_agent::StorageAgent;
+use mitiflow_agent::StorageAgentConfig;
 use mitiflow_emulator::config::RecoveryModeConfig;
-use mitiflow_emulator::role_config::{decode_config, StorageAgentRoleConfig, ZenohRoleConfig};
+use mitiflow_emulator::role_config::{StorageAgentRoleConfig, ZenohRoleConfig, decode_config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,9 +29,15 @@ async fn main() -> anyhow::Result<()> {
     let mut zc = zenoh::Config::default();
     let me = |e: Box<dyn std::error::Error + Send + Sync>| anyhow::anyhow!("{e}");
     match zenoh_cfg.mode.as_str() {
-        "client" => { zc.insert_json5("mode", r#""client""#).map_err(&me)?; }
-        "router" => { zc.insert_json5("mode", r#""router""#).map_err(&me)?; }
-        _ => { zc.insert_json5("mode", r#""peer""#).map_err(&me)?; }
+        "client" => {
+            zc.insert_json5("mode", r#""client""#).map_err(&me)?;
+        }
+        "router" => {
+            zc.insert_json5("mode", r#""router""#).map_err(&me)?;
+        }
+        _ => {
+            zc.insert_json5("mode", r#""peer""#).map_err(&me)?;
+        }
     }
     if !zenoh_cfg.listen.is_empty() {
         let json = serde_json::to_string(&zenoh_cfg.listen)?;
@@ -53,9 +59,7 @@ async fn main() -> anyhow::Result<()> {
 
     let recovery_mode = match config.recovery_mode {
         RecoveryModeConfig::Heartbeat => RecoveryMode::Heartbeat,
-        RecoveryModeConfig::PeriodicQuery => {
-            RecoveryMode::PeriodicQuery(Duration::from_secs(1))
-        }
+        RecoveryModeConfig::PeriodicQuery => RecoveryMode::PeriodicQuery(Duration::from_secs(1)),
         RecoveryModeConfig::Both => RecoveryMode::Both,
     };
 
@@ -73,10 +77,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&config.data_dir).await?;
 
     // Build storage agent config.
-    let mut agent_config_builder = StorageAgentConfig::builder(
-        config.data_dir.clone(),
-        bus_config,
-    );
+    let mut agent_config_builder = StorageAgentConfig::builder(config.data_dir.clone(), bus_config);
 
     if let Some(node_id) = &config.node_id {
         agent_config_builder = agent_config_builder.node_id(node_id);
@@ -109,9 +110,8 @@ async fn main() -> anyhow::Result<()> {
     {
         let cancel_sig = cancel.clone();
         tokio::spawn(async move {
-            let mut sig =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to register SIGTERM handler");
+            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
             sig.recv().await;
             cancel_sig.cancel();
         });

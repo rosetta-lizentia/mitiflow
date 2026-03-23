@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use zenoh::Session;
 
-use mitiflow::store::watermark::CommitWatermark;
 use mitiflow::store::OffsetCommit;
+use mitiflow::store::watermark::CommitWatermark;
 use mitiflow::types::PublisherId;
 
 /// Per-(group, partition) lag report.

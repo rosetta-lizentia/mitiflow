@@ -4,14 +4,12 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-use mitiflow_orchestrator::config::{
-    CompactionPolicy, ConfigStore, RetentionPolicy, TopicConfig,
-};
-use mitiflow_orchestrator::http::{build_router, HttpState};
+use mitiflow_orchestrator::config::{CompactionPolicy, ConfigStore, RetentionPolicy, TopicConfig};
+use mitiflow_orchestrator::http::{HttpState, build_router};
 
 fn test_store() -> (TempDir, Arc<ConfigStore>) {
     let dir = TempDir::new().unwrap();
@@ -301,28 +299,34 @@ async fn http_cluster_status_no_nodes() {
 
 #[tokio::test]
 async fn http_cluster_status_with_nodes() {
-    use mitiflow_orchestrator::cluster_view::NodeInfo;
     use chrono::Utc;
+    use mitiflow_orchestrator::cluster_view::NodeInfo;
 
     let (_dir, store) = test_store();
     let nodes = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
     {
         let mut map = nodes.write().await;
-        map.insert("agent-1".to_string(), NodeInfo {
-            metadata: None,
-            health: None,
-            status: None,
-            online: true,
-            last_seen: Utc::now(),
-        });
-        map.insert("agent-2".to_string(), NodeInfo {
-            metadata: None,
-            health: None,
-            status: None,
-            online: false,
-            last_seen: Utc::now(),
-        });
+        map.insert(
+            "agent-1".to_string(),
+            NodeInfo {
+                metadata: None,
+                health: None,
+                status: None,
+                online: true,
+                last_seen: Utc::now(),
+            },
+        );
+        map.insert(
+            "agent-2".to_string(),
+            NodeInfo {
+                metadata: None,
+                health: None,
+                status: None,
+                online: false,
+                last_seen: Utc::now(),
+            },
+        );
     }
 
     let state = HttpState {
@@ -349,21 +353,24 @@ async fn http_cluster_status_with_nodes() {
 
 #[tokio::test]
 async fn http_cluster_nodes_with_data() {
-    use mitiflow_orchestrator::cluster_view::NodeInfo;
     use chrono::Utc;
+    use mitiflow_orchestrator::cluster_view::NodeInfo;
 
     let (_dir, store) = test_store();
     let nodes = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
     {
         let mut map = nodes.write().await;
-        map.insert("node-a".to_string(), NodeInfo {
-            metadata: None,
-            health: None,
-            status: None,
-            online: true,
-            last_seen: Utc::now(),
-        });
+        map.insert(
+            "node-a".to_string(),
+            NodeInfo {
+                metadata: None,
+                health: None,
+                status: None,
+                online: true,
+                last_seen: Utc::now(),
+            },
+        );
     }
 
     let state = HttpState {

@@ -8,17 +8,15 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow::store::watermark::{CommitWatermark, PublisherWatermark};
 use mitiflow::store::offset::OffsetCommit;
+use mitiflow::store::watermark::{CommitWatermark, PublisherWatermark};
 use mitiflow::types::PublisherId;
-use mitiflow_orchestrator::config::{
-    CompactionPolicy, ConfigStore, RetentionPolicy, TopicConfig,
-};
 use mitiflow_orchestrator::cluster_view::ClusterView;
-use mitiflow_orchestrator::override_manager::OverrideManager;
+use mitiflow_orchestrator::config::{CompactionPolicy, ConfigStore, RetentionPolicy, TopicConfig};
 use mitiflow_orchestrator::lag::LagMonitor;
 use mitiflow_orchestrator::lifecycle::StoreTracker;
 use mitiflow_orchestrator::orchestrator::{Orchestrator, OrchestratorConfig};
+use mitiflow_orchestrator::override_manager::OverrideManager;
 use mitiflow_orchestrator::{
     NodeHealth, NodeStatus, OverrideEntry, OverrideTable, PartitionStatus, StoreState,
 };
@@ -128,8 +126,8 @@ fn config_store_persistence() {
                 replication_factor: 1,
                 retention: RetentionPolicy::default(),
                 compaction: CompactionPolicy::default(),
-        required_labels: HashMap::new(),
-        excluded_labels: HashMap::new(),
+                required_labels: HashMap::new(),
+                excluded_labels: HashMap::new(),
             })
             .unwrap();
     }
@@ -371,14 +369,16 @@ async fn orchestrator_admin_queryable_topics() {
     let mut found_specific = false;
     while let Ok(reply) = replies.recv_async().await {
         if let Ok(sample) = reply.result() {
-            let topic: TopicConfig =
-                serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
+            let topic: TopicConfig = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
             assert_eq!(topic.name, "analytics");
             assert_eq!(topic.num_partitions, 3);
             found_specific = true;
         }
     }
-    assert!(found_specific, "should have received a reply for topics/analytics");
+    assert!(
+        found_specific,
+        "should have received a reply for topics/analytics"
+    );
 
     orch.shutdown().await;
 }
@@ -710,8 +710,7 @@ async fn override_manager_publishes_and_subscriber_receives() {
         .expect("timeout waiting for override")
         .unwrap();
 
-    let table: OverrideTable =
-        serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
+    let table: OverrideTable = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
     assert_eq!(table.entries.len(), 1);
     assert_eq!(table.entries[0].node_id, "node-99");
     assert_eq!(table.epoch, 1);
@@ -865,28 +864,50 @@ async fn drain_node_publishes_correct_overrides() {
     let om = OverrideManager::new(&session, &prefix);
 
     // Simulate 3 online agents
-    let _t0 = session.liveliness().declare_token(format!("{prefix}/_agents/node-0")).await.unwrap();
-    let _t1 = session.liveliness().declare_token(format!("{prefix}/_agents/node-1")).await.unwrap();
-    let _t2 = session.liveliness().declare_token(format!("{prefix}/_agents/node-2")).await.unwrap();
+    let _t0 = session
+        .liveliness()
+        .declare_token(format!("{prefix}/_agents/node-0"))
+        .await
+        .unwrap();
+    let _t1 = session
+        .liveliness()
+        .declare_token(format!("{prefix}/_agents/node-1"))
+        .await
+        .unwrap();
+    let _t2 = session
+        .liveliness()
+        .declare_token(format!("{prefix}/_agents/node-2"))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Publish status: node-0 owns partitions 0,1; node-1 owns 2,3; node-2 owns 4,5
-    for (node, parts) in [("node-0", vec![0, 1]), ("node-1", vec![2, 3]), ("node-2", vec![4, 5])] {
+    for (node, parts) in [
+        ("node-0", vec![0, 1]),
+        ("node-1", vec![2, 3]),
+        ("node-2", vec![4, 5]),
+    ] {
         let status = NodeStatus {
             node_id: node.into(),
-            partitions: parts.iter().map(|&p| PartitionStatus {
-                partition: p,
-                replica: 0,
-                state: StoreState::Active,
-                event_count: 0,
-                watermark_seq: HashMap::new(),
-            }).collect(),
+            partitions: parts
+                .iter()
+                .map(|&p| PartitionStatus {
+                    partition: p,
+                    replica: 0,
+                    state: StoreState::Active,
+                    event_count: 0,
+                    watermark_seq: HashMap::new(),
+                })
+                .collect(),
             timestamp: chrono::Utc::now(),
         };
-        session.put(
-            format!("{prefix}/_cluster/status/{node}"),
-            serde_json::to_vec(&status).unwrap(),
-        ).await.unwrap();
+        session
+            .put(
+                format!("{prefix}/_cluster/status/{node}"),
+                serde_json::to_vec(&status).unwrap(),
+            )
+            .await
+            .unwrap();
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -895,7 +916,10 @@ async fn drain_node_publishes_correct_overrides() {
 
     assert_eq!(overrides.len(), 2); // partitions 0 and 1
     for o in &overrides {
-        assert_ne!(o.node_id, "node-0", "override should not target the drained node");
+        assert_ne!(
+            o.node_id, "node-0",
+            "override should not target the drained node"
+        );
         assert!(o.reason.contains("drain node-0"));
     }
 
@@ -917,8 +941,16 @@ async fn undrain_node_removes_overrides() {
     let om = OverrideManager::new(&session, &prefix);
 
     // Simulate nodes and status
-    let _t0 = session.liveliness().declare_token(format!("{prefix}/_agents/node-0")).await.unwrap();
-    let _t1 = session.liveliness().declare_token(format!("{prefix}/_agents/node-1")).await.unwrap();
+    let _t0 = session
+        .liveliness()
+        .declare_token(format!("{prefix}/_agents/node-0"))
+        .await
+        .unwrap();
+    let _t1 = session
+        .liveliness()
+        .declare_token(format!("{prefix}/_agents/node-1"))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let status = NodeStatus {
@@ -932,10 +964,13 @@ async fn undrain_node_removes_overrides() {
         }],
         timestamp: chrono::Utc::now(),
     };
-    session.put(
-        format!("{prefix}/_cluster/status/node-0"),
-        serde_json::to_vec(&status).unwrap(),
-    ).await.unwrap();
+    session
+        .put(
+            format!("{prefix}/_cluster/status/node-0"),
+            serde_json::to_vec(&status).unwrap(),
+        )
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Drain, then undrain
@@ -1211,7 +1246,11 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
     .unwrap();
 
     let tm = orch.topic_manager().unwrap();
-    assert_eq!(tm.tracked_topics().len(), 1, "empty prefix should not create a view");
+    assert_eq!(
+        tm.tracked_topics().len(),
+        1,
+        "empty prefix should not create a view"
+    );
 
     orch.shutdown().await;
 }
@@ -1317,7 +1356,11 @@ async fn multi_topic_views_pick_up_independent_agents() {
     assert_eq!(view_a.online_count().await, 1);
 
     let view_b = orch.topic_manager().unwrap().get_view("topicB").unwrap();
-    assert_eq!(view_b.online_count().await, 0, "topicB should have no agents");
+    assert_eq!(
+        view_b.online_count().await,
+        0,
+        "topicB should have no agents"
+    );
 
     orch.shutdown().await;
 }

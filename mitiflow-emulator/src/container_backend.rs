@@ -153,9 +153,7 @@ impl ContainerHandle {
         if !status.success() {
             return Err(crate::error::EmulatorError::Container(format!(
                 "{} {:?} failed for {}",
-                self.runtime,
-                args,
-                self.container_name
+                self.runtime, args, self.container_name
             )));
         }
         Ok(())

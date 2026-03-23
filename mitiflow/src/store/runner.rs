@@ -8,19 +8,19 @@
 //! are automatically batched by each worker for improved write throughput.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
+use zenoh::Session;
 use zenoh::handlers::FifoChannelHandler;
 use zenoh::sample::{Sample, SampleKind};
-use zenoh::Session;
 
-use crate::attachment::{decode_metadata, NO_URGENCY};
+use crate::attachment::{NO_URGENCY, decode_metadata};
 use crate::config::EventBusConfig;
 use crate::error::{Error, Result};
 use crate::types::PublisherId;
@@ -255,11 +255,7 @@ fn drain_and_flush(
 
 /// Convert a `Vec<StoreRequest>` into the tuples expected by
 /// `StorageBackend::store_batch` and persist them.
-fn flush_batch(
-    backend: &Arc<dyn StorageBackend>,
-    batch: Vec<StoreRequest>,
-    worker_id: usize,
-) {
+fn flush_batch(backend: &Arc<dyn StorageBackend>, batch: Vec<StoreRequest>, worker_id: usize) {
     if batch.is_empty() {
         return;
     }
@@ -276,11 +272,7 @@ fn flush_batch(
 }
 
 /// Dispatch a single request-reply backend operation.
-fn dispatch_request(
-    backend: &Arc<dyn StorageBackend>,
-    request: BackendRequest,
-    worker_id: usize,
-) {
+fn dispatch_request(backend: &Arc<dyn StorageBackend>, request: BackendRequest, worker_id: usize) {
     match request {
         BackendRequest::Query { filters, reply } => {
             let _ = reply.send(backend.query(&filters));
@@ -332,9 +324,7 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
         return None;
     }
 
-    let meta = sample
-        .attachment()
-        .and_then(|a| decode_metadata(a).ok())?;
+    let meta = sample.attachment().and_then(|a| decode_metadata(a).ok())?;
 
     let payload = sample.payload().to_bytes().to_vec();
     let timestamp_nanos = meta.timestamp.timestamp_nanos_opt().unwrap_or(i64::MAX);
@@ -532,8 +522,7 @@ async fn run_watermark_task(
             }
         } else {
             let now_nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            let remaining =
-                Duration::from_nanos((deadline_ns - now_nanos).max(0) as u64);
+            let remaining = Duration::from_nanos((deadline_ns - now_nanos).max(0) as u64);
 
             tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -570,11 +559,7 @@ async fn run_watermark_task(
 }
 
 /// Periodically run garbage collection on old events.
-async fn run_gc_task(
-    handle: BackendHandle,
-    gc_interval: Duration,
-    cancel: CancellationToken,
-) {
+async fn run_gc_task(handle: BackendHandle, gc_interval: Duration, cancel: CancellationToken) {
     let mut interval = tokio::time::interval(gc_interval);
 
     loop {
@@ -692,12 +677,10 @@ async fn run_offset_task(
 
 /// Extract a parameter value from a query parameter string like "key1=val1&key2=val2".
 fn extract_param<'a>(params: &'a str, key: &str) -> Option<String> {
-    params
-        .split('&')
-        .find_map(|pair| {
-            let (k, v) = pair.split_once('=')?;
-            (k == key).then(|| v.to_string())
-        })
+    params.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -855,9 +838,7 @@ impl EventStore {
     }
 
     /// Return per-publisher durability progress (committed_seq + gaps).
-    pub async fn publisher_watermarks(
-        &self,
-    ) -> Result<HashMap<PublisherId, PublisherWatermark>> {
+    pub async fn publisher_watermarks(&self) -> Result<HashMap<PublisherId, PublisherWatermark>> {
         self.handle
             .as_ref()
             .expect("EventStore::run not called")
@@ -885,10 +866,7 @@ impl EventStore {
 
     /// The partition this store is responsible for.
     pub fn partition(&self) -> u32 {
-        self.handle
-            .as_ref()
-            .map(|h| h.partition())
-            .unwrap_or(0)
+        self.handle.as_ref().map(|h| h.partition()).unwrap_or(0)
     }
 
     /// Cancel all background tasks and shut down worker threads.

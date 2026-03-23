@@ -98,9 +98,7 @@ mod inner {
             } else {
                 "worker-b"
             };
-            println!(
-                "  user={user_id:6}  partition={partition:2}  owner={owner}"
-            );
+            println!("  user={user_id:6}  partition={partition:2}  owner={owner}");
         }
         Ok(())
     }
@@ -231,7 +229,14 @@ mod inner {
         )
         .await?;
         phase_show_key_exprs(&worker_a, &worker_b, &worker_c).await;
-        phase_worker_leaves(&worker_a, &worker_b, worker_c, &rebalance_log, NUM_PARTITIONS).await;
+        phase_worker_leaves(
+            &worker_a,
+            &worker_b,
+            worker_c,
+            &rebalance_log,
+            NUM_PARTITIONS,
+        )
+        .await;
 
         drop(worker_a);
         drop(worker_b);

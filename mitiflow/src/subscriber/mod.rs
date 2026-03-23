@@ -157,14 +157,35 @@ fn handle_sample_result(
 ) {
     match result {
         SampleResult::Deliver => {
-            deliver_event(tx, meta.pub_id, meta.seq, key, payload, meta.event_id, meta.timestamp);
+            deliver_event(
+                tx,
+                meta.pub_id,
+                meta.seq,
+                key,
+                payload,
+                meta.event_id,
+                meta.timestamp,
+            );
         }
         SampleResult::Duplicate => {
             trace!(seq = meta.seq, pub_id = %meta.pub_id, "duplicate, dropping");
         }
         SampleResult::Gap(miss) => {
-            deliver_event(tx, meta.pub_id, meta.seq, key, payload, meta.event_id, meta.timestamp);
-            spawn_recovery(session.clone(), Arc::clone(recovery_config), miss, tx.clone());
+            deliver_event(
+                tx,
+                meta.pub_id,
+                meta.seq,
+                key,
+                payload,
+                meta.event_id,
+                meta.timestamp,
+            );
+            spawn_recovery(
+                session.clone(),
+                Arc::clone(recovery_config),
+                miss,
+                tx.clone(),
+            );
         }
     }
 }
@@ -177,7 +198,12 @@ fn handle_heartbeat_gaps(
     tx: &flume::Sender<RawEvent>,
 ) {
     for miss in misses {
-        spawn_recovery(session.clone(), Arc::clone(recovery_config), miss, tx.clone());
+        spawn_recovery(
+            session.clone(),
+            Arc::clone(recovery_config),
+            miss,
+            tx.clone(),
+        );
     }
 }
 
@@ -196,7 +222,11 @@ fn spawn_recovery(
 }
 
 /// Periodically evict stale publisher entries from the gap detector.
-fn maybe_evict(gd: &mut GapDetector, sample_count: u64, publisher_ttl: Option<std::time::Duration>) {
+fn maybe_evict(
+    gd: &mut GapDetector,
+    sample_count: u64,
+    publisher_ttl: Option<std::time::Duration>,
+) {
     if let Some(ttl) = publisher_ttl {
         if sample_count % 10_000 == 0 {
             let evicted = gd.evict_older_than(ttl);
@@ -255,11 +285,7 @@ impl EventSubscriber {
     ///
     /// Uses [`EventBusConfig::key_expr_for_key`] to build the Zenoh key
     /// expression, so only events published with that exact key are received.
-    pub async fn new_keyed(
-        session: &Session,
-        config: EventBusConfig,
-        key: &str,
-    ) -> Result<Self> {
+    pub async fn new_keyed(session: &Session, config: EventBusConfig, key: &str) -> Result<Self> {
         let key_expr = config.key_expr_for_key(key);
         Self::init(session, config, &[key_expr]).await
     }
@@ -294,11 +320,7 @@ impl EventSubscriber {
     /// Shared initialization: create one Zenoh subscriber per key expression,
     /// fan decoded samples into a shared channel, and spawn background tasks
     /// for gap detection, heartbeat listening, and recovery.
-    async fn init(
-        session: &Session,
-        config: EventBusConfig,
-        key_exprs: &[String],
-    ) -> Result<Self> {
+    async fn init(session: &Session, config: EventBusConfig, key_exprs: &[String]) -> Result<Self> {
         let key_prefix = &config.key_prefix;
 
         // Fan-in channel: all data subscribers push decoded samples here.
@@ -580,10 +602,7 @@ fn deliver_event(
 ///
 /// Partition is encoded as a path segment (`{store_prefix}/{partition}`) so
 /// Zenoh can route the query to the correct partition-specific queryable.
-fn store_recovery_selector(
-    store_prefix: &str,
-    miss: &MissInfo,
-) -> String {
+fn store_recovery_selector(store_prefix: &str, miss: &MissInfo) -> String {
     format!(
         "{}/{}?publisher_id={}&after_seq={}&before_seq={}",
         store_prefix,

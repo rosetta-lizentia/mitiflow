@@ -57,11 +57,7 @@ async fn agent_multi_topic_starts_all() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_multi_topic_add_at_runtime() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-    let (_tmp, config) = multi_config(
-        "amt_add",
-        "node-only",
-        vec![("events", 2, 1)],
-    );
+    let (_tmp, config) = multi_config("amt_add", "node-only", vec![("events", 2, 1)]);
 
     let mut agent = StorageAgent::start_multi(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -151,7 +147,10 @@ async fn agent_multi_topic_same_topic_two_nodes_splits() {
     let p2 = a2.assigned_partitions().await;
 
     let total = p1.len() + p2.len();
-    assert!(total >= 8, "combined should own >= 8 partitions, got {total}");
+    assert!(
+        total >= 8,
+        "combined should own >= 8 partitions, got {total}"
+    );
 
     assert!(
         p1.len() >= 2 && p1.len() <= 6,
@@ -190,7 +189,11 @@ async fn agent_backward_compat_single_topic() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let assigned = agent.assigned_partitions().await;
-    assert_eq!(assigned.len(), 4, "backward compat: should own 4 partitions");
+    assert_eq!(
+        assigned.len(),
+        4,
+        "backward compat: should own 4 partitions"
+    );
     assert_eq!(agent.topics().await.len(), 1);
 
     agent.shutdown().await.unwrap();
@@ -200,11 +203,7 @@ async fn agent_backward_compat_single_topic() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_has_topic() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-    let (_tmp, config) = multi_config(
-        "amt_has_topic",
-        "node-only",
-        vec![("events", 2, 1)],
-    );
+    let (_tmp, config) = multi_config("amt_has_topic", "node-only", vec![("events", 2, 1)]);
 
     let mut agent = StorageAgent::start_multi(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;

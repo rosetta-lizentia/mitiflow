@@ -75,12 +75,14 @@ async fn main() {
                 .expect("failed to build mitiflow config");
 
             // Spawn EventStore sidecar — one store per partition.
-            let tmp_dir = std::env::temp_dir()
-                .join(format!("mitiflow-bench-store-{}", std::process::id()));
-            let mut store_mgr =
-                mitiflow::StoreManager::new(&pub_session, config.clone(), &tmp_dir)
-                    .expect("failed to open store manager");
-            store_mgr.run().await.expect("failed to start store manager");
+            let tmp_dir =
+                std::env::temp_dir().join(format!("mitiflow-bench-store-{}", std::process::id()));
+            let mut store_mgr = mitiflow::StoreManager::new(&pub_session, config.clone(), &tmp_dir)
+                .expect("failed to open store manager");
+            store_mgr
+                .run()
+                .await
+                .expect("failed to start store manager");
 
             // Give the store time to initialize and emit its first watermark.
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -140,11 +142,8 @@ async fn main() {
                 topic: topic.clone(),
                 payload_size,
             };
-            let consumer = transport::nats::NatsJetStreamConsumerGroupConsumer {
-                url,
-                topic,
-                group,
-            };
+            let consumer =
+                transport::nats::NatsJetStreamConsumerGroupConsumer { url, topic, group };
             run_durable_consumer_group(cli.bench, producer, consumer, consumers).await;
         }
 

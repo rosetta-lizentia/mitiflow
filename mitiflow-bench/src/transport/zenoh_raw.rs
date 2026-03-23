@@ -2,9 +2,9 @@
 
 use lightbench::{ConsumerRecorder, ConsumerWork, ProducerWork, now_unix_ns_estimate};
 use zenoh::Session;
-use zenoh::qos::CongestionControl;
 use zenoh::handlers::FifoChannelHandler;
 use zenoh::pubsub::Subscriber;
+use zenoh::qos::CongestionControl;
 use zenoh::sample::Sample;
 
 use crate::{build_payload, extract_timestamp};

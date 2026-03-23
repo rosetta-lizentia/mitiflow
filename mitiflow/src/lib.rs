@@ -21,6 +21,7 @@ pub mod store;
 pub mod partition;
 
 // Public re-exports
+pub use attachment::{extract_key, validate_key};
 pub use codec::CodecFormat;
 pub use config::{
     CommitMode, ConsumerGroupConfig, EventBusConfig, EventBusConfigBuilder, HeartbeatMode,
@@ -32,7 +33,6 @@ pub use event::{Event, RawEvent};
 pub use publisher::EventPublisher;
 pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};
-pub use attachment::{extract_key, validate_key};
 
 #[cfg(feature = "store")]
 pub use store::{EventStore, FjallBackend, OffsetCommit, StoreManager};

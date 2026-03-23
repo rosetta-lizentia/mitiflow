@@ -114,7 +114,10 @@ impl Reconciler {
         // Partitions to drain (in actual but not desired).
         for &(p, r) in &actual {
             if !desired.contains(&(p, r)) {
-                let state = stores.get(&(p, r)).map(|s| s.state).unwrap_or(StoreState::Stopped);
+                let state = stores
+                    .get(&(p, r))
+                    .map(|s| s.state)
+                    .unwrap_or(StoreState::Stopped);
                 if state != StoreState::Draining && state != StoreState::Stopped {
                     actions.push(ReconcileAction::Drain {
                         partition: p,
@@ -158,7 +161,12 @@ impl Reconciler {
             .read()
             .await
             .iter()
-            .filter(|(_, s)| matches!(s.state, StoreState::Active | StoreState::Starting | StoreState::Recovering))
+            .filter(|(_, s)| {
+                matches!(
+                    s.state,
+                    StoreState::Active | StoreState::Starting | StoreState::Recovering
+                )
+            })
             .map(|(k, _)| *k)
             .collect()
     }
@@ -232,7 +240,10 @@ impl Reconciler {
             drain_cancel: None,
         };
 
-        self.stores.write().await.insert((partition, replica), managed);
+        self.stores
+            .write()
+            .await
+            .insert((partition, replica), managed);
 
         // Trigger background recovery if recovery + membership are configured.
         if let (Some(recovery), Some(membership)) = (&self.recovery, &self.membership) {

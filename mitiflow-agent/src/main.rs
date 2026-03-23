@@ -33,8 +33,7 @@ async fn main() -> anyhow::Result<()> {
         StorageAgent::start_multi(&session, agent_config).await?
     } else {
         // Legacy env-var mode
-        let key_prefix =
-            std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
+        let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
         let data_dir =
             std::env::var("MITIFLOW_DATA_DIR").unwrap_or_else(|_| "/tmp/mitiflow-agent".into());
         let node_id = std::env::var("MITIFLOW_NODE_ID").ok();

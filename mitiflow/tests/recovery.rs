@@ -81,7 +81,9 @@ async fn subscriber_catches_up_from_store_then_receives_live() {
 
     // Now create a subscriber. It joins after history was published.
     // history_on_subscribe is false, so it won't auto-fetch.
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Publish live events.
@@ -137,7 +139,9 @@ async fn store_recovers_missed_events() {
 
     // Create publisher + subscriber together.
     let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Publish enough events — the subscriber should receive all of them
@@ -193,7 +197,9 @@ async fn cache_recovery_without_store() {
         .expect("valid config");
 
     let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let count = 15u64;
@@ -245,7 +251,9 @@ async fn multiple_publishers_with_store_recovery() {
 
     let pub1 = EventPublisher::new(&session, config.clone()).await.unwrap();
     let pub2 = EventPublisher::new(&session, config.clone()).await.unwrap();
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let count_per_pub = 10u64;
@@ -273,10 +281,7 @@ async fn multiple_publishers_with_store_recovery() {
 
     // Verify all events from both publishers arrived.
     for i in 0..count_per_pub {
-        assert!(
-            received_values.contains(&i),
-            "missing event {i} from pub1"
-        );
+        assert!(received_values.contains(&i), "missing event {i} from pub1");
         assert!(
             received_values.contains(&(100 + i)),
             "missing event {} from pub2",
@@ -400,7 +405,9 @@ async fn recovery_with_zero_cache_store_only() {
     store.run().await.unwrap();
 
     let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let count = 10u64;
@@ -472,7 +479,9 @@ async fn late_subscriber_with_ongoing_publish() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Phase 2: subscriber joins late
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Phase 3: publisher continues with live events

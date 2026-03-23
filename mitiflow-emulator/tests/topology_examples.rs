@@ -18,7 +18,10 @@ fn validate_01_minimal() {
     let result = load_and_validate("01_minimal.yaml");
     // No storage agent → expect a warning.
     assert!(
-        result.warnings.iter().any(|w| w.message.contains("no storage_agent")),
+        result
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("no storage_agent")),
         "expected storage warning"
     );
 }
@@ -26,13 +29,21 @@ fn validate_01_minimal() {
 #[test]
 fn validate_02_durable() {
     let result = load_and_validate("02_durable.yaml");
-    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
 }
 
 #[test]
 fn validate_03_fanout() {
     let result = load_and_validate("03_fanout.yaml");
-    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
 }
 
 #[test]
@@ -44,17 +55,29 @@ fn validate_04_multi_stage() {
         .iter()
         .filter(|w| w.message.contains("no storage_agent"))
         .collect();
-    assert_eq!(storage_warnings.len(), 2, "expect warnings for filtered and enriched topics");
+    assert_eq!(
+        storage_warnings.len(),
+        2,
+        "expect warnings for filtered and enriched topics"
+    );
 }
 
 #[test]
 fn validate_05_stress() {
     let result = load_and_validate("05_stress.yaml");
-    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
 }
 
 #[test]
 fn validate_06_chaos() {
     let result = load_and_validate("06_chaos.yaml");
-    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
 }

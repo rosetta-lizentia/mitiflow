@@ -51,7 +51,11 @@ impl OverrideManager {
         let bytes = serde_json::to_vec(&table)?;
         self.session.put(&self.overrides_key, bytes).await?;
 
-        info!(epoch = new_epoch, entries = table.entries.len(), "overrides published");
+        info!(
+            epoch = new_epoch,
+            entries = table.entries.len(),
+            "overrides published"
+        );
         *current = table;
         Ok(())
     }
@@ -91,12 +95,7 @@ impl OverrideManager {
         new_entries: Vec<OverrideEntry>,
         ttl: Option<std::time::Duration>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut merged: Vec<OverrideEntry> = self
-            .current
-            .read()
-            .await
-            .entries
-            .clone();
+        let mut merged: Vec<OverrideEntry> = self.current.read().await.entries.clone();
 
         for new in new_entries {
             // Remove existing entry for same (partition, replica)

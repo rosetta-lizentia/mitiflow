@@ -7,12 +7,12 @@
 use std::time::Duration;
 
 use lightbench::{Benchmark, BenchmarkWork, WorkResult};
-use mitiflow::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
 use mitiflow::codec::CodecFormat;
+use mitiflow::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
 use mitiflow::publisher::EventPublisher;
 use mitiflow_emulator::config::{PayloadConfig, RecoveryModeConfig};
 use mitiflow_emulator::generator::PayloadGenerator;
-use mitiflow_emulator::role_config::{decode_config, ProducerRoleConfig, ZenohRoleConfig};
+use mitiflow_emulator::role_config::{ProducerRoleConfig, ZenohRoleConfig, decode_config};
 
 // ---------------------------------------------------------------------------
 // BenchmarkWork implementation for lightbench rate control
@@ -66,9 +66,7 @@ impl BenchmarkWork for EmulatorPublishWork {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env(),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
     let zenoh_b64 = std::env::var("MITIFLOW_ZENOH_CONFIG")
@@ -83,9 +81,15 @@ async fn main() -> anyhow::Result<()> {
     let mut zc = zenoh::Config::default();
     let me = |e: Box<dyn std::error::Error + Send + Sync>| anyhow::anyhow!("{e}");
     match zenoh_cfg.mode.as_str() {
-        "client" => { zc.insert_json5("mode", r#""client""#).map_err(&me)?; }
-        "router" => { zc.insert_json5("mode", r#""router""#).map_err(&me)?; }
-        _ => { zc.insert_json5("mode", r#""peer""#).map_err(&me)?; }
+        "client" => {
+            zc.insert_json5("mode", r#""client""#).map_err(&me)?;
+        }
+        "router" => {
+            zc.insert_json5("mode", r#""router""#).map_err(&me)?;
+        }
+        _ => {
+            zc.insert_json5("mode", r#""peer""#).map_err(&me)?;
+        }
     }
     if !zenoh_cfg.listen.is_empty() {
         let json = serde_json::to_string(&zenoh_cfg.listen)?;
@@ -107,9 +111,7 @@ async fn main() -> anyhow::Result<()> {
 
     let recovery_mode = match config.recovery_mode {
         RecoveryModeConfig::Heartbeat => RecoveryMode::Heartbeat,
-        RecoveryModeConfig::PeriodicQuery => {
-            RecoveryMode::PeriodicQuery(Duration::from_secs(1))
-        }
+        RecoveryModeConfig::PeriodicQuery => RecoveryMode::PeriodicQuery(Duration::from_secs(1)),
         RecoveryModeConfig::Both => RecoveryMode::Both,
     };
 
@@ -174,9 +176,8 @@ async fn main() -> anyhow::Result<()> {
     {
         let cancel_sig = cancel.clone();
         tokio::spawn(async move {
-            let mut sig =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to register SIGTERM handler");
+            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
             sig.recv().await;
             cancel_sig.cancel();
         });

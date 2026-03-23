@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::{build_payload, extract_timestamp};
 use lightbench::{
     BenchmarkWork, ConsumerRecorder, ConsumerWork, ProducerWork, WorkResult, now_unix_ns_estimate,
 };
-use crate::{build_payload, extract_timestamp};
 
 /// Redis Streams producer using XADD.
 #[derive(Clone)]
@@ -206,19 +206,20 @@ impl ConsumerWork for RedisConsumerGroupConsumer {
 
     async fn run(&self, mut state: Self::State, recorder: ConsumerRecorder) -> Self::State {
         while recorder.is_running() {
-            let result: redis::RedisResult<redis::streams::StreamReadReply> = redis::cmd("XREADGROUP")
-                .arg("GROUP")
-                .arg(&state.group_name)
-                .arg(&state.consumer_id)
-                .arg("COUNT")
-                .arg(100)
-                .arg("BLOCK")
-                .arg(100)
-                .arg("STREAMS")
-                .arg(&state.stream_key)
-                .arg(">")
-                .query_async(&mut state.conn)
-                .await;
+            let result: redis::RedisResult<redis::streams::StreamReadReply> =
+                redis::cmd("XREADGROUP")
+                    .arg("GROUP")
+                    .arg(&state.group_name)
+                    .arg(&state.consumer_id)
+                    .arg("COUNT")
+                    .arg(100)
+                    .arg("BLOCK")
+                    .arg(100)
+                    .arg("STREAMS")
+                    .arg(&state.stream_key)
+                    .arg(">")
+                    .query_async(&mut state.conn)
+                    .await;
 
             match result {
                 Ok(reply) => {

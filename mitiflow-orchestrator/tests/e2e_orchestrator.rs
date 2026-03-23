@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use mitiflow::EventBusConfig;
 use mitiflow_agent::{
-    NodeStatus, OverrideEntry, PartitionStatus, StoreState, StorageAgent,
-    StorageAgentConfigBuilder,
+    NodeStatus, OverrideEntry, PartitionStatus, StorageAgent, StorageAgentConfigBuilder, StoreState,
 };
 use mitiflow_orchestrator::orchestrator::{Orchestrator, OrchestratorConfig};
 
@@ -145,11 +144,7 @@ impl OrchestratorTestCluster {
 
     /// Wait for ClusterView to have assignment data for at least `expected` total
     /// partition-replica pairs (i.e., nodes have published their status).
-    async fn wait_for_assignments_in_view(
-        &self,
-        expected: usize,
-        timeout: Duration,
-    ) -> usize {
+    async fn wait_for_assignments_in_view(&self, expected: usize, timeout: Duration) -> usize {
         let start = tokio::time::Instant::now();
         let orch = self.orchestrator.as_ref().unwrap();
         let cv = orch.cluster_view().unwrap();
@@ -190,8 +185,7 @@ impl OrchestratorTestCluster {
                     timestamp: chrono::Utc::now(),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&status) {
-                    let key =
-                        format!("{}/_cluster/status/node-{i}", self.prefix);
+                    let key = format!("{}/_cluster/status/node-{i}", self.prefix);
                     let _ = s.session.put(&key, bytes).await;
                 }
             }
@@ -281,7 +275,10 @@ async fn e2e_orchestrator_joins_running_cluster_catches_up() {
 
     // ClusterView should discover all 3 agents within a few seconds
     let seen = c.wait_for_cluster_view(3, Duration::from_secs(5)).await;
-    assert_eq!(seen, 3, "orchestrator should see 3 online nodes, got {seen}");
+    assert_eq!(
+        seen, 3,
+        "orchestrator should see 3 online nodes, got {seen}"
+    );
 
     c.shutdown_all().await;
 }
@@ -304,9 +301,9 @@ async fn e2e_drain_node_moves_partitions() {
     c.wait_for_cluster_view(3, Duration::from_secs(3)).await;
 
     // Wait for ClusterView to have assignment data from agent status reports
-    let cv_assignments =
-        c.wait_for_assignments_in_view(expected, Duration::from_secs(5))
-            .await;
+    let cv_assignments = c
+        .wait_for_assignments_in_view(expected, Duration::from_secs(5))
+        .await;
     assert!(
         cv_assignments >= expected,
         "ClusterView should see {expected} assignments, got {cv_assignments}"

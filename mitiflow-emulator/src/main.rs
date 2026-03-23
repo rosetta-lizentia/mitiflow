@@ -11,13 +11,16 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use mitiflow_emulator::config::TopologyConfig;
-use mitiflow_emulator::validation::validate;
-use mitiflow_emulator::process_backend::ProcessBackend;
 use mitiflow_emulator::container_backend::ContainerBackend;
+use mitiflow_emulator::process_backend::ProcessBackend;
 use mitiflow_emulator::supervisor::Supervisor;
+use mitiflow_emulator::validation::validate;
 
 #[derive(Parser)]
-#[command(name = "mitiflow-emulator", about = "YAML-driven topology runner for mitiflow")]
+#[command(
+    name = "mitiflow-emulator",
+    about = "YAML-driven topology runner for mitiflow"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -82,9 +85,7 @@ async fn main() -> anyhow::Result<()> {
             container_runtime,
         } => {
             // Initialize tracing.
-            let filter = log_level
-                .as_deref()
-                .unwrap_or("info");
+            let filter = log_level.as_deref().unwrap_or("info");
             tracing_subscriber::fmt()
                 .with_env_filter(EnvFilter::try_new(filter)?)
                 .init();
@@ -130,7 +131,10 @@ async fn main() -> anyhow::Result<()> {
                     if result.warnings.is_empty() {
                         println!("Topology is valid.");
                     } else {
-                        println!("Topology is valid with {} warning(s):", result.warnings.len());
+                        println!(
+                            "Topology is valid with {} warning(s):",
+                            result.warnings.len()
+                        );
                         for w in &result.warnings {
                             println!("  {}", w);
                         }

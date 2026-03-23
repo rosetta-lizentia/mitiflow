@@ -80,22 +80,25 @@ impl ConfigStore {
     /// Open or create a config store at the given directory.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, fjall::Error> {
         let db = fjall::Database::builder(dir).open()?;
-        let topics = db.keyspace(
-            "topics",
-            fjall::KeyspaceCreateOptions::default,
-        )?;
+        let topics = db.keyspace("topics", fjall::KeyspaceCreateOptions::default)?;
         Ok(Self { db, topics })
     }
 
     /// Store a topic configuration.
-    pub fn put_topic(&self, config: &TopicConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn put_topic(
+        &self,
+        config: &TopicConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let value = serde_json::to_vec(config)?;
         self.topics.insert(&config.name, value)?;
         Ok(())
     }
 
     /// Get a topic configuration by name.
-    pub fn get_topic(&self, name: &str) -> Result<Option<TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_topic(
+        &self,
+        name: &str,
+    ) -> Result<Option<TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
         match self.topics.get(name)? {
             Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             None => Ok(None),
@@ -103,12 +106,20 @@ impl ConfigStore {
     }
 
     /// List all topic configurations.
-    pub fn list_topics(&self) -> Result<Vec<TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn list_topics(
+        &self,
+    ) -> Result<Vec<TopicConfig>, Box<dyn std::error::Error + Send + Sync>> {
         let mut topics = Vec::new();
         for guard in self.topics.iter() {
-            let kv = guard.into_inner().map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("iter error: {e:?}")))
-            })?;
+            let kv =
+                guard
+                    .into_inner()
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("iter error: {e:?}"),
+                        ))
+                    })?;
             let config: TopicConfig = serde_json::from_slice(&kv.1)?;
             topics.push(config);
         }

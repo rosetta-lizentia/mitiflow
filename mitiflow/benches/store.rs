@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use mitiflow::store::FjallBackend;
 use mitiflow::store::backend::{EventMetadata, HlcTimestamp, StorageBackend};
 use mitiflow::store::query::{QueryFilters, ReplayFilters};
-use mitiflow::store::FjallBackend;
 use mitiflow::types::{EventId, PublisherId};
 
 fn make_metadata(pub_id: &PublisherId, seq: u64) -> EventMetadata {
@@ -198,7 +198,9 @@ fn bench_store_compact(c: &mut Criterion) {
                     for _version in 0..10 {
                         let mut meta = make_metadata(&pub_id, seq);
                         meta.key_expr = format!("bench/key/{key_idx}");
-                        backend.store(&meta.key_expr.clone(), &payload, meta).unwrap();
+                        backend
+                            .store(&meta.key_expr.clone(), &payload, meta)
+                            .unwrap();
                         seq += 1;
                     }
                 }

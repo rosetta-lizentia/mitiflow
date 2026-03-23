@@ -138,10 +138,7 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Fetch all committed offsets for a consumer group on this partition.
-    fn fetch_offsets(
-        &self,
-        _group_id: &str,
-    ) -> Result<HashMap<PublisherId, u64>> {
+    fn fetch_offsets(&self, _group_id: &str) -> Result<HashMap<PublisherId, u64>> {
         Ok(HashMap::new())
     }
 }
@@ -258,7 +255,10 @@ mod fjall_impl {
         let publisher_id = PublisherId::from_bytes(pub_bytes);
         let seq = u64::from_be_bytes(key[28..36].try_into().ok()?);
         Some((
-            HlcTimestamp { physical_ns, logical },
+            HlcTimestamp {
+                physical_ns,
+                logical,
+            },
             publisher_id,
             seq,
         ))
@@ -424,17 +424,11 @@ mod fjall_impl {
         }
 
         /// Offset value encoding: `[seq:8 BE][generation:8 BE][timestamp_ms:8 BE]` = 24 bytes.
-        fn encode_offset_value(
-            seq: u64,
-            generation: u64,
-            timestamp: DateTime<Utc>,
-        ) -> [u8; 24] {
+        fn encode_offset_value(seq: u64, generation: u64, timestamp: DateTime<Utc>) -> [u8; 24] {
             let mut val = [0u8; 24];
             val[..8].copy_from_slice(&seq.to_be_bytes());
             val[8..16].copy_from_slice(&generation.to_be_bytes());
-            val[16..24].copy_from_slice(
-                &(timestamp.timestamp_millis() as u64).to_be_bytes(),
-            );
+            val[16..24].copy_from_slice(&(timestamp.timestamp_millis() as u64).to_be_bytes());
             val
         }
 
@@ -458,22 +452,19 @@ mod fjall_impl {
         }
 
         /// Persist an offset commit. Only accepts if generation >= stored generation.
-        pub fn commit_offsets(
-            &self,
-            commit: &crate::store::offset::OffsetCommit,
-        ) -> Result<()> {
+        pub fn commit_offsets(&self, commit: &crate::store::offset::OffsetCommit) -> Result<()> {
             let mut batch = self.db.batch();
 
             for (pub_id, seq) in &commit.offsets {
                 let key = Self::offset_key(&commit.group_id, pub_id);
 
                 // Fencing: reject commits from older generations
-                if let Some(existing) = self.offsets.get(key)
+                if let Some(existing) = self
+                    .offsets
+                    .get(key)
                     .map_err(|e| Error::StoreError(format!("offset read failed: {e}")))?
                 {
-                    if let Some((_, stored_gen)) =
-                        Self::decode_offset_value(existing.as_ref())
-                    {
+                    if let Some((_, stored_gen)) = Self::decode_offset_value(existing.as_ref()) {
                         if commit.generation < stored_gen {
                             return Err(Error::StaleFencedCommit {
                                 group: commit.group_id.clone(),
@@ -484,8 +475,7 @@ mod fjall_impl {
                     }
                 }
 
-                let value =
-                    Self::encode_offset_value(*seq, commit.generation, commit.timestamp);
+                let value = Self::encode_offset_value(*seq, commit.generation, commit.timestamp);
                 batch.insert(&self.offsets, key, value);
             }
 
@@ -496,10 +486,7 @@ mod fjall_impl {
         }
 
         /// Fetch all committed offsets for a group on this partition.
-        pub fn fetch_offsets(
-            &self,
-            group_id: &str,
-        ) -> Result<HashMap<PublisherId, u64>> {
+        pub fn fetch_offsets(&self, group_id: &str) -> Result<HashMap<PublisherId, u64>> {
             let hash = Self::xxhash_group(group_id);
             let prefix = hash.to_be_bytes();
             let mut result = HashMap::new();
@@ -625,9 +612,7 @@ mod fjall_impl {
             for (pub_id, seqs) in &by_publisher {
                 let mut entry = match self.publisher_states.entry_sync(*pub_id) {
                     scc::hash_map::Entry::Occupied(o) => o,
-                    scc::hash_map::Entry::Vacant(v) => {
-                        v.insert_entry(PublisherSeqState::default())
-                    }
+                    scc::hash_map::Entry::Vacant(v) => v.insert_entry(PublisherSeqState::default()),
                 };
                 let state = entry.get_mut();
 
@@ -680,7 +665,10 @@ mod fjall_impl {
             // publisher's key prefix instead of a full keyspace scan.
             let iter: Box<dyn Iterator<Item = _>> = if let Some(ref pub_id) = filters.publisher_id {
                 let start_seq = filters.after_seq.map(|s| s + 1).unwrap_or(0);
-                let end_seq = filters.before_seq.map(|s| s.saturating_sub(1)).unwrap_or(u64::MAX);
+                let end_seq = filters
+                    .before_seq
+                    .map(|s| s.saturating_sub(1))
+                    .unwrap_or(u64::MAX);
                 let start_key = encode_event_key(pub_id, start_seq);
                 let end_key = encode_event_key(pub_id, end_seq);
                 Box::new(self.events.range(start_key..=end_key))
@@ -828,9 +816,7 @@ mod fjall_impl {
                 batch.remove(&self.events, event_key.as_slice());
                 batch.remove(&self.keys, key_expr.as_bytes());
                 // Clean up replay index entry using the stored HLC timestamp.
-                if let (Some(hlc), Some((pub_id, seq))) =
-                    (hlc_ts, decode_event_key(event_key))
-                {
+                if let (Some(hlc), Some((pub_id, seq))) = (hlc_ts, decode_event_key(event_key)) {
                     let replay_key = encode_replay_key(hlc, &pub_id, seq);
                     batch.remove(&self.replay, replay_key);
                 }
@@ -933,7 +919,9 @@ mod fjall_impl {
                 if let Some(ref app_key) = meta.key {
                     let event_key = kv.0.to_vec();
                     keyed_entries.push((event_key.clone(), app_key.clone(), seq));
-                    let entry = latest.entry(app_key.clone()).or_insert((event_key.clone(), seq));
+                    let entry = latest
+                        .entry(app_key.clone())
+                        .or_insert((event_key.clone(), seq));
                     if seq > entry.1 {
                         *entry = (event_key, seq);
                     }
@@ -948,11 +936,13 @@ mod fjall_impl {
                 if let Some((latest_key, _)) = latest.get(app_key) {
                     if event_key != latest_key {
                         // Also remove from replay index if the event has HLC.
-                        if let Some(value) = self.events.get(event_key.as_slice())
-                            .map_err(|e| Error::StoreError(format!("compact_keyed lookup error: {e}")))?
-                        {
+                        if let Some(value) = self.events.get(event_key.as_slice()).map_err(|e| {
+                            Error::StoreError(format!("compact_keyed lookup error: {e}"))
+                        })? {
                             let (meta, _) = decode_event_value(&value)?;
-                            if let (Some(hlc), Some((pub_id, seq))) = (&meta.hlc_timestamp, decode_event_key(event_key)) {
+                            if let (Some(hlc), Some((pub_id, seq))) =
+                                (&meta.hlc_timestamp, decode_event_key(event_key))
+                            {
                                 let replay_key = encode_replay_key(hlc, &pub_id, seq);
                                 batch.remove(&self.replay, replay_key);
                             }
@@ -965,9 +955,9 @@ mod fjall_impl {
                     }
                 }
             }
-            batch
-                .commit()
-                .map_err(|e| Error::StoreError(format!("compact_keyed batch commit failed: {e}")))?;
+            batch.commit().map_err(|e| {
+                Error::StoreError(format!("compact_keyed batch commit failed: {e}"))
+            })?;
 
             Ok(CompactionStats { removed, retained })
         }
@@ -1012,18 +1002,12 @@ mod fjall_impl {
             Ok(latest.into_values().collect())
         }
 
-        fn commit_offsets(
-            &self,
-            commit: &crate::store::offset::OffsetCommit,
-        ) -> Result<()> {
+        fn commit_offsets(&self, commit: &crate::store::offset::OffsetCommit) -> Result<()> {
             // Delegate to the inherent impl on FjallBackend
             FjallBackend::commit_offsets(self, commit)
         }
 
-        fn fetch_offsets(
-            &self,
-            group_id: &str,
-        ) -> Result<HashMap<PublisherId, u64>> {
+        fn fetch_offsets(&self, group_id: &str) -> Result<HashMap<PublisherId, u64>> {
             FjallBackend::fetch_offsets(self, group_id)
         }
     }

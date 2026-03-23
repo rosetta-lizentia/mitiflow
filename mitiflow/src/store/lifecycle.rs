@@ -103,13 +103,10 @@ impl LifecycleManager {
     /// Creates the publisher entry if it doesn't exist.
     /// Cancels any suspicion/draining state — the publisher is clearly alive.
     pub fn on_activity(&mut self, pub_id: PublisherId) {
-        let entry = self
-            .publishers
-            .entry(pub_id)
-            .or_insert_with(|| {
-                self.epoch += 1;
-                PublisherLiveness::new_active()
-            });
+        let entry = self.publishers.entry(pub_id).or_insert_with(|| {
+            self.epoch += 1;
+            PublisherLiveness::new_active()
+        });
 
         entry.last_activity = Instant::now();
 
@@ -141,8 +138,7 @@ impl LifecycleManager {
             entry.liveliness_live = false;
             if entry.state == PublisherState::Active {
                 entry.state = PublisherState::Suspected;
-                entry.suspicion_deadline =
-                    Some(Instant::now() + self.config.inactivity_timeout);
+                entry.suspicion_deadline = Some(Instant::now() + self.config.inactivity_timeout);
                 self.epoch += 1;
             }
         }
@@ -176,8 +172,7 @@ impl LifecycleManager {
                         && now.duration_since(entry.last_activity) > self.config.inactivity_timeout
                     {
                         entry.state = PublisherState::Draining;
-                        entry.drain_deadline =
-                            Some(now + self.config.drain_grace_period);
+                        entry.drain_deadline = Some(now + self.config.drain_grace_period);
                         self.epoch += 1;
                     }
                 }
@@ -185,8 +180,7 @@ impl LifecycleManager {
                     if let Some(deadline) = entry.suspicion_deadline {
                         if now >= deadline {
                             entry.state = PublisherState::Draining;
-                            entry.drain_deadline =
-                                Some(now + self.config.drain_grace_period);
+                            entry.drain_deadline = Some(now + self.config.drain_grace_period);
                             entry.suspicion_deadline = None;
                             self.epoch += 1;
                         }
@@ -217,9 +211,7 @@ impl LifecycleManager {
             .filter(|(_, entry)| {
                 matches!(
                     entry.state,
-                    PublisherState::Active
-                        | PublisherState::Suspected
-                        | PublisherState::Draining
+                    PublisherState::Active | PublisherState::Suspected | PublisherState::Draining
                 )
             })
             .map(|(id, _)| *id)
@@ -229,16 +221,12 @@ impl LifecycleManager {
     /// Check whether a publisher is in a state where it should be tracked
     /// in the watermark.
     pub fn is_watermark_active(&self, pub_id: &PublisherId) -> bool {
-        self.publishers
-            .get(pub_id)
-            .is_some_and(|e| {
-                matches!(
-                    e.state,
-                    PublisherState::Active
-                        | PublisherState::Suspected
-                        | PublisherState::Draining
-                )
-            })
+        self.publishers.get(pub_id).is_some_and(|e| {
+            matches!(
+                e.state,
+                PublisherState::Active | PublisherState::Suspected | PublisherState::Draining
+            )
+        })
     }
 
     /// Get the state of a specific publisher.

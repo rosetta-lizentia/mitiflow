@@ -61,11 +61,7 @@ async fn start_store(
 }
 
 /// Publish N events with sequential values to partition 0.
-async fn publish_to_partition(
-    publisher: &EventPublisher,
-    count: u64,
-    start_value: u64,
-) {
+async fn publish_to_partition(publisher: &EventPublisher, count: u64, start_value: u64) {
     for i in start_value..(start_value + count) {
         publisher
             .publish(&Event::new(TestPayload { value: i }))
@@ -302,7 +298,10 @@ async fn auto_commit_interval() {
 
     // Verify offsets were committed
     let offsets = c0.load_offsets(0).await.unwrap();
-    assert!(!offsets.is_empty(), "auto-commit should have committed offsets");
+    assert!(
+        !offsets.is_empty(),
+        "auto-commit should have committed offsets"
+    );
 
     c0.shutdown().await;
     store.shutdown();
@@ -409,10 +408,11 @@ async fn independent_groups_same_topic() {
 
     // Group "analytics" receives and commits
     for _ in 0..10 {
-        let _: Event<TestPayload> = tokio::time::timeout(Duration::from_secs(5), c_analytics.recv())
-            .await
-            .expect("timed out")
-            .expect("recv failed");
+        let _: Event<TestPayload> =
+            tokio::time::timeout(Duration::from_secs(5), c_analytics.recv())
+                .await
+                .expect("timed out")
+                .expect("recv failed");
     }
     c_analytics.commit_sync().await.unwrap();
 
@@ -429,7 +429,10 @@ async fn independent_groups_same_topic() {
     let analytics_offsets = c_analytics.load_offsets(0).await.unwrap();
     let billing_offsets = c_billing.load_offsets(0).await.unwrap();
 
-    assert!(!analytics_offsets.is_empty(), "analytics should have offsets");
+    assert!(
+        !analytics_offsets.is_empty(),
+        "analytics should have offsets"
+    );
     assert!(!billing_offsets.is_empty(), "billing should have offsets");
 
     c_analytics.shutdown().await;
@@ -473,7 +476,10 @@ async fn commit_sync_vs_async() {
 
     // Immediately fetch offsets → should reflect committed position
     let offsets = c0.load_offsets(0).await.unwrap();
-    assert!(!offsets.is_empty(), "sync commit should persist immediately");
+    assert!(
+        !offsets.is_empty(),
+        "sync commit should persist immediately"
+    );
 
     // Now test commit_async
     publish_to_partition(&publisher, 5, 10).await;
@@ -546,10 +552,7 @@ async fn store_crash_and_offset_recovery() {
             .await
             .unwrap();
         let offsets = c1.load_offsets(0).await.unwrap();
-        assert!(
-            !offsets.is_empty(),
-            "offsets should survive store restart"
-        );
+        assert!(!offsets.is_empty(), "offsets should survive store restart");
         for (_, seq) in &offsets {
             assert!(*seq >= 9, "recovered offset should be >= 9, got {seq}");
         }

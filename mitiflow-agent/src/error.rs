@@ -12,16 +12,23 @@ pub enum AgentError {
     #[error("store error: {0}")]
     #[diagnostic(
         code(mitiflow::agent::store),
-        help("Check disk space and permissions for the data directory. Another process may be locking the store.")
+        help(
+            "Check disk space and permissions for the data directory. Another process may be locking the store."
+        )
     )]
     Store(String),
 
     #[error("recovery error: {0}")]
-    #[diagnostic(help("Recovery from peers failed. Check that other agents are online and reachable."))]
+    #[diagnostic(help(
+        "Recovery from peers failed. Check that other agents are online and reachable."
+    ))]
     Recovery(String),
 
     #[error("invalid configuration: {0}")]
-    #[diagnostic(code(mitiflow::agent::config), help("Check the agent configuration file or environment variables."))]
+    #[diagnostic(
+        code(mitiflow::agent::config),
+        help("Check the agent configuration file or environment variables.")
+    )]
     Config(String),
 
     #[error("serialization error: {0}")]

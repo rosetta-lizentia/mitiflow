@@ -154,7 +154,7 @@ impl ConsumerWork for NatsJetStreamConsumer {
     type State = NatsJetStreamConsumerState;
 
     async fn init(&self) -> Self::State {
-        use async_nats::jetstream::consumer::{push::OrderedConfig, DeliverPolicy};
+        use async_nats::jetstream::consumer::{DeliverPolicy, push::OrderedConfig};
 
         let client = async_nats::connect(&self.url)
             .await

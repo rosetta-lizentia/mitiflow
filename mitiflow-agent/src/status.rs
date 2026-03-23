@@ -17,11 +17,7 @@ pub struct StatusReporter {
 }
 
 impl StatusReporter {
-    pub async fn new(
-        session: &Session,
-        node_id: String,
-        key_prefix: &str,
-    ) -> AgentResult<Self> {
+    pub async fn new(session: &Session, node_id: String, key_prefix: &str) -> AgentResult<Self> {
         let status_key = format!("{key_prefix}/_cluster/status/{node_id}");
         let cancel = CancellationToken::new();
 

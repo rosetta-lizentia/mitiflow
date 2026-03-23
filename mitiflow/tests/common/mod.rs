@@ -27,9 +27,7 @@ pub fn test_config(test_name: &str) -> EventBusConfig {
 /// Open a peer-mode Zenoh session and create a connected publisher + subscriber pair.
 ///
 /// Returns `(session, publisher, subscriber)`. Includes a 100ms settle delay.
-pub async fn setup_pubsub(
-    test_name: &str,
-) -> (zenoh::Session, EventPublisher, EventSubscriber) {
+pub async fn setup_pubsub(test_name: &str) -> (zenoh::Session, EventPublisher, EventSubscriber) {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = test_config(test_name);
     let subscriber = EventSubscriber::new(&session, config.clone())

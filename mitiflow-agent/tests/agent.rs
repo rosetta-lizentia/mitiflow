@@ -49,10 +49,7 @@ async fn agent_starts_and_owns_all_partitions_single_node() {
     );
 
     for p in 0..4 {
-        assert!(
-            assigned.contains(&(p, 0)),
-            "should own partition {p}"
-        );
+        assert!(assigned.contains(&(p, 0)), "should own partition {p}");
     }
 
     agent.shutdown().await.unwrap();
@@ -367,7 +364,12 @@ async fn agent_rack_aware_placement() {
 
     // Build a map: for each (partition, replica) → which node owns it.
     let mut assignment_map: HashMap<(u32, u32), &str> = HashMap::new();
-    for (parts, name) in [(&p1, "node-1"), (&p2, "node-2"), (&p3, "node-3"), (&p4, "node-4")] {
+    for (parts, name) in [
+        (&p1, "node-1"),
+        (&p2, "node-2"),
+        (&p3, "node-3"),
+        (&p4, "node-4"),
+    ] {
         for &pr in parts {
             assignment_map.insert(pr, name);
         }

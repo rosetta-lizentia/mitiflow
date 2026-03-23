@@ -65,9 +65,20 @@ mod tests {
     fn make_wm(entries: Vec<(PublisherId, u64, Vec<u64>)>) -> CommitWatermark {
         let mut publishers = HashMap::new();
         for (id, committed, gaps) in entries {
-            publishers.insert(id, PublisherWatermark { committed_seq: committed, gaps });
+            publishers.insert(
+                id,
+                PublisherWatermark {
+                    committed_seq: committed,
+                    gaps,
+                },
+            );
         }
-        CommitWatermark { partition: 0, publishers, timestamp: Utc::now(), epoch: 0 }
+        CommitWatermark {
+            partition: 0,
+            publishers,
+            timestamp: Utc::now(),
+            epoch: 0,
+        }
     }
 
     #[test]
@@ -101,10 +112,7 @@ mod tests {
     fn multiple_publishers_independent() {
         let pub_a = PublisherId::new();
         let pub_b = PublisherId::new();
-        let wm = make_wm(vec![
-            (pub_a, 50, vec![10]),
-            (pub_b, 200, vec![]),
-        ]);
+        let wm = make_wm(vec![(pub_a, 50, vec![10]), (pub_b, 200, vec![])]);
         assert!(wm.is_durable(&pub_a, 30));
         assert!(!wm.is_durable(&pub_a, 10)); // in gaps
         assert!(!wm.is_durable(&pub_a, 51)); // above committed

@@ -118,11 +118,7 @@ async fn main() {
                 topic: topic.clone(),
                 payload_size,
             };
-            let consumer = transport::nats::NatsConsumerGroupConsumer {
-                url,
-                topic,
-                group,
-            };
+            let consumer = transport::nats::NatsConsumerGroupConsumer { url, topic, group };
             run_consumer_group(cli.bench, producer, consumer, consumers).await;
         }
 

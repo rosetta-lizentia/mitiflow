@@ -2,14 +2,9 @@
 
 use std::time::Duration;
 
-use mitiflow_agent::{
-    AgentConfig, AgentConfigBuilder, TopicEntry, TopicSupervisor,
-};
+use mitiflow_agent::{AgentConfig, AgentConfigBuilder, TopicEntry, TopicSupervisor};
 
-fn make_config(
-    test_name: &str,
-    topics: Vec<(&str, u32, u32)>,
-) -> (tempfile::TempDir, AgentConfig) {
+fn make_config(test_name: &str, topics: Vec<(&str, u32, u32)>) -> (tempfile::TempDir, AgentConfig) {
     let tmp = tempfile::tempdir().unwrap();
     let entries: Vec<TopicEntry> = topics
         .into_iter()
@@ -54,10 +49,7 @@ async fn supervisor_add_single_topic() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supervisor_add_multiple_topics() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-    let (_tmp, config) = make_config(
-        "sup_multi",
-        vec![("events", 4, 1), ("logs", 3, 1)],
-    );
+    let (_tmp, config) = make_config("sup_multi", vec![("events", 4, 1), ("logs", 3, 1)]);
 
     let mut supervisor = TopicSupervisor::start(&session, &config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -66,8 +58,16 @@ async fn supervisor_add_multiple_topics() {
     assert!(supervisor.has_topic("events"));
     assert!(supervisor.has_topic("logs"));
 
-    let events_parts = supervisor.worker("events").unwrap().assigned_partitions().await;
-    let logs_parts = supervisor.worker("logs").unwrap().assigned_partitions().await;
+    let events_parts = supervisor
+        .worker("events")
+        .unwrap()
+        .assigned_partitions()
+        .await;
+    let logs_parts = supervisor
+        .worker("logs")
+        .unwrap()
+        .assigned_partitions()
+        .await;
     assert_eq!(events_parts.len(), 4, "events should have 4 partitions");
     assert_eq!(logs_parts.len(), 3, "logs should have 3 partitions");
 
@@ -81,10 +81,7 @@ async fn supervisor_add_multiple_topics() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supervisor_remove_topic() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-    let (_tmp, config) = make_config(
-        "sup_remove",
-        vec![("events", 4, 1), ("logs", 2, 1)],
-    );
+    let (_tmp, config) = make_config("sup_remove", vec![("events", 4, 1), ("logs", 2, 1)]);
 
     let mut supervisor = TopicSupervisor::start(&session, &config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -96,7 +93,11 @@ async fn supervisor_remove_topic() {
     assert_eq!(supervisor.topics().len(), 1);
 
     // Remaining topic still works.
-    let logs_parts = supervisor.worker("logs").unwrap().assigned_partitions().await;
+    let logs_parts = supervisor
+        .worker("logs")
+        .unwrap()
+        .assigned_partitions()
+        .await;
     assert_eq!(logs_parts.len(), 2);
 
     supervisor.shutdown().await.unwrap();
@@ -120,10 +121,7 @@ async fn supervisor_remove_nonexistent_is_noop() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supervisor_shutdown_stops_all() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-    let (_tmp, config) = make_config(
-        "sup_shutdown",
-        vec![("events", 4, 1), ("logs", 2, 1)],
-    );
+    let (_tmp, config) = make_config("sup_shutdown", vec![("events", 4, 1), ("logs", 2, 1)]);
 
     let mut supervisor = TopicSupervisor::start(&session, &config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -234,16 +232,21 @@ async fn supervisor_separate_data_dirs_per_topic() {
 async fn supervisor_topics_isolated_assignment() {
     // Two topics on same node, each should get independent partition assignment.
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-    let (_tmp, config) = make_config(
-        "sup_isolated",
-        vec![("events", 4, 1), ("logs", 6, 1)],
-    );
+    let (_tmp, config) = make_config("sup_isolated", vec![("events", 4, 1), ("logs", 6, 1)]);
 
     let mut supervisor = TopicSupervisor::start(&session, &config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let events = supervisor.worker("events").unwrap().assigned_partitions().await;
-    let logs = supervisor.worker("logs").unwrap().assigned_partitions().await;
+    let events = supervisor
+        .worker("events")
+        .unwrap()
+        .assigned_partitions()
+        .await;
+    let logs = supervisor
+        .worker("logs")
+        .unwrap()
+        .assigned_partitions()
+        .await;
 
     assert_eq!(events.len(), 4, "events: single node should own all 4");
     assert_eq!(logs.len(), 6, "logs: single node should own all 6");

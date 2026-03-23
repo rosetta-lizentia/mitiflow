@@ -24,12 +24,7 @@ struct AgentSlot {
 
 impl TestCluster {
     /// Create a new cluster description without starting any agents.
-    pub fn new(
-        test_name: &str,
-        num_nodes: usize,
-        num_partitions: u32,
-        rf: u32,
-    ) -> Self {
+    pub fn new(test_name: &str, num_nodes: usize, num_partitions: u32, rf: u32) -> Self {
         Self {
             test_name: test_name.to_string(),
             num_partitions,
@@ -139,8 +134,7 @@ impl TestCluster {
     /// Verify every (partition, replica) has at least one owner.
     pub async fn verify_full_coverage(&self) {
         let snapshot = self.get_assignment_snapshot().await;
-        let all_assignments: Vec<(u32, u32)> =
-            snapshot.values().flatten().copied().collect();
+        let all_assignments: Vec<(u32, u32)> = snapshot.values().flatten().copied().collect();
 
         for partition in 0..self.num_partitions {
             for replica in 0..self.replication_factor {
@@ -239,12 +233,7 @@ impl TestCluster {
 
     /// Publish `n` events with sequential payload `"msg-0"`, `"msg-1"`, … to the given partition.
     #[allow(dead_code)]
-    pub async fn publish_events(
-        &self,
-        publisher: &EventPublisher,
-        partition: u32,
-        count: usize,
-    ) {
+    pub async fn publish_events(&self, publisher: &EventPublisher, partition: u32, count: usize) {
         let key = format!("test/{}/p/{partition}/data", self.test_name);
         for i in 0..count {
             let payload = format!("msg-{i}");
@@ -257,11 +246,7 @@ impl TestCluster {
 
     /// Query a store partition via Zenoh and return the number of events found.
     #[allow(dead_code)]
-    pub async fn query_store_count(
-        &self,
-        session: &zenoh::Session,
-        partition: u32,
-    ) -> usize {
+    pub async fn query_store_count(&self, session: &zenoh::Session, partition: u32) -> usize {
         let query_key = format!("test/{}/_store/{partition}", self.test_name);
         let mut count = 0;
 
@@ -286,11 +271,7 @@ impl TestCluster {
 
     /// Query a store partition and return the sequence numbers of stored events.
     #[allow(dead_code)]
-    pub async fn query_store_seqs(
-        &self,
-        session: &zenoh::Session,
-        partition: u32,
-    ) -> Vec<u64> {
+    pub async fn query_store_seqs(&self, session: &zenoh::Session, partition: u32) -> Vec<u64> {
         let query_key = format!("test/{}/_store/{partition}", self.test_name);
         let mut seqs = Vec::new();
 

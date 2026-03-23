@@ -9,18 +9,11 @@ use crate::config::{GeneratorType, PayloadConfig, SchemaFieldDef, SchemaFieldTyp
 #[derive(Clone)]
 pub enum PayloadGenerator {
     /// Random JSON objects of approximately `size_bytes`.
-    RandomJson {
-        size_bytes: usize,
-    },
+    RandomJson { size_bytes: usize },
     /// Fixed-size payload (constant content).
-    Fixed {
-        content: Vec<u8>,
-    },
+    Fixed { content: Vec<u8> },
     /// Sequential counter: `{"seq": N, "prefix": "..."}`.
-    Counter {
-        prefix: String,
-        seq: u64,
-    },
+    Counter { prefix: String, seq: u64 },
     /// Schema-driven structured JSON.
     Schema {
         fields: Vec<(String, FieldGenerator)>,
@@ -70,9 +63,7 @@ impl PayloadGenerator {
                     .iter()
                     .map(|(name, def)| (name.clone(), FieldGenerator::from_def(def)))
                     .collect();
-                Self::Schema {
-                    fields,
-                }
+                Self::Schema { fields }
             }
         }
     }
@@ -150,15 +141,9 @@ impl FieldGenerator {
                 let val = rng.random_range(*min..=*max);
                 serde_json::Value::from(val)
             }
-            Self::Uuid => {
-                serde_json::Value::String(uuid::Uuid::now_v7().to_string())
-            }
-            Self::DateTime => {
-                serde_json::Value::String(chrono::Utc::now().to_rfc3339())
-            }
-            Self::Bool { probability } => {
-                serde_json::Value::Bool(rng.random_bool(*probability))
-            }
+            Self::Uuid => serde_json::Value::String(uuid::Uuid::now_v7().to_string()),
+            Self::DateTime => serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+            Self::Bool { probability } => serde_json::Value::Bool(rng.random_bool(*probability)),
             Self::Enum { values } => {
                 if values.is_empty() {
                     serde_json::Value::Null

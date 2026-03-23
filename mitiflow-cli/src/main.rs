@@ -146,8 +146,7 @@ async fn run_agent(config_path: Option<PathBuf>) -> anyhow::Result<()> {
         mitiflow_agent::StorageAgent::start_multi(&session, agent_config).await?
     } else {
         // Env-var fallback
-        let key_prefix =
-            std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
+        let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
         let data_dir =
             std::env::var("MITIFLOW_DATA_DIR").unwrap_or_else(|_| "/tmp/mitiflow-agent".into());
         let node_id = std::env::var("MITIFLOW_NODE_ID").ok();
@@ -191,11 +190,9 @@ async fn run_orchestrator(config_path: Option<PathBuf>) -> anyhow::Result<()> {
 
     let orch_config = if let Some(path) = config_path {
         let content = std::fs::read_to_string(&path)?;
-        serde_yaml::from_str::<OrchestratorYamlConfig>(&content)?
-            .into_orch_config()
+        serde_yaml::from_str::<OrchestratorYamlConfig>(&content)?.into_orch_config()
     } else {
-        let key_prefix =
-            std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
+        let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
         let data_dir = std::env::var("MITIFLOW_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./orchestrator_data"));
@@ -215,7 +212,10 @@ async fn run_orchestrator(config_path: Option<PathBuf>) -> anyhow::Result<()> {
 
     let mut orchestrator = mitiflow_orchestrator::Orchestrator::new(&session, orch_config)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    orchestrator.run().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    orchestrator
+        .run()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     tracing::info!("orchestrator running, press Ctrl+C to stop");
     tokio::signal::ctrl_c().await?;
@@ -414,8 +414,8 @@ async fn run_diagnose(
     }
 
     // 4. Check orchestrator admin queryable (if configured)
-    let admin_prefix = std::env::var("MITIFLOW_ADMIN_PREFIX")
-        .unwrap_or_else(|_| format!("{prefix}/_admin"));
+    let admin_prefix =
+        std::env::var("MITIFLOW_ADMIN_PREFIX").unwrap_or_else(|_| format!("{prefix}/_admin"));
     print!("[check] Orchestrator admin ({admin_prefix}/cluster/nodes) ... ");
     let admin_key = format!("{admin_prefix}/cluster/nodes");
     let replies = session
@@ -482,7 +482,10 @@ async fn run_dev(
 
     let mut orchestrator = mitiflow_orchestrator::Orchestrator::new(&session, orch_config)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    orchestrator.run().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    orchestrator
+        .run()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Create topics
     for (name, partitions, rf) in &topic_specs {
@@ -496,7 +499,10 @@ async fn run_dev(
             required_labels: Default::default(),
             excluded_labels: Default::default(),
         };
-        orchestrator.create_topic(tc).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        orchestrator
+            .create_topic(tc)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
     }
 
     // Start agent in auto-discover mode

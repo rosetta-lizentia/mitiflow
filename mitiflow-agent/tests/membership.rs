@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
-use mitiflow_agent::{StorageAgentConfig, StorageAgentConfigBuilder};
 use mitiflow_agent::membership::{MembershipEvent, MembershipTracker};
+use mitiflow_agent::{StorageAgentConfig, StorageAgentConfigBuilder};
 use tokio::sync::Notify;
 
 fn agent_config(test_name: &str, node_id: &str) -> StorageAgentConfig {
@@ -72,7 +72,10 @@ async fn tracker_discovers_existing_nodes() {
     // peer_nodes should exclude self.
     let peers = tracker.peer_nodes().await;
     let peer_ids: Vec<&str> = peers.iter().map(|n| n.id.as_str()).collect();
-    assert!(!peer_ids.contains(&"node-self"), "peers should not include self");
+    assert!(
+        !peer_ids.contains(&"node-self"),
+        "peers should not include self"
+    );
 
     tracker.shutdown().await;
     session.close().await.unwrap();
@@ -87,17 +90,18 @@ async fn tracker_detects_node_join() {
     // Register callback that signals when a node joins.
     let join_notify = Arc::new(Notify::new());
     let join_signal = Arc::clone(&join_notify);
-    let joined_id: Arc<std::sync::Mutex<Option<String>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let joined_id: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
     let joined_capture = Arc::clone(&joined_id);
 
-    tracker.on_change(move |_nodes, event| {
-        if let MembershipEvent::Joined(id) = event {
-            let mut guard = joined_capture.lock().unwrap();
-            *guard = Some(id.clone());
-            join_signal.notify_one();
-        }
-    }).await;
+    tracker
+        .on_change(move |_nodes, event| {
+            if let MembershipEvent::Joined(id) = event {
+                let mut guard = joined_capture.lock().unwrap();
+                *guard = Some(id.clone());
+                join_signal.notify_one();
+            }
+        })
+        .await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -115,7 +119,10 @@ async fn tracker_detects_node_join() {
     // Verify node appears in the current list.
     let nodes = tracker.current_nodes().await;
     let ids: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
-    assert!(ids.contains(&"node-new"), "should include newly joined node");
+    assert!(
+        ids.contains(&"node-new"),
+        "should include newly joined node"
+    );
 
     tracker.shutdown().await;
     session.close().await.unwrap();
@@ -142,17 +149,18 @@ async fn tracker_detects_node_leave() {
     // Register callback for leave events.
     let leave_notify = Arc::new(Notify::new());
     let leave_signal = Arc::clone(&leave_notify);
-    let left_id: Arc<std::sync::Mutex<Option<String>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let left_id: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
     let left_capture = Arc::clone(&left_id);
 
-    tracker.on_change(move |_nodes, event| {
-        if let MembershipEvent::Left(id) = event {
-            let mut guard = left_capture.lock().unwrap();
-            *guard = Some(id.clone());
-            leave_signal.notify_one();
-        }
-    }).await;
+    tracker
+        .on_change(move |_nodes, event| {
+            if let MembershipEvent::Left(id) = event {
+                let mut guard = left_capture.lock().unwrap();
+                *guard = Some(id.clone());
+                leave_signal.notify_one();
+            }
+        })
+        .await;
 
     // Drop the liveliness token to simulate the peer leaving.
     token.undeclare().await.unwrap();
@@ -184,7 +192,10 @@ async fn tracker_ignores_self() {
     // peer_nodes() must never include "node-me".
     let peers = tracker.peer_nodes().await;
     let peer_ids: Vec<&str> = peers.iter().map(|n| n.id.as_str()).collect();
-    assert!(!peer_ids.contains(&"node-me"), "peer_nodes should not include self");
+    assert!(
+        !peer_ids.contains(&"node-me"),
+        "peer_nodes should not include self"
+    );
 
     // current_nodes() should include "node-me" exactly once (self).
     let nodes = tracker.current_nodes().await;

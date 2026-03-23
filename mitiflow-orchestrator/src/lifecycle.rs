@@ -36,10 +36,12 @@ pub struct StoreTracker {
 
 impl StoreTracker {
     /// Start tracking stores for the given key prefix.
-    pub async fn new(session: &Session, key_prefix: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn new(
+        session: &Session,
+        key_prefix: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let cancel = CancellationToken::new();
-        let stores: Arc<RwLock<HashMap<u32, StoreInfo>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let stores: Arc<RwLock<HashMap<u32, StoreInfo>>> = Arc::new(RwLock::new(HashMap::new()));
 
         // Discover existing stores via liveliness get
         let liveliness_key = format!("{key_prefix}/_store/*");

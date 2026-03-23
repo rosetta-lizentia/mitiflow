@@ -30,13 +30,9 @@ fn bench_watermark_serialize(c: &mut Criterion) {
     for &num_publishers in &[10, 100] {
         let wm = make_commit_watermark(num_publishers);
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_publishers),
-            &wm,
-            |b, wm| {
-                b.iter(|| serde_json::to_vec(wm).unwrap());
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(num_publishers), &wm, |b, wm| {
+            b.iter(|| serde_json::to_vec(wm).unwrap());
+        });
     }
     group.finish();
 }
@@ -88,20 +84,16 @@ fn bench_publisher_watermark_is_durable(c: &mut Criterion) {
             gaps,
         };
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_gaps),
-            &pw,
-            |b, pw| {
-                b.iter(|| {
-                    // Check a seq that exists (not in gaps)
-                    std::hint::black_box(pw.is_durable(5_000));
-                    // Check a seq that is in a gap (worst case for linear scan)
-                    if num_gaps > 0 {
-                        std::hint::black_box(pw.is_durable(50));
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(num_gaps), &pw, |b, pw| {
+            b.iter(|| {
+                // Check a seq that exists (not in gaps)
+                std::hint::black_box(pw.is_durable(5_000));
+                // Check a seq that is in a gap (worst case for linear scan)
+                if num_gaps > 0 {
+                    std::hint::black_box(pw.is_durable(50));
+                }
+            });
+        });
     }
     group.finish();
 }

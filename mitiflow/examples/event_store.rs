@@ -16,8 +16,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use mitiflow::{
-    store::QueryFilters, Event, EventBusConfig, EventPublisher, EventStore, EventSubscriber,
-    FjallBackend, HeartbeatMode,
+    Event, EventBusConfig, EventPublisher, EventStore, EventSubscriber, FjallBackend,
+    HeartbeatMode, store::QueryFilters,
 };
 
 /// A metric data point collected from a host.
@@ -81,10 +81,7 @@ async fn publish_durable_events(
 }
 
 /// Phase 4: Drain the live subscriber stream.
-async fn drain_live_stream(
-    subscriber: &EventSubscriber,
-    num_events: u64,
-) -> mitiflow::Result<()> {
+async fn drain_live_stream(subscriber: &EventSubscriber, num_events: u64) -> mitiflow::Result<()> {
     println!("\nLive stream:");
     for i in 0..num_events {
         let event: Event<MetricPoint> =
@@ -111,22 +108,26 @@ async fn drain_live_stream(
 async fn run_store_queries(store: &EventStore) -> mitiflow::Result<()> {
     println!("\nStore queries:");
 
-    let recent = store.query(&QueryFilters {
-        after_seq: Some(14),
-        limit: Some(5),
-        ..Default::default()
-    }).await?;
+    let recent = store
+        .query(&QueryFilters {
+            after_seq: Some(14),
+            limit: Some(5),
+            ..Default::default()
+        })
+        .await?;
     println!(
         "  after_seq=14, limit=5  -> {} events  seqs={:?}",
         recent.len(),
         recent.iter().map(|e| e.metadata.seq).collect::<Vec<_>>()
     );
 
-    let range = store.query(&QueryFilters {
-        after_seq: Some(4),
-        before_seq: Some(10),
-        ..Default::default()
-    }).await?;
+    let range = store
+        .query(&QueryFilters {
+            after_seq: Some(4),
+            before_seq: Some(10),
+            ..Default::default()
+        })
+        .await?;
     println!(
         "  seq range (4, 10)      -> {} events  seqs={:?}",
         range.len(),
@@ -156,7 +157,8 @@ async fn run_maintenance(store: &EventStore) -> mitiflow::Result<()> {
     );
 
     let gc_count = store
-        .gc(chrono::Utc::now() - chrono::Duration::hours(1)).await?;
+        .gc(chrono::Utc::now() - chrono::Duration::hours(1))
+        .await?;
     println!("GC (older than 1h): removed={gc_count}");
     Ok(())
 }

@@ -4,18 +4,18 @@
 //! orchestrator) as separate OS processes or Docker containers, manages lifecycle,
 //! aggregates logs, and schedules chaos events for fault injection testing.
 
-pub mod config;
-pub mod error;
-pub mod validation;
-pub mod generator;
 pub mod backend;
-pub mod process_backend;
+pub mod chaos;
+pub mod config;
 pub mod container_backend;
+pub mod error;
+pub mod generator;
 pub mod log_aggregator;
+pub mod process_backend;
 pub mod role_config;
 pub mod supervisor;
-pub mod chaos;
+pub mod validation;
 
 pub use config::TopologyConfig;
 pub use error::{EmulatorError, Result};
-pub use validation::{validate, ValidationResult};
+pub use validation::{ValidationResult, validate};

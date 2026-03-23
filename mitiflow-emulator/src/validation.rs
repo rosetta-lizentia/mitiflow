@@ -32,9 +32,7 @@ pub fn validate(config: &TopologyConfig) -> crate::error::Result<ValidationResul
     let mut warnings = Vec::new();
 
     if config.components.is_empty() {
-        return Err(EmulatorError::Validation(
-            "components list is empty".into(),
-        ));
+        return Err(EmulatorError::Validation("components list is empty".into()));
     }
 
     // Build topic registry.
@@ -348,22 +346,16 @@ pub fn resolve_component_config(
     topic: Option<&TopicDef>,
     defaults: &DefaultsConfig,
 ) -> ResolvedComponentConfig {
-    let key_prefix = topic
-        .map(|t| t.key_prefix.clone())
-        .unwrap_or_default();
+    let key_prefix = topic.map(|t| t.key_prefix.clone()).unwrap_or_default();
 
     let codec = component
         .codec
         .or_else(|| topic.and_then(|t| t.codec))
         .unwrap_or(defaults.codec);
 
-    let num_partitions = topic
-        .map(|t| t.num_partitions)
-        .unwrap_or(16);
+    let num_partitions = topic.map(|t| t.num_partitions).unwrap_or(16);
 
-    let replication_factor = topic
-        .map(|t| t.replication_factor)
-        .unwrap_or(1);
+    let replication_factor = topic.map(|t| t.replication_factor).unwrap_or(1);
 
     let cache_size = component.cache_size.unwrap_or(defaults.cache_size);
 

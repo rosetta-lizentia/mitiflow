@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use mitiflow::partition::hash_ring::{assign_replicas_rack_aware, NodeDescriptor};
+use mitiflow::partition::hash_ring::{NodeDescriptor, assign_replicas_rack_aware};
 use mitiflow_agent::OverrideEntry;
 
 use crate::cluster_view::ClusterView;
@@ -43,8 +43,7 @@ pub fn compute_drain_overrides(
     owned
         .into_iter()
         .map(|(partition, replica)| {
-            let chain =
-                assign_replicas_rack_aware(partition, replication_factor, &alternatives);
+            let chain = assign_replicas_rack_aware(partition, replication_factor, &alternatives);
             let target = chain
                 .into_iter()
                 .next()
@@ -76,11 +75,7 @@ pub async fn drain_node(
         .iter()
         .filter(|(_, info)| info.online)
         .map(|(id, info)| {
-            let capacity = info
-                .metadata
-                .as_ref()
-                .map(|m| m.capacity)
-                .unwrap_or(100);
+            let capacity = info.metadata.as_ref().map(|m| m.capacity).unwrap_or(100);
             let labels = info
                 .metadata
                 .as_ref()

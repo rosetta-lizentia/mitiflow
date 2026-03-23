@@ -5,9 +5,9 @@
 
 use std::time::Duration;
 
+use mitiflow_emulator::role_config::{OrchestratorRoleConfig, ZenohRoleConfig, decode_config};
+use mitiflow_orchestrator::config::{CompactionPolicy, RetentionPolicy};
 use mitiflow_orchestrator::orchestrator::{Orchestrator, OrchestratorConfig};
-use mitiflow_orchestrator::config::{RetentionPolicy, CompactionPolicy};
-use mitiflow_emulator::role_config::{decode_config, OrchestratorRoleConfig, ZenohRoleConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,9 +27,15 @@ async fn main() -> anyhow::Result<()> {
     let mut zc = zenoh::Config::default();
     let me = |e: Box<dyn std::error::Error + Send + Sync>| anyhow::anyhow!("{e}");
     match zenoh_cfg.mode.as_str() {
-        "client" => { zc.insert_json5("mode", r#""client""#).map_err(&me)?; }
-        "router" => { zc.insert_json5("mode", r#""router""#).map_err(&me)?; }
-        _ => { zc.insert_json5("mode", r#""peer""#).map_err(&me)?; }
+        "client" => {
+            zc.insert_json5("mode", r#""client""#).map_err(&me)?;
+        }
+        "router" => {
+            zc.insert_json5("mode", r#""router""#).map_err(&me)?;
+        }
+        _ => {
+            zc.insert_json5("mode", r#""peer""#).map_err(&me)?;
+        }
     }
     if !zenoh_cfg.listen.is_empty() {
         let json = serde_json::to_string(&zenoh_cfg.listen)?;
@@ -92,9 +98,8 @@ async fn main() -> anyhow::Result<()> {
     {
         let cancel_sig = cancel.clone();
         tokio::spawn(async move {
-            let mut sig =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to register SIGTERM handler");
+            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
             sig.recv().await;
             cancel_sig.cancel();
         });

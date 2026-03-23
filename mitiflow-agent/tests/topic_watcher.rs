@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow_agent::config::AgentConfig;
-use mitiflow_agent::topic_watcher::{should_serve_topic, RemoteTopicConfig};
 use mitiflow_agent::TopicEntry;
+use mitiflow_agent::config::AgentConfig;
+use mitiflow_agent::topic_watcher::{RemoteTopicConfig, should_serve_topic};
 
 // =========================================================================
 // should_serve_topic — label matching unit tests
@@ -161,7 +161,8 @@ struct MockOrchestrator {
     session: zenoh::Session,
     prefix: String,
     configs: Vec<RemoteTopicConfig>,
-    _queryable: Option<zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>>,
+    _queryable:
+        Option<zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>>,
 }
 
 impl MockOrchestrator {
@@ -219,8 +220,10 @@ async fn watcher_discovers_existing_topics_on_startup() {
 
     // Setup mock orchestrator with 2 topics.
     let mut mock = MockOrchestrator::new(&session, &prefix).await;
-    mock.configs.push(remote_config_with_prefix("orders", &prefix));
-    mock.configs.push(remote_config_with_prefix("logs", &prefix));
+    mock.configs
+        .push(remote_config_with_prefix("orders", &prefix));
+    mock.configs
+        .push(remote_config_with_prefix("logs", &prefix));
     mock.start().await;
 
     // Give queryable time to register.
@@ -235,8 +238,16 @@ async fn watcher_discovers_existing_topics_on_startup() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let topics = agent.topics().await;
-    assert!(topics.contains(&"orders".to_string()), "should discover 'orders', got {:?}", topics);
-    assert!(topics.contains(&"logs".to_string()), "should discover 'logs', got {:?}", topics);
+    assert!(
+        topics.contains(&"orders".to_string()),
+        "should discover 'orders', got {:?}",
+        topics
+    );
+    assert!(
+        topics.contains(&"logs".to_string()),
+        "should discover 'logs', got {:?}",
+        topics
+    );
 
     agent.shutdown().await.unwrap();
     session.close().await.unwrap();
@@ -263,7 +274,11 @@ async fn watcher_reacts_to_new_topic() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
     let topics = agent.topics().await;
-    assert!(topics.contains(&"events".to_string()), "should pick up new topic, got {:?}", topics);
+    assert!(
+        topics.contains(&"events".to_string()),
+        "should pick up new topic, got {:?}",
+        topics
+    );
 
     agent.shutdown().await.unwrap();
     session.close().await.unwrap();
@@ -295,7 +310,10 @@ async fn watcher_reacts_to_deleted_topic() {
     session.delete(&key).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!agent.has_topic("ephemeral").await, "topic should be removed after delete");
+    assert!(
+        !agent.has_topic("ephemeral").await,
+        "topic should be removed after delete"
+    );
 
     agent.shutdown().await.unwrap();
     session.close().await.unwrap();
@@ -326,10 +344,16 @@ async fn watcher_ignores_topic_missing_labels() {
         excluded_labels: HashMap::new(),
     };
     let bytes = serde_json::to_vec(&cfg).unwrap();
-    session.put(format!("{}/_config/hot-data", prefix), bytes).await.unwrap();
+    session
+        .put(format!("{}/_config/hot-data", prefix), bytes)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!agent.has_topic("hot-data").await, "agent with hdd should not serve ssd topic");
+    assert!(
+        !agent.has_topic("hot-data").await,
+        "agent with hdd should not serve ssd topic"
+    );
 
     agent.shutdown().await.unwrap();
     session.close().await.unwrap();
@@ -359,10 +383,16 @@ async fn watcher_serves_topic_matching_labels() {
         excluded_labels: HashMap::new(),
     };
     let bytes = serde_json::to_vec(&cfg).unwrap();
-    session.put(format!("{}/_config/regional", prefix), bytes).await.unwrap();
+    session
+        .put(format!("{}/_config/regional", prefix), bytes)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(agent.has_topic("regional").await, "agent matching labels should serve topic");
+    assert!(
+        agent.has_topic("regional").await,
+        "agent matching labels should serve topic"
+    );
 
     agent.shutdown().await.unwrap();
     session.close().await.unwrap();
@@ -392,10 +422,16 @@ async fn watcher_excludes_by_label() {
         excluded_labels: excluded,
     };
     let bytes = serde_json::to_vec(&cfg).unwrap();
-    session.put(format!("{}/_config/prod-only", prefix), bytes).await.unwrap();
+    session
+        .put(format!("{}/_config/prod-only", prefix), bytes)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!agent.has_topic("prod-only").await, "staging agent should not serve prod-only topic");
+    assert!(
+        !agent.has_topic("prod-only").await,
+        "staging agent should not serve prod-only topic"
+    );
 
     agent.shutdown().await.unwrap();
     session.close().await.unwrap();

@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow_agent::{TopicEntry, TopicWorkerConfig};
 use mitiflow_agent::topic_worker::TopicWorker;
+use mitiflow_agent::{TopicEntry, TopicWorkerConfig};
 
 fn worker_config(
     test_name: &str,
@@ -35,7 +35,9 @@ async fn topic_worker_starts_and_owns_partitions() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let (_tmp, config) = worker_config("tw_single", "events", 4, 1);
 
-    let worker = TopicWorker::start(&session, "node-only", config).await.unwrap();
+    let worker = TopicWorker::start(&session, "node-only", config)
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let assigned = worker.assigned_partitions().await;
@@ -103,7 +105,9 @@ async fn topic_worker_shutdown_drains() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let (_tmp, config) = worker_config("tw_drain", "events", 4, 1);
 
-    let worker = TopicWorker::start(&session, "node-only", config).await.unwrap();
+    let worker = TopicWorker::start(&session, "node-only", config)
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(worker.assigned_partitions().await.len(), 4);
 

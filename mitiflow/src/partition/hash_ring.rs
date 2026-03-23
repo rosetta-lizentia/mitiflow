@@ -412,10 +412,7 @@ mod tests {
     #[test]
     fn assign_replicas_rf_exceeds_nodes() {
         // RF > num_nodes should return all nodes (no panic, no duplicates).
-        let nodes = vec![
-            NodeDescriptor::new("a"),
-            NodeDescriptor::new("b"),
-        ];
+        let nodes = vec![NodeDescriptor::new("a"), NodeDescriptor::new("b")];
         let replicas = assign_replicas(0, 5, &nodes);
         assert_eq!(replicas.len(), 2, "can't have more replicas than nodes");
     }
@@ -446,10 +443,7 @@ mod tests {
         }
 
         // Adding 1 node to 3 should move ~1/4 = ~16 partitions. Allow slack.
-        assert!(
-            moved <= 25,
-            "too many primary replicas moved: {moved}/64"
-        );
+        assert!(moved <= 25, "too many primary replicas moved: {moved}/64");
         assert!(
             moved >= 5,
             "suspiciously few primary replicas moved: {moved}/64"
@@ -470,10 +464,20 @@ mod tests {
         for p in 0..total {
             let replicas = assign_replicas_rack_aware(p, 2, &nodes);
             assert_eq!(replicas.len(), 2);
-            let rack_0 = nodes.iter().find(|n| n.id == replicas[0]).unwrap()
-                .labels.get("rack").unwrap();
-            let rack_1 = nodes.iter().find(|n| n.id == replicas[1]).unwrap()
-                .labels.get("rack").unwrap();
+            let rack_0 = nodes
+                .iter()
+                .find(|n| n.id == replicas[0])
+                .unwrap()
+                .labels
+                .get("rack")
+                .unwrap();
+            let rack_1 = nodes
+                .iter()
+                .find(|n| n.id == replicas[1])
+                .unwrap()
+                .labels
+                .get("rack")
+                .unwrap();
             if rack_0 != rack_1 {
                 cross_rack += 1;
             }
@@ -497,8 +501,15 @@ mod tests {
 
         for p in 0..20 {
             let replicas = assign_replicas_rack_aware(p, 2, &nodes);
-            assert_eq!(replicas.len(), 2, "partition {p} should get 2 replicas even with 1 rack");
-            assert_ne!(replicas[0], replicas[1], "replicas should be distinct nodes");
+            assert_eq!(
+                replicas.len(),
+                2,
+                "partition {p} should get 2 replicas even with 1 rack"
+            );
+            assert_ne!(
+                replicas[0], replicas[1],
+                "replicas should be distinct nodes"
+            );
         }
     }
 
@@ -514,7 +525,10 @@ mod tests {
         assert_eq!(table.len(), 12);
         for (p, replicas) in &table {
             assert_eq!(replicas.len(), 2, "partition {p} should have 2 replicas");
-            assert_ne!(replicas[0], replicas[1], "partition {p} replicas must be distinct");
+            assert_ne!(
+                replicas[0], replicas[1],
+                "partition {p} replicas must be distinct"
+            );
         }
     }
 }

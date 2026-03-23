@@ -222,10 +222,7 @@ components:
     );
     assert_eq!(payload.schema["temperature"].min, Some(-40.0));
     assert_eq!(payload.schema["region"].field_type, SchemaFieldType::Enum);
-    assert_eq!(
-        payload.schema["region"].values.as_ref().unwrap().len(),
-        3
-    );
+    assert_eq!(payload.schema["region"].values.as_ref().unwrap().len(), 3);
 }
 
 #[test]

@@ -34,7 +34,10 @@ async fn health_reporter_publishes_periodically() {
             received += 1;
         }
     }
-    assert!(received >= 2, "expected >= 2 health reports, got {received}");
+    assert!(
+        received >= 2,
+        "expected >= 2 health reports, got {received}"
+    );
 
     reporter.shutdown().await;
     session.close().await.unwrap();
@@ -136,8 +139,7 @@ async fn status_reporter_publishes_on_change() {
             .await
             .expect("timed out waiting for second status")
             .unwrap();
-        let status: NodeStatus =
-            serde_json::from_slice(&sample2.payload().to_bytes()).unwrap();
+        let status: NodeStatus = serde_json::from_slice(&sample2.payload().to_bytes()).unwrap();
         assert_eq!(status.partitions.len(), 2);
     }
 
@@ -167,8 +169,7 @@ async fn status_reporter_periodic_heartbeat() {
         .expect("timed out waiting for heartbeat")
         .unwrap();
 
-    let status: NodeStatus =
-        serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
+    let status: NodeStatus = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
     assert_eq!(status.node_id, node_id);
     // Empty partitions since we reported with no partitions.
     assert!(status.partitions.is_empty());

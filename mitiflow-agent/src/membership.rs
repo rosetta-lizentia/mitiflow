@@ -82,12 +82,7 @@ impl MembershipTracker {
                         continue;
                     }
                     // Try to fetch metadata for the discovered node.
-                    let desc = Self::fetch_node_descriptor(
-                        session,
-                        &agents_prefix,
-                        node_id,
-                    )
-                    .await;
+                    let desc = Self::fetch_node_descriptor(session, &agents_prefix, node_id).await;
                     nodes.write().await.insert(node_id.to_string(), desc);
                 }
             }

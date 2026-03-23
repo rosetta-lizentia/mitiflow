@@ -78,13 +78,9 @@ fn bench_raw_event_deserialize(c: &mut Criterion) {
             timestamp: chrono::Utc::now(),
         };
 
-        group.bench_with_input(
-            BenchmarkId::new(*codec_name, 256),
-            &raw,
-            |b, raw| {
-                b.iter(|| raw.deserialize_with::<TestPayload>(*codec).unwrap());
-            },
-        );
+        group.bench_with_input(BenchmarkId::new(*codec_name, 256), &raw, |b, raw| {
+            b.iter(|| raw.deserialize_with::<TestPayload>(*codec).unwrap());
+        });
     }
     group.finish();
 }

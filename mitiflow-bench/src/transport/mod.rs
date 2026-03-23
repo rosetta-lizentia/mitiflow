@@ -1,8 +1,8 @@
 //! Transport adapters for benchmarking different messaging systems.
 
-pub mod zenoh_raw;
-pub mod zenoh_advanced;
 pub mod mitiflow;
+pub mod zenoh_advanced;
+pub mod zenoh_raw;
 
 #[cfg(feature = "kafka")]
 pub mod kafka;

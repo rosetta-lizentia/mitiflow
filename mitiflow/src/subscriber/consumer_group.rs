@@ -81,9 +81,7 @@ impl ConsumerGroupSubscriber {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let my_parts = pm.my_partitions().await;
-        let generation = Arc::new(std::sync::atomic::AtomicU64::new(
-            pm.current_generation(),
-        ));
+        let generation = Arc::new(std::sync::atomic::AtomicU64::new(pm.current_generation()));
 
         // Fetch committed offsets for each assigned partition
         let mut checkpoints: HashMap<(PublisherId, u32), u64> = HashMap::new();
@@ -237,10 +235,8 @@ impl ConsumerGroupSubscriber {
 
                 // Load offsets for gained partitions
                 for &partition in &gained {
-                    let offsets = fetch_offsets_from_store(
-                        &session, &key_prefix, partition, &group_id,
-                    )
-                    .await;
+                    let offsets =
+                        fetch_offsets_from_store(&session, &key_prefix, partition, &group_id).await;
                     let mut pos = positions.write().await;
                     for (pub_id, seq) in offsets {
                         pos.insert((pub_id, partition), seq);
@@ -272,7 +268,14 @@ impl ConsumerGroupSubscriber {
 
             tasks.push(tokio::spawn(async move {
                 auto_commit_loop(
-                    &sess, &cfg, &gc, pos, assigned, generation_clone, interval, cancel_c,
+                    &sess,
+                    &cfg,
+                    &gc,
+                    pos,
+                    assigned,
+                    generation_clone,
+                    interval,
+                    cancel_c,
                 )
                 .await;
             }));
@@ -463,18 +466,15 @@ async fn fetch_offsets_from_store(
     partition: u32,
     group_id: &str,
 ) -> HashMap<PublisherId, u64> {
-    let selector = format!(
-        "{key_prefix}/_offsets/{partition}/{group_id}?fetch=true&group_id={group_id}"
-    );
+    let selector =
+        format!("{key_prefix}/_offsets/{partition}/{group_id}?fetch=true&group_id={group_id}");
     let mut result = HashMap::new();
     match session.get(&selector).await {
         Ok(replies) => {
             while let Ok(reply) = replies.recv_async().await {
                 if let Ok(sample) = reply.result() {
                     let payload = sample.payload().to_bytes();
-                    if let Ok(commit) =
-                        serde_json::from_slice::<OffsetCommit>(&payload)
-                    {
+                    if let Ok(commit) = serde_json::from_slice::<OffsetCommit>(&payload) {
                         for (pub_id, seq) in commit.offsets {
                             result.insert(pub_id, seq);
                         }

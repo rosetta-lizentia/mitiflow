@@ -1,6 +1,6 @@
-use std::time::Duration;
-use mitiflow::*;
 use mitiflow::store::FjallBackend;
+use mitiflow::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -9,14 +9,20 @@ async fn main() {
     let key = format!("{prefix}/_store/0");
     let dir = tempfile::tempdir().unwrap();
     let backend = FjallBackend::open(dir.path(), 0).unwrap();
-    let config = EventBusConfig::builder(prefix).cache_size(10).build().unwrap();
+    let config = EventBusConfig::builder(prefix)
+        .cache_size(10)
+        .build()
+        .unwrap();
     let mut store = EventStore::new(&session, backend, config.clone());
     store.run().await.unwrap();
 
     let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
     let pub_key = format!("{prefix}/p/0/test");
     for i in 0..5u32 {
-        publisher.publish_bytes_to(&pub_key, format!("msg-{i}").into_bytes()).await.unwrap();
+        publisher
+            .publish_bytes_to(&pub_key, format!("msg-{i}").into_bytes())
+            .await
+            .unwrap();
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -30,7 +36,9 @@ async fn main() {
         .unwrap();
     let mut c = 0;
     while let Ok(reply) = r.recv_async().await {
-        if reply.result().is_ok() { c += 1; }
+        if reply.result().is_ok() {
+            c += 1;
+        }
     }
     eprintln!("With accept_replies(Any): {c} replies (expected 5)");
 

@@ -44,10 +44,7 @@ fn bench_gap_detector_duplicate(c: &mut Criterion) {
         }
         b.iter(|| {
             // All of these are duplicates
-            assert_eq!(
-                det.on_sample(&pub_id, 0, 500),
-                SampleResult::Duplicate
-            );
+            assert_eq!(det.on_sample(&pub_id, 0, 500), SampleResult::Duplicate);
         });
     });
 }
@@ -56,7 +53,8 @@ fn bench_gap_detector_many_publishers(c: &mut Criterion) {
     let mut group = c.benchmark_group("gap_detector/many_publishers");
 
     for &num_publishers in &[100, 1000] {
-        let publishers: Vec<PublisherId> = (0..num_publishers).map(|_| PublisherId::new()).collect();
+        let publishers: Vec<PublisherId> =
+            (0..num_publishers).map(|_| PublisherId::new()).collect();
 
         // Pre-seed the detector with some state for each publisher
         let mut det = GapDetector::new();
@@ -99,8 +97,7 @@ fn bench_gap_detector_heartbeat(c: &mut Criterion) {
         }
 
         // Heartbeat reports seq 200 for each partition (gap of 100..201)
-        let partition_seqs: HashMap<u32, u64> =
-            (0..num_partitions).map(|p| (p, 200)).collect();
+        let partition_seqs: HashMap<u32, u64> = (0..num_partitions).map(|p| (p, 200)).collect();
 
         group.bench_with_input(
             BenchmarkId::from_parameter(num_partitions),

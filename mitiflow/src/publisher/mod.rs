@@ -203,8 +203,7 @@ impl EventPublisher {
 
         let cache: Arc<RwLock<VecDeque<CachedSample>>> =
             Arc::new(RwLock::new(VecDeque::with_capacity(config.cache_size)));
-        let partition_seqs: Arc<scc::HashMap<u32, u64>> =
-            Arc::new(scc::HashMap::new());
+        let partition_seqs: Arc<scc::HashMap<u32, u64>> = Arc::new(scc::HashMap::new());
         let cancel = CancellationToken::new();
         let mut tasks = Vec::new();
 
@@ -278,7 +277,8 @@ impl EventPublisher {
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
-        self.put_payload(&key, bytes, seq, event_id, timestamp, NO_URGENCY).await?;
+        self.put_payload(&key, bytes, seq, event_id, timestamp, NO_URGENCY)
+            .await?;
         Ok(seq)
     }
 
@@ -291,7 +291,8 @@ impl EventPublisher {
         let seq = self.next_seq_for(partition);
         let event_id = crate::types::EventId::new();
         let timestamp = chrono::Utc::now();
-        self.put_payload(key, bytes, seq, event_id, timestamp, NO_URGENCY).await?;
+        self.put_payload(key, bytes, seq, event_id, timestamp, NO_URGENCY)
+            .await?;
         Ok(seq)
     }
 
@@ -333,11 +334,7 @@ impl EventPublisher {
     /// The key is embedded in the Zenoh key expression as
     /// `{prefix}/p/{partition}/k/{key}/{seq}`, enabling Zenoh-native key
     /// filtering without any wire overhead.
-    pub async fn publish_keyed<T: Serialize>(
-        &self,
-        key: &str,
-        event: &Event<T>,
-    ) -> Result<u64> {
+    pub async fn publish_keyed<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64> {
         crate::attachment::validate_key(key)?;
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
         let seq = self.next_seq_for(partition);
@@ -345,18 +342,15 @@ impl EventPublisher {
             "{}/p/{}/k/{}/{}",
             self.config.key_prefix, partition, key, seq
         );
-        self.publish_inner(&key_expr, event, seq, NO_URGENCY).await?;
+        self.publish_inner(&key_expr, event, seq, NO_URGENCY)
+            .await?;
         Ok(seq)
     }
 
     /// Publish pre-serialised bytes with a key.
     ///
     /// Raw-bytes variant of [`publish_keyed`] — skips codec encoding.
-    pub async fn publish_bytes_keyed(
-        &self,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> Result<u64> {
+    pub async fn publish_bytes_keyed(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
         crate::attachment::validate_key(key)?;
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
         let seq = self.next_seq_for(partition);
@@ -388,7 +382,8 @@ impl EventPublisher {
             "{}/p/{}/k/{}/{}",
             self.config.key_prefix, partition, key, seq
         );
-        self.publish_inner(&key_expr, event, seq, urgency_ms).await?;
+        self.publish_inner(&key_expr, event, seq, urgency_ms)
+            .await?;
         self.wait_for_watermark(partition, seq).await
     }
 
@@ -396,11 +391,7 @@ impl EventPublisher {
     ///
     /// Raw-bytes durable variant of [`publish_keyed`].
     #[cfg(feature = "store")]
-    pub async fn publish_bytes_keyed_durable(
-        &self,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> Result<u64> {
+    pub async fn publish_bytes_keyed_durable(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
         crate::attachment::validate_key(key)?;
         let urgency_ms = self.urgency_ms();
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
@@ -509,7 +500,8 @@ impl EventPublisher {
     ) -> Result<()> {
         // Encode only the user payload — metadata travels in the attachment.
         let payload = self.config.codec.encode(&event.payload)?;
-        self.put_payload(key, payload, seq, event.id, event.timestamp, urgency_ms).await
+        self.put_payload(key, payload, seq, event.id, event.timestamp, urgency_ms)
+            .await
     }
 
     /// Shared inner: attach metadata, cache, and put to Zenoh.
@@ -523,8 +515,9 @@ impl EventPublisher {
         timestamp: chrono::DateTime<chrono::Utc>,
         urgency_ms: u16,
     ) -> Result<()> {
-        let attachment = encode_metadata(&self.publisher_id, seq, &event_id, &timestamp, urgency_ms);
-        let zbytes_payload = ZBytes::from(payload);  // takes ownership, no copy
+        let attachment =
+            encode_metadata(&self.publisher_id, seq, &event_id, &timestamp, urgency_ms);
+        let zbytes_payload = ZBytes::from(payload); // takes ownership, no copy
 
         // Insert into bounded cache (evict oldest if full).
         // Skip entirely when cache_size == 0 to avoid lock acquisition.
@@ -573,7 +566,9 @@ impl EventPublisher {
 
     /// Current sequence number for a specific partition (next to be assigned).
     pub fn current_seq_for(&self, partition: u32) -> u64 {
-        self.partition_seqs.read_sync(&partition, |_, v| *v).unwrap_or(0)
+        self.partition_seqs
+            .read_sync(&partition, |_, v| *v)
+            .unwrap_or(0)
     }
 
     /// Allocate the next sequence number for the given partition.

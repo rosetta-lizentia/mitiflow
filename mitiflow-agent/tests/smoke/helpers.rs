@@ -43,7 +43,10 @@ impl AgentProcess {
             .env("MITIFLOW_KEY_PREFIX", key_prefix)
             .env("MITIFLOW_DATA_DIR", data_dir.path())
             .env("MITIFLOW_NUM_PARTITIONS", num_partitions.to_string())
-            .env("MITIFLOW_REPLICATION_FACTOR", replication_factor.to_string())
+            .env(
+                "MITIFLOW_REPLICATION_FACTOR",
+                replication_factor.to_string(),
+            )
             .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

@@ -42,20 +42,11 @@ impl ProcessHandle {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            crate::error::EmulatorError::Process(format!(
-                "failed to spawn {}: {}",
-                spec.binary, e
-            ))
+            crate::error::EmulatorError::Process(format!("failed to spawn {}: {}", spec.binary, e))
         })?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .map(|s| BufReader::new(s).lines());
-        let stderr = child
-            .stderr
-            .take()
-            .map(|s| BufReader::new(s).lines());
+        let stdout = child.stdout.take().map(|s| BufReader::new(s).lines());
+        let stderr = child.stderr.take().map(|s| BufReader::new(s).lines());
 
         let id = format!("{}:{}", spec.name, spec.instance);
         Ok(Self {
@@ -140,15 +131,11 @@ impl ComponentHandle for ProcessHandle {
         Ok(())
     }
 
-    fn take_stdout(
-        &mut self,
-    ) -> Option<tokio::io::Lines<BufReader<tokio::process::ChildStdout>>> {
+    fn take_stdout(&mut self) -> Option<tokio::io::Lines<BufReader<tokio::process::ChildStdout>>> {
         self.stdout.take()
     }
 
-    fn take_stderr(
-        &mut self,
-    ) -> Option<tokio::io::Lines<BufReader<tokio::process::ChildStderr>>> {
+    fn take_stderr(&mut self) -> Option<tokio::io::Lines<BufReader<tokio::process::ChildStderr>>> {
         self.stderr.take()
     }
 }

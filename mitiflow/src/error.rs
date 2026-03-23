@@ -17,7 +17,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     /// A Zenoh operation failed.
     #[error("zenoh error: {0}")]
-    #[diagnostic(help("Check Zenoh connectivity and configuration. Ensure the Zenoh router or peer is reachable."))]
+    #[diagnostic(help(
+        "Check Zenoh connectivity and configuration. Ensure the Zenoh router or peer is reachable."
+    ))]
     Zenoh(#[from] zenoh::Error),
 
     /// Serialization or deserialization of an event payload failed.
@@ -42,7 +44,9 @@ pub enum Error {
     #[error("durability timeout: watermark did not cover seq {seq}")]
     #[diagnostic(
         code(mitiflow::durability_timeout),
-        help("The event store may be down or slow. Check store health and increase the durability timeout if needed.")
+        help(
+            "The event store may be down or slow. Check store health and increase the durability timeout if needed."
+        )
     )]
     DurabilityTimeout { seq: u64 },
 
@@ -54,7 +58,9 @@ pub enum Error {
     #[error("store error: {0}")]
     #[diagnostic(
         code(mitiflow::store),
-        help("Check disk space and permissions for the data directory. Another process may be locking the store.")
+        help(
+            "Check disk space and permissions for the data directory. Another process may be locking the store."
+        )
     )]
     StoreError(String),
 
@@ -70,15 +76,22 @@ pub enum Error {
 
     /// The configuration is invalid.
     #[error("invalid config: {0}")]
-    #[diagnostic(code(mitiflow::config), help("Check the configuration values and ensure all required fields are set."))]
+    #[diagnostic(
+        code(mitiflow::config),
+        help("Check the configuration values and ensure all required fields are set.")
+    )]
     InvalidConfig(String),
 
     /// A consumer group offset commit was rejected because the commit's
     /// generation is older than the stored generation (zombie fencing).
-    #[error("stale fenced commit for group {group}: commit gen {commit_gen} < stored gen {stored_gen}")]
+    #[error(
+        "stale fenced commit for group {group}: commit gen {commit_gen} < stored gen {stored_gen}"
+    )]
     #[diagnostic(
         code(mitiflow::stale_commit),
-        help("A new consumer generation has started. This consumer instance should stop processing.")
+        help(
+            "A new consumer generation has started. This consumer instance should stop processing."
+        )
     )]
     StaleFencedCommit {
         group: String,

@@ -27,7 +27,7 @@ pub use config::{
 };
 pub use error::{AgentError, AgentResult};
 pub use topic_supervisor::TopicSupervisor;
-pub use topic_watcher::{TopicWatcher, should_serve_topic, RemoteTopicConfig};
+pub use topic_watcher::{RemoteTopicConfig, TopicWatcher, should_serve_topic};
 pub use topic_worker::TopicWorker;
 pub use types::{
     NodeHealth, NodeMetadata, NodeStatus, OverrideEntry, OverrideTable, PartitionStatus, StoreState,
