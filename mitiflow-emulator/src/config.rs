@@ -398,6 +398,13 @@ pub struct ComponentDef {
     /// Output mode for consumers.
     pub output: Option<OutputConfig>,
 
+    /// Artificial per-event processing delay in milliseconds.
+    ///
+    /// Simulates a slow consumer: the consumer loop sleeps this many milliseconds
+    /// after processing each event. A value of 10ms limits throughput to ~100 eps.
+    /// Used to test backpressure and buffering behavior without changing actual business logic.
+    pub processing_delay_ms: Option<u64>,
+
     // -- Storage agent settings --
     /// Data directory for storage agents and orchestrator.
     pub data_dir: Option<PathBuf>,

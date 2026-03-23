@@ -272,6 +272,7 @@ impl Supervisor {
                         .as_ref()
                         .map(ConsumerGroupRoleConfig::from),
                     output: OutputRoleConfig::from(comp.output.as_ref()),
+                    processing_delay_ms: comp.processing_delay_ms,
                 };
                 encode_config(&cfg)?
             }

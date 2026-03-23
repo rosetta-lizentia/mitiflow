@@ -81,3 +81,30 @@ fn validate_06_chaos() {
         result.warnings
     );
 }
+
+#[test]
+fn validate_07_slow_consumer() {
+    let result = load_and_validate("07_slow_consumer.yaml");
+    // No storage_agent → expect exactly one warning about missing storage.
+    let storage_warnings: Vec<_> = result
+        .warnings
+        .iter()
+        .filter(|w| w.message.contains("no storage_agent"))
+        .collect();
+    assert_eq!(
+        storage_warnings.len(),
+        1,
+        "expected exactly one storage_agent warning, got: {:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn validate_08_slow_consumer_with_store() {
+    let result = load_and_validate("08_slow_consumer_with_store.yaml");
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
+}

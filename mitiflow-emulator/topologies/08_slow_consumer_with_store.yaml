@@ -1,0 +1,76 @@
+# 08_slow_consumer_with_store.yaml
+#
+# PURPOSE: Verify that with a storage_agent present, a fast consumer and the producer
+#          are unaffected by a co-existing slow consumer.
+#
+# SCENARIO (storage_agent + two independent consumers):
+#   - Producer publishes at 500 eps
+#   - storage_agent subscribes and persists all events (fast sidecar, no delay)
+#   - fast-consumer: no processing delay  →  processes at wire speed (~500 eps)
+#   - slow-consumer: 10ms processing delay  →  max ~100 eps
+#   - Both consumers are independent Zenoh subscribers: each receives ALL events
+#
+# HYPOTHESIS:
+#   The slow-consumer's application-level delay does NOT affect the fast-consumer
+#   or the producer because:
+#     1. Each Zenoh subscriber has its own independent transport link
+#     2. The EventSubscriber's unbounded flume channel decouples Zenoh receipt
+#        from application processing on the slow-consumer side
+#   Therefore:
+#     - Producer rate: ~500 eps (unaffected)
+#     - fast-consumer rate: ~500 eps (receives all events immediately)
+#     - slow-consumer rate: ~100 eps (processing-limited)
+#     - Gap between fast-consumer total and slow-consumer total grows over time
+#
+# READ THE LOGS:
+#   - "Producer rate: X eps"      →  X ≈ 500 expected
+#   - "fast-consumer: X eps"      →  X ≈ 500 expected
+#   - "slow-consumer: X eps"      →  X ≈ 100 expected
+#   - Diverging totals between fast and slow consumers confirm independent progress
+#
+# To run:
+#   cargo run -p mitiflow-emulator -- run topologies/08_slow_consumer_with_store.yaml
+
+defaults:
+  codec: json
+  cache_size: 10000
+  heartbeat_ms: 1000
+  recovery_mode: both
+
+topics:
+  - name: events
+    key_prefix: demo/slow/with-store
+    num_partitions: 1
+
+components:
+  - name: store
+    kind: storage_agent
+    topic: events
+
+  - name: fast-producer
+    kind: producer
+    topic: events
+    rate: 10000
+    payload:
+      generator: counter
+      prefix: evt
+
+  # Fast consumer: no artificial delay; expected to track the producer at ~500 eps.
+  - name: fast-consumer
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 2
+
+  # Slow consumer: 10ms delay per event; expected to process at ~100 eps.
+  # Demonstrates that slow application processing does not block the fast-consumer
+  # or the producer — each subscriber is independent.
+  - name: slow-consumer
+    kind: consumer
+    topic: events
+    processing_delay_ms: 100
+    log_level: info
+    output:
+      mode: count
+      report_interval_sec: 2

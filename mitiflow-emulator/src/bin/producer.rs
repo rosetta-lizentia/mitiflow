@@ -4,6 +4,8 @@
 //! environment variables, creates a Zenoh session and EventPublisher,
 //! generates payloads at the configured rate using lightbench's rate controller.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use lightbench::{Benchmark, BenchmarkWork, WorkResult};
@@ -24,6 +26,8 @@ struct EmulatorPublishWork {
     bus_config: EventBusConfig,
     payload_config: PayloadConfig,
     durable: bool,
+    /// Counts total successful publishes; shared with the rate-reporter task.
+    published: Arc<AtomicU64>,
 }
 
 struct EmulatorPublishState {
@@ -53,7 +57,10 @@ impl BenchmarkWork for EmulatorPublishWork {
             state.publisher.publish_bytes(payload).await
         };
         match result {
-            Ok(_) => WorkResult::success(0),
+            Ok(_) => {
+                self.published.fetch_add(1, Ordering::Relaxed);
+                WorkResult::success(0)
+            }
             Err(e) => WorkResult::error(e.to_string()),
         }
     }
@@ -139,6 +146,8 @@ async fn main() -> anyhow::Result<()> {
         config.burst_factor,
     );
 
+    let published = Arc::new(AtomicU64::new(0));
+
     // Build lightbench BenchmarkConfig for rate control.
     let bench_config = lightbench::BenchmarkConfig {
         rate: if config.rate_per_instance.is_some() {
@@ -163,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
         bus_config,
         payload_config,
         durable: config.durable,
+        published: Arc::clone(&published),
     };
 
     // Handle SIGTERM / Ctrl+C for early termination.
@@ -180,6 +190,29 @@ async fn main() -> anyhow::Result<()> {
                 .expect("failed to register SIGTERM handler");
             sig.recv().await;
             cancel_sig.cancel();
+        });
+    }
+
+    // Rate reporter: logs publish rate (eps) every 2 seconds so we can observe
+    // whether a slow consumer causes the publisher to stall.
+    {
+        let published_ref = Arc::clone(&published);
+        let cancel_report = cancel.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(2));
+            let mut last = 0u64;
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        let total = published_ref.load(Ordering::Relaxed);
+                        let delta = total.saturating_sub(last);
+                        let eps = delta / 2;
+                        tracing::info!("Producer rate: {} eps (total: {})", eps, total);
+                        last = total;
+                    }
+                    _ = cancel_report.cancelled() => break,
+                }
+            }
         });
     }
 

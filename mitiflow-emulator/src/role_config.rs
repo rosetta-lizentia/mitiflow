@@ -87,6 +87,8 @@ pub struct ConsumerRoleConfig {
     pub num_partitions: u32,
     pub consumer_group: Option<ConsumerGroupRoleConfig>,
     pub output: OutputRoleConfig,
+    /// Artificial per-event processing delay in milliseconds (see `ComponentDef::processing_delay_ms`).
+    pub processing_delay_ms: Option<u64>,
 }
 
 /// Consumer group config for role binaries.

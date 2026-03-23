@@ -323,10 +323,10 @@ impl EventSubscriber {
         let key_prefix = &config.key_prefix;
 
         // Fan-in channel: all data subscribers push decoded samples here.
-        let (sample_tx, sample_rx) = flume::unbounded::<(EventMeta, String, Vec<u8>)>();
+        let (sample_tx, sample_rx) = flume::bounded::<(EventMeta, String, Vec<u8>)>(1024);
 
         let cancel = CancellationToken::new();
-        let (event_tx, event_rx) = flume::unbounded::<RawEvent>();
+        let (event_tx, event_rx) = flume::bounded::<RawEvent>(1024);
         let mut tasks = Vec::new();
 
         // Spawn a forwarder task per key expression.

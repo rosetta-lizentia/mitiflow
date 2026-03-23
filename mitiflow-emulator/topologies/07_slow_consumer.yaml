@@ -1,0 +1,48 @@
+# 07_slow_consumer.yaml
+#
+# PURPOSE: Empirically observe whether CongestionControl::Block causes the publisher
+#          to slow down when a consumer is slower than the publish rate.
+#
+# SCENARIO (no storage_agent — raw Zenoh pub/sub only):
+#   - Producer publishes at 500 eps with CongestionControl::Block (the default)
+#   - Consumer sleeps 10ms after each event  →  theoretical max throughput ~100 eps
+#
+# HYPOTHESIS:
+#   The EventSubscriber uses an unbounded flume channel between its Zenoh subscriber
+#   task and the application recv loop. The Zenoh subscriber background task drains
+#   Zenoh's transport buffer immediately into flume regardless of how fast the
+#   application processes. Therefore:
+#     - Publisher should remain at ~500 eps (NOT blocked by slow application processing)
+#     - Consumer report should show ~100 eps (limited by processing_delay_ms)
+#     - Consumer's internal flume queue grows without bound over time (memory risk)
+#
+# READ THE LOGS:
+#   - "Producer rate: X eps (total: Y)"  →  X ≈ 500 confirms publisher is free
+#                                            X ≈ 100 confirms publisher is blocked
+#   - "Consumer rate: X eps (total: Y)"  →  X ≈ 100 expected regardless
+#   - Growing gap between producer total and consumer total  =  unbounded queue growth
+#
+# To run:
+#   cargo run -p mitiflow-emulator -- run topologies/07_slow_consumer.yaml
+
+topics:
+  - name: events
+    key_prefix: demo/slow/raw
+
+components:
+  - name: fast-producer
+    kind: producer
+    topic: events
+    rate: 500.0
+    payload:
+      generator: counter
+      prefix: evt
+
+  - name: slow-consumer
+    kind: consumer
+    topic: events
+    # Simulate slow application processing: sleep 10ms per event → ~100 eps max.
+    processing_delay_ms: 10
+    output:
+      mode: count
+      report_interval_sec: 2

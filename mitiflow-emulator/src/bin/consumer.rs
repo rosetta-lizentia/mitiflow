@@ -98,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
 
     let count = Arc::new(AtomicU64::new(0));
 
-    // Periodic reporter for count mode.
+    // Periodic reporter for count mode: shows per-window rate (eps) and running total.
     let interval_sec = config.output.report_interval_sec;
     let output_mode = config.output.mode;
     if output_mode == OutputMode::Count {
@@ -106,11 +106,15 @@ async fn main() -> anyhow::Result<()> {
         let cancel_report = cancel.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(interval_sec));
+            let mut last = 0u64;
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        let c = count_ref.load(Ordering::Relaxed);
-                        tracing::info!("Consumer received {} events total", c);
+                        let total = count_ref.load(Ordering::Relaxed);
+                        let delta = total.saturating_sub(last);
+                        let eps = delta / interval_sec.max(1);
+                        tracing::info!("Consumer rate: {} eps (total: {})", eps, total);
+                        last = total;
                     }
                     _ = cancel_report.cancelled() => break,
                 }
@@ -147,6 +151,9 @@ async fn main() -> anyhow::Result<()> {
                         Ok(event) => {
                             count.fetch_add(1, Ordering::Relaxed);
                             handle_event(&event, output_mode);
+                            if let Some(delay_ms) = config.processing_delay_ms {
+                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                            }
                         }
                         Err(e) => {
                             tracing::error!("Consumer recv error: {}", e);
@@ -169,6 +176,9 @@ async fn main() -> anyhow::Result<()> {
                         Ok(event) => {
                             count.fetch_add(1, Ordering::Relaxed);
                             handle_event(&event, output_mode);
+                            if let Some(delay_ms) = config.processing_delay_ms {
+                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                            }
                         }
                         Err(e) => {
                             tracing::error!("Consumer recv error: {}", e);
