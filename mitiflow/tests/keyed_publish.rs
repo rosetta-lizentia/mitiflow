@@ -429,7 +429,7 @@ async fn subscriber_new_key_prefix_receives_matching() {
     session.close().await.unwrap();
 }
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 mod durable_keyed {
     use super::*;
 

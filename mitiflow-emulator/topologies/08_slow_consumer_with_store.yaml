@@ -50,7 +50,7 @@ components:
   - name: fast-producer
     kind: producer
     topic: events
-    rate: 10000
+    rate: 1000
     payload:
       generator: counter
       prefix: evt
@@ -63,13 +63,15 @@ components:
       mode: count
       report_interval_sec: 2
 
-  # Slow consumer: 10ms delay per event; expected to process at ~100 eps.
-  # Demonstrates that slow application processing does not block the fast-consumer
-  # or the producer — each subscriber is independent.
+  # Slow consumer: 100ms delay per event; expected to process at ~10 eps.
+  # With offload enabled, the consumer detects it is falling behind and
+  # transparently switches to store-based catch-up queries — preventing
+  # back-pressure on the producer while still delivering every event.
   - name: slow-consumer
     kind: consumer
     topic: events
     processing_delay_ms: 100
+    offload_enabled: true
     log_level: info
     output:
       mode: count

@@ -1,0 +1,47 @@
+# 10_multi_shard_offload.yaml
+#
+# PURPOSE: Verify that slow-consumer offload works with multi-shard processing.
+#
+# Same as 08 but the slow consumer uses num_processing_shards: 4.
+
+defaults:
+  codec: json
+  cache_size: 10000
+  heartbeat_ms: 1000
+  recovery_mode: both
+
+topics:
+  - name: events
+    key_prefix: demo/multi-shard-offload
+    num_partitions: 1
+
+components:
+  - name: store
+    kind: storage_agent
+    topic: events
+
+  - name: fast-producer
+    kind: producer
+    topic: events
+    rate: 1000
+    payload:
+      generator: counter
+      prefix: evt
+
+  - name: fast-consumer
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 2
+
+  - name: slow-consumer
+    kind: consumer
+    topic: events
+    processing_delay_ms: 100
+    offload_enabled: true
+    num_processing_shards: 4
+    log_level: info
+    output:
+      mode: count
+      report_interval_sec: 2

@@ -13,17 +13,17 @@ pub use offset::OffsetCommit;
 pub use query::{QueryFilters, ReplayFilters};
 pub use watermark::{CommitWatermark, PublisherWatermark};
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 pub use backend::FjallBackend;
 
 #[cfg(feature = "store")]
 mod runner;
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 mod manager;
 
 #[cfg(feature = "store")]
 pub use runner::EventStore;
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 pub use manager::StoreManager;

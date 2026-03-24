@@ -130,12 +130,18 @@ async fn run_cache_queryable_task(
                             .and_then(|v| v.parse().ok())
                             .unwrap_or(0);
 
+                        let before_seq: u64 = query
+                            .parameters()
+                            .get("before_seq")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(u64::MAX);
+
                         // Snapshot under std::sync::RwLock — non-blocking, fast.
                         // Collect matching samples first, then reply outside the lock.
                         let snapshot: Vec<CachedSample> = {
                             let cache_read = cache.read().unwrap_or_else(|e| e.into_inner());
                             cache_read.iter()
-                                .filter(|s| s.seq >= after_seq)
+                                .filter(|s| s.seq >= after_seq && s.seq < before_seq)
                                 .cloned()
                                 .collect()
                         };

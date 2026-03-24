@@ -35,12 +35,21 @@ pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};
 
 #[cfg(feature = "store")]
-pub use store::{EventStore, FjallBackend, OffsetCommit, StoreManager};
+pub use store::{EventStore, OffsetCommit};
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
+pub use store::{FjallBackend, StoreManager};
+
+#[cfg(feature = "fjall-backend")]
 pub use subscriber::checkpoint::SequenceCheckpoint;
 
 pub use partition::{NodeDescriptor, PartitionManager};
 
 #[cfg(feature = "store")]
 pub use subscriber::consumer_group::ConsumerGroupSubscriber;
+
+#[cfg(feature = "store")]
+pub use config::OffloadConfig;
+
+#[cfg(feature = "store")]
+pub use subscriber::offload::OffloadEvent;

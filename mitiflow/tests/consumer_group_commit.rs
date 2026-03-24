@@ -1,6 +1,7 @@
 //! Consumer group offset commit E2E tests.
 //!
 //! Tests basic offset commit/fetch, generation fencing, auto-commit,
+#![cfg(feature = "fjall-backend")]
 //! multi-publisher independence, and concurrent groups.
 //!
 //! All tests use Zenoh peer-to-peer mode — no external services required.

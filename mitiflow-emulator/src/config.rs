@@ -405,6 +405,20 @@ pub struct ComponentDef {
     /// Used to test backpressure and buffering behavior without changing actual business logic.
     pub processing_delay_ms: Option<u64>,
 
+    /// Enable slow-consumer offload (automatic pub/sub → store query demotion).
+    ///
+    /// When enabled, a consumer that falls behind the live stream will
+    /// transparently switch to batched store queries and resume live
+    /// pub/sub once caught up — without back-pressuring the publisher.
+    /// Requires a `storage_agent` to be running for the topic.
+    #[serde(default)]
+    pub offload_enabled: bool,
+
+    /// Number of processing shards for the subscriber pipeline.
+    /// Defaults to 1 (single-shard fast path).
+    #[serde(default)]
+    pub num_processing_shards: Option<usize>,
+
     // -- Storage agent settings --
     /// Data directory for storage agents and orchestrator.
     pub data_dir: Option<PathBuf>,

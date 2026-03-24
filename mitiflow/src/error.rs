@@ -107,6 +107,16 @@ pub enum Error {
     #[error("invalid key: {0}")]
     #[diagnostic(help("Keys must be non-empty and must not contain '*' or '$' characters."))]
     InvalidKey(String),
+
+    /// The slow-consumer offload to store-based catch-up failed.
+    #[error("offload failed: {0}")]
+    #[diagnostic(
+        code(mitiflow::offload),
+        help(
+            "The event store may be unavailable or data has been compacted past the consumer's position."
+        )
+    )]
+    OffloadFailed(String),
 }
 
 impl From<serde_json::Error> for Error {

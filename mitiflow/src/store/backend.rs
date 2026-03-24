@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::types::{EventId, PublisherId};
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 use crate::error::Error;
 
 use super::query::{QueryFilters, ReplayFilters};
@@ -204,7 +204,7 @@ impl StorageBackend for std::sync::Arc<dyn StorageBackend> {
 // FjallBackend — LSM-tree backed implementation using the fjall crate.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 mod fjall_impl {
     use super::*;
     use std::collections::BTreeSet;
@@ -1000,5 +1000,5 @@ mod fjall_impl {
     }
 }
 
-#[cfg(feature = "store")]
+#[cfg(feature = "fjall-backend")]
 pub use fjall_impl::FjallBackend;

@@ -89,6 +89,10 @@ pub struct ConsumerRoleConfig {
     pub output: OutputRoleConfig,
     /// Artificial per-event processing delay in milliseconds (see `ComponentDef::processing_delay_ms`).
     pub processing_delay_ms: Option<u64>,
+    /// Enable slow-consumer offload.
+    pub offload_enabled: bool,
+    /// Number of processing shards (1 = single-shard fast path).
+    pub num_processing_shards: usize,
 }
 
 /// Consumer group config for role binaries.

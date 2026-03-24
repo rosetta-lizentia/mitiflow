@@ -7,6 +7,74 @@ use zenoh::qos::CongestionControl;
 use crate::codec::CodecFormat;
 use crate::error::{Error, Result};
 
+/// Configuration for automatic slow-consumer offload.
+///
+/// When a subscriber falls behind the live stream, it can transparently switch
+/// from real-time pub/sub to store-based query replay, then resume live
+/// streaming once caught up. This struct controls the detection thresholds,
+/// batch sizing, and transition parameters.
+///
+/// Requires the `store` feature — without an Event Store there is nothing to
+/// read during catch-up.
+#[cfg(feature = "store")]
+#[derive(Debug, Clone)]
+pub struct OffloadConfig {
+    /// Enable automatic offload (default: `true`).
+    pub enabled: bool,
+
+    /// Channel fullness ratio (0.0–1.0) that contributes to lag detection.
+    /// Default: `0.8` (80% of channel capacity).
+    pub channel_fullness_threshold: f64,
+
+    /// Maximum per-publisher sequence lag (via heartbeat) before contributing
+    /// to lag detection. Default: `10_000`.
+    pub seq_lag_threshold: u64,
+
+    /// Lag must be sustained for this duration before offloading.
+    /// Default: `2s`.
+    pub debounce_window: Duration,
+
+    /// Number of events per store query batch during catch-up.
+    /// Default: `10_000`.
+    pub catch_up_batch_size: usize,
+
+    /// Minimum batch size for adaptive sizing. Default: `1_000`.
+    pub min_batch_size: usize,
+
+    /// Maximum batch size for adaptive sizing. Default: `100_000`.
+    pub max_batch_size: usize,
+
+    /// Target duration for a single batch query (adaptive sizer reference).
+    /// Default: `100ms`.
+    pub target_batch_duration: Duration,
+
+    /// How close to the watermark the consumer must be to re-subscribe.
+    /// Expressed as max sequence delta. Default: `1_000`.
+    pub re_subscribe_threshold: u64,
+
+    /// Quiet period after channel drain before recording switchover cursor.
+    /// Default: `50ms`.
+    pub drain_quiet_period: Duration,
+}
+
+#[cfg(feature = "store")]
+impl Default for OffloadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            channel_fullness_threshold: 0.8,
+            seq_lag_threshold: 10_000,
+            debounce_window: Duration::from_secs(2),
+            catch_up_batch_size: 500,
+            min_batch_size: 1_000,
+            max_batch_size: 100_000,
+            target_batch_duration: Duration::from_millis(100),
+            re_subscribe_threshold: 1_000,
+            drain_quiet_period: Duration::from_millis(50),
+        }
+    }
+}
+
 /// How the publisher sends heartbeat beacons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeartbeatMode {
@@ -100,6 +168,10 @@ pub struct EventBusConfig {
     /// before declaring a gap irrecoverable. Default: 3.
     pub max_recovery_attempts: u32,
 
+    /// Bounded capacity of the internal event delivery channel. The publisher
+    /// and consumer share this backpressure channel. Default: 1024.
+    pub event_channel_capacity: usize,
+
     // -- Store (feature = "store") --
     /// Key prefix for the event store queryable. Defaults to `"{key_prefix}/_store"`.
     #[cfg(feature = "store")]
@@ -137,6 +209,12 @@ pub struct EventBusConfig {
     /// tombstones are never removed automatically (the default).
     #[cfg(feature = "store")]
     pub tombstone_retention: Option<Duration>,
+
+    // -- Offload (feature = "store") --
+    /// Slow-consumer offload configuration. When enabled, the subscriber
+    /// transparently switches to store-based catch-up when it falls behind.
+    #[cfg(feature = "store")]
+    pub offload: OffloadConfig,
 
     // -- Partition --
     /// Number of partitions for the hash ring.
@@ -207,6 +285,7 @@ pub struct EventBusConfigBuilder {
     publisher_ttl: Option<Duration>,
     recovery_delay: Duration,
     max_recovery_attempts: u32,
+    event_channel_capacity: usize,
     #[cfg(feature = "store")]
     store_key_prefix: Option<String>,
     #[cfg(feature = "store")]
@@ -225,6 +304,8 @@ pub struct EventBusConfigBuilder {
     compaction_interval: Option<Duration>,
     #[cfg(feature = "store")]
     tombstone_retention: Option<Duration>,
+    #[cfg(feature = "store")]
+    offload: OffloadConfig,
     num_partitions: u32,
     worker_id: Option<String>,
     worker_liveliness_prefix: Option<String>,
@@ -244,6 +325,7 @@ impl EventBusConfigBuilder {
             publisher_ttl: None,
             recovery_delay: Duration::from_millis(50),
             max_recovery_attempts: 3,
+            event_channel_capacity: 1024,
             #[cfg(feature = "store")]
             store_key_prefix: None,
             #[cfg(feature = "store")]
@@ -262,6 +344,8 @@ impl EventBusConfigBuilder {
             compaction_interval: None,
             #[cfg(feature = "store")]
             tombstone_retention: None,
+            #[cfg(feature = "store")]
+            offload: OffloadConfig::default(),
             num_partitions: 64,
             worker_id: None,
             worker_liveliness_prefix: None,
@@ -332,6 +416,13 @@ impl EventBusConfigBuilder {
         self
     }
 
+    /// Set the bounded capacity of the internal event delivery channel.
+    /// Default: 1024.
+    pub fn event_channel_capacity(mut self, capacity: usize) -> Self {
+        self.event_channel_capacity = capacity.max(1);
+        self
+    }
+
     #[cfg(feature = "store")]
     pub fn store_key_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.store_key_prefix = Some(prefix.into());
@@ -398,6 +489,13 @@ impl EventBusConfigBuilder {
         self
     }
 
+    /// Set the slow-consumer offload configuration.
+    #[cfg(feature = "store")]
+    pub fn offload(mut self, config: OffloadConfig) -> Self {
+        self.offload = config;
+        self
+    }
+
     pub fn num_partitions(mut self, n: u32) -> Self {
         self.num_partitions = n;
         self
@@ -438,6 +536,7 @@ impl EventBusConfigBuilder {
             publisher_ttl: self.publisher_ttl,
             recovery_delay: self.recovery_delay,
             max_recovery_attempts: self.max_recovery_attempts,
+            event_channel_capacity: self.event_channel_capacity,
             #[cfg(feature = "store")]
             store_key_prefix: self.store_key_prefix,
             #[cfg(feature = "store")]
@@ -456,6 +555,8 @@ impl EventBusConfigBuilder {
             compaction_interval: self.compaction_interval,
             #[cfg(feature = "store")]
             tombstone_retention: self.tombstone_retention,
+            #[cfg(feature = "store")]
+            offload: self.offload,
             num_partitions: self.num_partitions,
             worker_id: self.worker_id,
             worker_liveliness_prefix: self.worker_liveliness_prefix,

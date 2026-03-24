@@ -52,6 +52,9 @@ pub trait SequenceTracker: Send + Sync {
 
     /// Return the last sequence number seen from the given publisher on a partition, if any.
     fn last_seen(&self, pub_id: &PublisherId, partition: u32) -> Option<u64>;
+
+    /// Return a snapshot of all tracked (publisher, partition) → last-seen-seq entries.
+    fn snapshot_cursors(&self) -> HashMap<(PublisherId, u32), u64>;
 }
 
 /// Default in-memory gap detector using a per-publisher sequence counter.
@@ -160,6 +163,10 @@ impl SequenceTracker for GapDetector {
 
     fn last_seen(&self, pub_id: &PublisherId, partition: u32) -> Option<u64> {
         self.last_seen.get(&(*pub_id, partition)).copied()
+    }
+
+    fn snapshot_cursors(&self) -> HashMap<(PublisherId, u32), u64> {
+        self.last_seen.clone()
     }
 }
 

@@ -157,6 +157,7 @@ fn agent_config(
 
 /// Simulate an orchestrator config queryable by declaring the queryable +
 /// publishing topic configs.
+#[allow(dead_code)]
 struct MockOrchestrator {
     session: zenoh::Session,
     prefix: String,

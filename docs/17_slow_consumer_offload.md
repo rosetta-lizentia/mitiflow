@@ -65,8 +65,8 @@ The consumer operates in one of three states:
                     │                                          │
                     ▼                                          │
             ┌──────────────┐                                   │
-            │              │   lag > threshold                  │
-    ────────│    LIVE       │──────────────────┐                │
+            │              │   lag > threshold                 │
+    ────────│    LIVE      │──────────────────┐                │
    (start)  │  (pub/sub)   │                  │                │
             │              │                  ▼                │
             └──────────────┘          ┌──────────────┐         │
@@ -745,3 +745,73 @@ WARN  catch-up failed: store unavailable after 3 attempts
    deferred or the consumer must detect and handle `CompactedPastCursor`.
    This depends on log compaction (Key-Based Publishing Phase 3), which is
    itself not yet implemented.
+
+---
+
+## Implementation Status
+
+**Implemented:** Option C (Hybrid) — transparent offload + observable
+`OffloadEvent` channel. Applies to `EventSubscriber` only (single-shard path).
+Feature-gated behind `#[cfg(feature = "store")]`.
+
+### What was built
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `OffloadConfig` | `config.rs` | 11-field configuration struct with `Default` impl, integrated into `EventBusConfig` builder |
+| `LagDetector` | `subscriber/offload.rs` | Composite lag scoring (channel fullness + heartbeat seq delta) with debounce window |
+| `CatchUpReader` | `subscriber/offload.rs` | Batched store queries via `session.get()` with 5s timeout, adaptive batch sizing |
+| `OffloadManager` | `subscriber/offload.rs` | Orchestrates the three-state lifecycle; runs inline in subscriber processing task |
+| `OffloadEvent` | `subscriber/offload.rs` | 6-variant enum published to unbounded flume channel for observability |
+| `ConsumerState` | `subscriber/offload.rs` | `Live`, `Draining`, `CatchingUp` states |
+| `event_channel_capacity` | `config.rs` | Configurable bounded channel size (default 1024) for event delivery |
+| `snapshot_cursors()` | `subscriber/gap_detector.rs` | New method on `SequenceTracker` trait, returns per-(publisher, partition) cursor map |
+| `OffloadFailed` | `error.rs` | New error variant for offload failures |
+
+### Architecture decisions (deviation from design doc)
+
+1. **No separate `OffloadStateMachine` struct.** The state machine is embedded
+   directly in `OffloadManager`, which owns `LagDetector` and creates
+   `CatchUpReader` on demand. This avoids an extra layer of indirection.
+
+2. **Inline execution, not a separate task.** The offload check runs inside the
+   subscriber's existing processing task select loop (on every sample, before
+   `handle_sample_result`). When triggered, `run_offload_cycle()` runs inline
+   in the same task. This avoids `Arc<Mutex<>>` overhead on the `GapDetector`.
+
+3. **`send_async().await` in offload cycle.** During drain and catch-up, events
+   are sent to `event_tx` via `send_async().await` (not sync `send()`) to avoid
+   blocking tokio worker threads, which would deadlock with the store's queryable
+   task running on the same runtime.
+
+4. **GapDetector cursor advancement during catch-up.** Each event replayed from
+   the store is passed through `gap_detector.on_sample()` to advance cursors.
+   This prevents duplicate delivery when the live stream resumes, since the gap
+   detector knows exactly where the consumer left off.
+
+5. **Single-shard only.** Multi-shard (consumer group) subscribers log a warning
+   if offload is enabled but do not activate offload. Consumer group offload
+   requires per-shard state management and is tracked as future work.
+
+### Tests
+
+- **14 unit tests** in `subscriber/offload.rs`: LagDetector debounce/reset/seq
+  lag/composite scoring, adaptive batch sizing, caught-up detection,
+  OffloadEvent variant construction, ConsumerState transitions.
+- **6 E2E tests** in `tests/offload.rs`:
+  - `offload_disabled_no_transition` — offload_events returns None
+  - `fast_consumer_never_offloads` — no offload on fast consumption
+  - `offload_events_channel_available` — offload_events returns Some
+  - `slow_consumer_triggers_offload_lifecycle` — full lifecycle, no duplicates
+  - `offload_preserves_ordering` — monotonically increasing sequences
+  - `debounce_prevents_flapping` — long debounce prevents offload on burst
+- **Example** in `examples/slow_consumer_offload.rs`: fast publisher, slow
+  consumer, OffloadEvent monitoring, transparent catch-up.
+
+### Not yet implemented
+
+- Consumer group offload (multi-shard `ConsumerGroupSubscriber`)
+- `CompactedPastCursor` / `StoreUnavailable` error types (keyed compaction
+  not yet implemented)
+- `reset_on_offload` config option (gap detector state is always preserved)
+- OpenTelemetry metrics for offload state transitions

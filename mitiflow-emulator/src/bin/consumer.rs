@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use mitiflow::codec::CodecFormat;
 use mitiflow::config::{
-    CommitMode, ConsumerGroupConfig, EventBusConfig, HeartbeatMode, OffsetReset, RecoveryMode,
+    CommitMode, ConsumerGroupConfig, EventBusConfig, HeartbeatMode, OffloadConfig, OffsetReset,
+    RecoveryMode,
 };
 use mitiflow::subscriber::EventSubscriber;
 use mitiflow::subscriber::consumer_group::ConsumerGroupSubscriber;
@@ -66,15 +67,27 @@ async fn main() -> anyhow::Result<()> {
         RecoveryModeConfig::Both => RecoveryMode::Both,
     };
 
-    let bus_config = EventBusConfig::builder(&config.key_prefix)
+    let mut bus_builder = EventBusConfig::builder(&config.key_prefix)
         .codec(codec)
         .cache_size(config.cache_size)
         .heartbeat(HeartbeatMode::Sporadic(Duration::from_millis(
             config.heartbeat_ms,
         )))
         .recovery_mode(recovery_mode)
-        .num_partitions(config.num_partitions)
-        .build()?;
+        .num_partitions(config.num_partitions);
+
+    if config.num_processing_shards > 1 {
+        bus_builder = bus_builder.num_processing_shards(config.num_processing_shards);
+    }
+
+    if config.offload_enabled {
+        bus_builder = bus_builder.offload(OffloadConfig {
+            enabled: true,
+            ..OffloadConfig::default()
+        });
+    }
+
+    let bus_config = bus_builder.build()?;
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let cancel_clone = cancel.clone();

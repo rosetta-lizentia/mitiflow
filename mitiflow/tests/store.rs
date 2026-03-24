@@ -1,4 +1,5 @@
 //! Integration tests for the FjallBackend and EventStore.
+#![cfg(feature = "fjall-backend")]
 
 mod common;
 

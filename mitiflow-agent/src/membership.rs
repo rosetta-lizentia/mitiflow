@@ -72,6 +72,7 @@ impl MembershipTracker {
         let replies = session
             .liveliness()
             .get(&format!("{agents_prefix}/*"))
+            .timeout(std::time::Duration::from_secs(2))
             .await?;
         while let Ok(reply) = replies.recv_async().await {
             if let Ok(sample) = reply.result() {

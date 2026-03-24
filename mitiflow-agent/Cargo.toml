@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-mitiflow = { path = "../mitiflow", features = ["full"] }
+mitiflow = {  workspace = true, features = ["full"] }
 zenoh = { workspace = true }
 tokio = { workspace = true, features = ["signal", "process"] }
 tokio-util = { workspace = true }
@@ -19,7 +19,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 miette = { workspace = true }
-anyhow = "1"
+anyhow = { workspace = true }
 serde_yaml = { workspace = true }
 humantime-serde = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
@@ -28,4 +28,4 @@ clap = { workspace = true, features = ["derive"] }
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
 rand = { workspace = true }
-nix = { version = "0.31", features = ["signal"] }
+nix = { workspace = true, features = ["signal"] }

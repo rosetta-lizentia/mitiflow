@@ -8,9 +8,10 @@ rust-version.workspace = true
 
 [features]
 default = ["store"]
-store = ["dep:fjall"]
+store = []
+fjall-backend = ["store", "dep:fjall"]
 wal = ["dep:fjall"]
-full = ["store", "wal"]
+full = ["store", "fjall-backend", "wal"]
 
 [dependencies]
 zenoh = { workspace = true }
@@ -59,7 +60,7 @@ harness = false
 [[bench]]
 name = "store"
 harness = false
-required-features = ["store"]
+required-features = ["fjall-backend"]
 
 [[bench]]
 name = "watermark"
@@ -68,4 +69,4 @@ harness = false
 [[bench]]
 name = "checkpoint"
 harness = false
-required-features = ["store"]
+required-features = ["fjall-backend"]

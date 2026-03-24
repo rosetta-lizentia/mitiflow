@@ -131,7 +131,7 @@ impl ConsumerGroupSubscriber {
                         result = sub.recv_async() => {
                             match result {
                                 Ok(sample) => {
-                                    if let Some(decoded) = super::decode_sample(&sample) {
+                                    if let Some(decoded) = super::forwarder::decode_sample(&sample) {
                                         let _ = tx.send(decoded);
                                     }
                                 }
@@ -148,7 +148,7 @@ impl ConsumerGroupSubscriber {
         let positions_clone = Arc::clone(&positions);
         let cancel_clone = cancel.clone();
         let sess = session.clone();
-        let rc = Arc::new(super::RecoveryConfig::from_bus_config(&config));
+        let rc = Arc::new(super::recovery::RecoveryConfig::from_bus_config(&config));
 
         let handle = tokio::spawn(async move {
             let mut gd = GapDetector::with_checkpoints(checkpoints);
@@ -161,7 +161,7 @@ impl ConsumerGroupSubscriber {
                             Ok((meta, key, payload)) => {
                                 let partition = crate::attachment::extract_partition(&key);
                                 let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
-                                super::handle_sample_result(
+                                super::pipeline::handle_sample_result(
                                     result, &meta, &key, &payload,
                                     &event_tx, &sess, &rc,
                                 );

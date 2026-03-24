@@ -1,6 +1,7 @@
 //! End-to-end tests for tiered recovery: store-first, cache-fallback, and
 //! history catch-up scenarios.
 //!
+#![cfg(feature = "fjall-backend")]
 //! These tests verify that a subscriber can:
 //! 1. Read from the event store to recover missed events
 //! 2. Catch up with the log after recovering from the store
