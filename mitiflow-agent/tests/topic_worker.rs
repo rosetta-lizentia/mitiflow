@@ -21,7 +21,7 @@ fn worker_config(
     };
     let config = TopicWorkerConfig::from_entry(
         &entry,
-        &tmp.path().to_path_buf(),
+        tmp.path(),
         100,
         &HashMap::new(),
         Duration::from_millis(200),

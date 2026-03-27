@@ -153,11 +153,10 @@ impl SmokeCluster {
             while let Ok(reply) = replies.recv_async().await {
                 if let Ok(sample) = reply.result() {
                     let key = sample.key_expr().as_str();
-                    if let Some(node_id) = key.rsplit('/').next() {
-                        if !node_id.contains('/') {
+                    if let Some(node_id) = key.rsplit('/').next()
+                        && !node_id.contains('/') {
                             live.push(node_id.to_string());
                         }
-                    }
                 }
             }
         }

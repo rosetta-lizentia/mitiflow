@@ -65,11 +65,8 @@ async fn main() -> mitiflow::Result<()> {
     // Spawn a task to monitor offload lifecycle events.
     let offload_rx = subscriber.offload_events().unwrap().clone();
     tokio::spawn(async move {
-        loop {
-            match offload_rx.recv_async().await {
-                Ok(event) => println!("[OFFLOAD] {event:?}"),
-                Err(_) => break,
-            }
+        while let Ok(event) = offload_rx.recv_async().await {
+            println!("[OFFLOAD] {event:?}");
         }
     });
 
@@ -91,27 +88,22 @@ async fn main() -> mitiflow::Result<()> {
     // Consume events with artificial slowness to trigger offload.
     println!("Consuming events (slowly at first)...");
     let mut count = 0u64;
-    loop {
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            subscriber.recv::<SensorReading>(),
-        )
-        .await
-        {
-            Ok(Ok(event)) => {
-                count += 1;
-                // Slow consumer for first 32 reads.
-                if count <= 32 {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                if count % 100 == 0 || count <= 5 {
-                    println!(
-                        "  [{count}] sensor={} value={:.1}",
-                        event.payload.sensor_id, event.payload.value
-                    );
-                }
-            }
-            _ => break,
+    while let Ok(Ok(event)) = tokio::time::timeout(
+        Duration::from_secs(5),
+        subscriber.recv::<SensorReading>(),
+    )
+    .await
+    {
+        count += 1;
+        // Slow consumer for first 32 reads.
+        if count <= 32 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        if count.is_multiple_of(100) || count <= 5 {
+            println!(
+                "  [{count}] sensor={} value={:.1}",
+                event.payload.sensor_id, event.payload.value
+            );
         }
     }
 

@@ -1,9 +1,5 @@
-//! # mitiflow
-//!
-//! Production-grade event streaming for Zenoh.
-//!
-//! Layers Kafka-class reliability (sequencing, gap detection, recovery, durability,
-//! consumer groups) on top of Zenoh's microsecond-latency pub/sub using only stable APIs.
+#![doc = include_str!("../README.md")]
+#![allow(rustdoc::broken_intra_doc_links)]
 
 pub mod attachment;
 pub mod codec;

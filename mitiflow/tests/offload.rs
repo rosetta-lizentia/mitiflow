@@ -282,15 +282,12 @@ async fn offload_preserves_ordering() {
 
     // Consume with slow start.
     let mut received: Vec<Event<TestPayload>> = Vec::new();
-    loop {
-        match tokio::time::timeout(Duration::from_secs(3), subscriber.recv::<TestPayload>()).await {
-            Ok(Ok(event)) => {
-                received.push(event);
-                if received.len() <= 16 {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            }
-            _ => break,
+    while let Ok(Ok(event)) =
+        tokio::time::timeout(Duration::from_secs(3), subscriber.recv::<TestPayload>()).await
+    {
+        received.push(event);
+        if received.len() <= 16 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 

@@ -113,8 +113,10 @@ async fn tracker_detects_node_join() {
         .await
         .expect("timed out waiting for join callback");
 
-    let id = joined_id.lock().unwrap();
-    assert_eq!(id.as_deref(), Some("node-new"));
+    {
+        let id = joined_id.lock().unwrap();
+        assert_eq!(id.as_deref(), Some("node-new"));
+    }
 
     // Verify node appears in the current list.
     let nodes = tracker.current_nodes().await;
@@ -170,8 +172,10 @@ async fn tracker_detects_node_leave() {
         .await
         .expect("timed out waiting for leave callback");
 
-    let id = left_id.lock().unwrap();
-    assert_eq!(id.as_deref(), Some("node-temp"));
+    {
+        let id = left_id.lock().unwrap();
+        assert_eq!(id.as_deref(), Some("node-temp"));
+    }
 
     // Peer should no longer be in the list.
     let nodes = tracker.current_nodes().await;

@@ -53,7 +53,7 @@ Kafka-style consumer groups with at-least-once semantics over Zenoh.
 - [x] **`lib.rs` — re-exports.** `OffsetCommit`, `ConsumerGroupConfig`,
       `CommitMode`, `OffsetReset`.
 
-- [ ] **`examples/consumer_groups.rs` — update.** Demonstrate
+- [x] **`examples/consumer_groups.rs` — update.** Demonstrate
       `ConsumerGroupSubscriber`, manual commit, and auto-commit modes.
       (Current example only shows `PartitionManager`.)
 
@@ -124,7 +124,7 @@ Does **not** sit in the event data path.
 
 ## Key-Based Publishing
 
-**Status:** Not started
+**Status:** Done
 **Ref:** [15_key_based_publishing.md](15_key_based_publishing.md)
 
 Kafka-style message keys embedded in Zenoh key expressions. Enables automatic
@@ -136,45 +136,45 @@ coexists with `{prefix}/p/{partition}/{seq}` (unkeyed, backward compatible).
 
 ### Phase 1 — Core keyed publish
 
-- [ ] **Key validation** — reject `*`, `$`, empty keys at publish time.
-- [ ] **`publish_keyed()` family** — `publish_keyed`, `publish_bytes_keyed`,
+- [x] **Key validation** — reject `*`, `$`, empty keys at publish time.
+- [x] **`publish_keyed()` family** — `publish_keyed`, `publish_bytes_keyed`,
       `publish_keyed_durable`, `publish_bytes_keyed_durable` on
       `EventPublisher`. Internal: `hash(key) % num_partitions → partition`,
       construct `{prefix}/p/{partition}/k/{key}/{seq}`.
-- [ ] **`RawEvent::key()` accessor** — parse key from `key_expr` via `/k/`
+- [x] **`RawEvent::key()` accessor** — parse key from `key_expr` via `/k/`
       sentinel. Zero allocation (`&str` slice).
-- [ ] **`extract_partition()` update** — handle both keyed
+- [x] **`extract_partition()` update** — handle both keyed
       (`{prefix}/p/{partition}/k/{key}/{seq}`) and unkeyed layouts.
-- [ ] **Config helpers** — `key_expr_for_key()`,
+- [x] **Config helpers** — `key_expr_for_key()`,
       `key_expr_for_key_prefix()` on `EventBusConfig`.
-- [ ] **Tests** — publish with key, subscribe with key filter, round-trip key
+- [x] **Tests** — publish with key, subscribe with key filter, round-trip key
       extraction, partition affinity for same key.
 
 ### Phase 2 — Store key index
 
-- [ ] **`keys` keyspace** in `FjallBackend`. Key:
+- [x] **`keys` keyspace** in `FjallBackend`. Key:
       `[key_hash:8][hlc_physical:8 BE][hlc_logical:4 BE][publisher_id:16]`.
       Value: `[publisher_id:16][seq:8 BE]` (pointer to primary index).
-- [ ] **Write path** — index key on `store()` when key is present in
+- [x] **Write path** — index key on `store()` when key is present in
       `EventMetadata`.
-- [ ] **`EventMetadata` extension** — add `key: Option<String>` field.
-- [ ] **`query_by_key()`** — key-scoped queries on `StorageBackend`.
+- [x] **`EventMetadata` extension** — add `key: Option<String>` field.
+- [x] **`query_by_key()`** — key-scoped queries on `StorageBackend`.
 
 ### Phase 3 — Log compaction
 
-- [ ] **Background compaction task** — periodic scan of key index, retain
+- [x] **Background compaction task** — periodic scan of key index, retain
       only highest-HLC entry per key_hash, delete superseded entries from
       all three indexes (primary, replay, keys).
-- [ ] **Tombstone handling** — null-payload keyed events as delete markers.
+- [x] **Tombstone handling** — null-payload keyed events as delete markers.
       Configurable tombstone retention period.
-- [ ] **`query_latest_by_keys()`** — compacted view query.
-- [ ] **Retention policy config** — compaction interval, tombstone GC period.
+- [x] **`query_latest_by_keys()`** — compacted view query.
+- [x] **Retention policy config** — compaction interval, tombstone GC period.
 
 ### Phase 4 — Subscriber convenience
 
-- [ ] **`EventSubscriber::new_keyed()`** — subscribe to a specific key.
-- [ ] **`EventSubscriber::new_key_prefix()`** — subscribe to a key prefix.
-- [ ] **Example** — `examples/keyed_pubsub.rs`.
+- [x] **`EventSubscriber::new_keyed()`** — subscribe to a specific key.
+- [x] **`EventSubscriber::new_key_prefix()`** — subscribe to a key prefix.
+- [x] **Example** — `examples/keyed_pubsub.rs`.
 
 ---
 

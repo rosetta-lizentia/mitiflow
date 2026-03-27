@@ -90,10 +90,8 @@ impl TestCluster {
     /// Wait for the cluster to stabilize, then recompute all agents.
     pub async fn wait_for_stable(&self, timeout: Duration) {
         tokio::time::sleep(timeout).await;
-        for slot in &self.agents {
-            if let Some(s) = slot {
-                let _ = s.agent.recompute_and_reconcile().await;
-            }
+        for s in self.agents.iter().flatten() {
+            let _ = s.agent.recompute_and_reconcile().await;
         }
         // Additional settle time after recomputation.
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -105,10 +103,8 @@ impl TestCluster {
         let start = tokio::time::Instant::now();
         let mut total = 0;
         while start.elapsed() < deadline {
-            for slot in &self.agents {
-                if let Some(s) = slot {
-                    let _ = s.agent.recompute_and_reconcile().await;
-                }
+            for s in self.agents.iter().flatten() {
+                let _ = s.agent.recompute_and_reconcile().await;
             }
             total = self.total_assignments().await;
             if total >= expected {
@@ -182,10 +178,8 @@ impl TestCluster {
     pub async fn wait_for_no_overlap(&self, deadline: Duration) {
         let start = tokio::time::Instant::now();
         while start.elapsed() < deadline {
-            for slot in &self.agents {
-                if let Some(s) = slot {
-                    let _ = s.agent.recompute_and_reconcile().await;
-                }
+            for s in self.agents.iter().flatten() {
+                let _ = s.agent.recompute_and_reconcile().await;
             }
             tokio::time::sleep(Duration::from_millis(300)).await;
             if !self.has_overlap().await {
@@ -258,11 +252,10 @@ impl TestCluster {
             .await
         {
             while let Ok(reply) = replies.recv_async().await {
-                if let Ok(sample) = reply.result() {
-                    if sample.attachment().is_some() {
+                if let Ok(sample) = reply.result()
+                    && sample.attachment().is_some() {
                         count += 1;
                     }
-                }
             }
         }
 
@@ -283,13 +276,11 @@ impl TestCluster {
             .await
         {
             while let Ok(reply) = replies.recv_async().await {
-                if let Ok(sample) = reply.result() {
-                    if let Some(attachment) = sample.attachment() {
-                        if let Ok(meta) = decode_metadata(attachment) {
+                if let Ok(sample) = reply.result()
+                    && let Some(attachment) = sample.attachment()
+                        && let Ok(meta) = decode_metadata(attachment) {
                             seqs.push(meta.seq);
                         }
-                    }
-                }
             }
         }
 

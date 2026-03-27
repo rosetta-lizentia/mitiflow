@@ -417,6 +417,7 @@ pub(crate) async fn spawn_multi_shard_workers(
 
 /// Dispatch a gap-detected sample: deliver the event and route to shard,
 /// spawning recovery for any detected gap.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_sample_result(
     result: SampleResult,
     meta: &EventMeta,

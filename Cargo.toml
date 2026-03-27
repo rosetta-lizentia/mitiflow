@@ -16,6 +16,9 @@ edition = "2024"
 authors = ["Pawissanutt"]
 license = "Apache-2.0"
 rust-version = "1.93"
+repository = "https://github.com/pawissanutt/mitiflow"
+homepage = "https://github.com/pawissanutt/mitiflow"
+documentation = "https://docs.rs/mitiflow"
 
 [workspace.dependencies]
 mitiflow = { path = "mitiflow" }

@@ -118,10 +118,8 @@ impl OrchestratorTestCluster {
 
     /// Force all live agents to recompute assignments.
     async fn recompute_all(&self) {
-        for slot in &self.agents {
-            if let Some(s) = slot {
-                let _ = s.agent.recompute_and_reconcile().await;
-            }
+        for s in self.agents.iter().flatten() {
+            let _ = s.agent.recompute_and_reconcile().await;
         }
     }
 
@@ -197,10 +195,8 @@ impl OrchestratorTestCluster {
     /// Get total partition assignments across all live agents.
     async fn total_assignments(&self) -> usize {
         let mut total = 0;
-        for slot in &self.agents {
-            if let Some(s) = slot {
-                total += s.agent.assigned_partitions().await.len();
-            }
+        for s in self.agents.iter().flatten() {
+            total += s.agent.assigned_partitions().await.len();
         }
         total
     }

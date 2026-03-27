@@ -2,9 +2,9 @@
 //!
 //! ## Module structure
 //!
-//! - [`forwarder`] — Zenoh subscriber lifecycle (pause/resume for offload)
-//! - [`recovery`] — Tiered gap recovery (store → cache → backoff)
-//! - [`pipeline`] — Gap detection, shard routing, heartbeat handling
+//! - `forwarder` — Zenoh subscriber lifecycle (pause/resume for offload)
+//! - `recovery` — Tiered gap recovery (store → cache → backoff)
+//! - `pipeline` — Gap detection, shard routing, heartbeat handling
 //! - [`offload`] — Slow-consumer offload state machine (store feature)
 //! - [`gap_detector`] — Per-publisher sequence tracking
 //! - [`checkpoint`] — Persistent sequence checkpoints (store feature)

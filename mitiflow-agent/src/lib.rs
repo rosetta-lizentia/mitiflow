@@ -1,11 +1,5 @@
-//! mitiflow-agent — Distributed storage management for mitiflow.
-//!
-//! Per-node daemon that manages `EventStore` instances via decentralized
-//! partition assignment using weighted rendezvous hashing and Zenoh liveliness.
-//!
-//! Supports multi-topic operation: a single agent process can serve any number
-//! of topics, each with an independent [`TopicWorker`] owning its own
-//! `MembershipTracker`, `Reconciler`, `RecoveryManager`, and `StatusReporter`.
+#![doc = include_str!("../README.md")]
+#![allow(rustdoc::broken_intra_doc_links)]
 
 pub mod agent;
 pub mod config;

@@ -1,8 +1,5 @@
-//! mitiflow-orchestrator: control-plane service for mitiflow
-//!
-//! Provides configuration management, lag monitoring, store lifecycle tracking,
-//! cluster view aggregation, override management, drain operations,
-//! and an admin API (Zenoh queryable). Does **not** sit in the event data path.
+#![doc = include_str!("../README.md")]
+#![allow(rustdoc::broken_intra_doc_links)]
 
 pub mod alert_manager;
 pub mod cluster_view;

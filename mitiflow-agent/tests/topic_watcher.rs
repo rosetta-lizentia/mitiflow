@@ -182,7 +182,7 @@ impl MockOrchestrator {
 
         let configs = self.configs.clone();
         let prefix = self.prefix.clone();
-        let session = self.session.clone();
+        let _session = self.session.clone();
 
         let qbl = self.session.declare_queryable(&config_key).await.unwrap();
         // We need to reply to queries with stored configs
@@ -202,12 +202,14 @@ impl MockOrchestrator {
         self._queryable = Some(queryable);
     }
 
+    #[allow(dead_code)]
     async fn publish_topic(&self, cfg: &RemoteTopicConfig) {
         let key = format!("{}/_config/{}", self.prefix, cfg.name);
         let bytes = serde_json::to_vec(cfg).unwrap();
         self.session.put(&key, bytes).await.unwrap();
     }
 
+    #[allow(dead_code)]
     async fn delete_topic(&self, name: &str) {
         let key = format!("{}/_config/{}", self.prefix, name);
         self.session.delete(&key).await.unwrap();

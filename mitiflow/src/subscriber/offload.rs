@@ -399,6 +399,7 @@ pub(crate) struct OffloadManager {
 
 impl OffloadManager {
     /// Create a new offload manager with access to the forwarder handle.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Session,
         config: OffloadConfig,
@@ -425,6 +426,7 @@ impl OffloadManager {
 
     /// Current state of the offload state machine.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn state(&self) -> ConsumerState {
         self.state
     }

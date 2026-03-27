@@ -1,17 +1,14 @@
-//! Consumer groups with partitioned subscriptions.
+//! Consumer groups with offset commits and rebalancing.
 //!
 //! This example demonstrates:
-//!   1. Creating multiple workers, each with a `PartitionManager`.
-//!   2. Stable partition assignment using rendezvous (HRW) hashing.
-//!   3. Publishing events with application keys (`publish_keyed`) for
-//!      automatic partition routing.
-//!   4. Rebalancing when new workers join or existing ones leave.
-//!   5. Generating partition-filtered Zenoh subscription key expressions.
+//!   1. Creating a `ConsumerGroupSubscriber` that joins a consumer group.
+//!   2. Automatic partition assignment via rendezvous (HRW) hashing.
+//!   3. Publishing keyed events routed to partitions by user_id.
+//!   4. Manual offset commits (`commit_sync`).
+//!   5. Auto-commit mode for hands-off offset management.
+//!   6. Rebalancing when the `PartitionManager` is used directly.
 //!
-//! Rendezvous hashing guarantees minimal partition movement on topology changes:
-//! only the partitions owned by the leaving/joining worker are reassigned.
-//!
-//!   cargo run -p mitiflow --example consumer_groups
+//!   cargo run -p mitiflow --features full --example consumer_groups
 
 mod inner {
     use std::sync::{Arc, Mutex};
@@ -19,18 +16,27 @@ mod inner {
 
     use serde::{Deserialize, Serialize};
 
-    use mitiflow::{Event, EventBusConfig, EventPublisher, HeartbeatMode, PartitionManager};
+    use mitiflow::{
+        CommitMode, ConsumerGroupConfig, ConsumerGroupSubscriber, Event, EventBusConfig,
+        EventPublisher, EventStore, FjallBackend, HeartbeatMode, OffsetReset, PartitionManager,
+    };
 
-    /// An event carrying a user action, routed to a partition by `user_id`.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct UserAction {
         user_id: String,
         action: String,
     }
 
-    /// Build an `EventBusConfig` for the given worker identity.
+    fn base_config(num_partitions: u32) -> mitiflow::Result<EventBusConfig> {
+        EventBusConfig::builder("demo/consumer_group")
+            .cache_size(200)
+            .heartbeat(HeartbeatMode::Periodic(Duration::from_millis(200)))
+            .num_partitions(num_partitions)
+            .build()
+    }
+
     fn worker_config(worker_id: &str, num_partitions: u32) -> mitiflow::Result<EventBusConfig> {
-        EventBusConfig::builder("demo/user_actions")
+        EventBusConfig::builder("demo/consumer_group")
             .cache_size(200)
             .heartbeat(HeartbeatMode::Disabled)
             .num_partitions(num_partitions)
@@ -38,83 +44,178 @@ mod inner {
             .build()
     }
 
-    /// Phase 1: Start two workers and print initial partition assignment.
-    async fn phase_initial_assignment(
-        session: &zenoh::Session,
-        num_partitions: u32,
-    ) -> mitiflow::Result<(PartitionManager, PartitionManager)> {
+    /// Phase 1: ConsumerGroupSubscriber with manual commit.
+    async fn phase_consumer_group(session: &zenoh::Session) -> mitiflow::Result<()> {
+        println!("=== Phase 1: ConsumerGroupSubscriber with manual commit ===\n");
+        const NUM_PARTITIONS: u32 = 4;
+
+        // Start an EventStore so offset commits have somewhere to persist.
+        let store_dir = tempfile::tempdir().unwrap();
+        let backend =
+            FjallBackend::open(store_dir.path(), 0).expect("failed to open fjall backend");
+        let store_config = EventBusConfig::builder("demo/consumer_group")
+            .num_partitions(NUM_PARTITIONS)
+            .build()?;
+        let mut store = EventStore::new(session, backend, store_config.clone());
+        store.run().await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Create a publisher.
+        let pub_config = base_config(NUM_PARTITIONS)?;
+        let publisher = EventPublisher::new(session, pub_config).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Create a consumer group subscriber with manual commits.
+        let group_config = ConsumerGroupConfig {
+            group_id: "demo-group".into(),
+            member_id: "member-1".into(),
+            commit_mode: CommitMode::Manual,
+            offset_reset: OffsetReset::Earliest,
+        };
+        let consumer_config = base_config(NUM_PARTITIONS)?;
+        let consumer =
+            ConsumerGroupSubscriber::new(session, consumer_config, group_config).await?;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let partitions = consumer.assigned_partitions().await;
+        println!(
+            "  member-1 assigned {} partitions: {:?}",
+            partitions.len(),
+            partitions
+        );
+        println!("  generation: {}", consumer.current_generation());
+
+        // Publish some keyed events.
+        let users = ["alice", "bob", "carol", "dave"];
+        for user_id in &users {
+            let event = Event::new(UserAction {
+                user_id: user_id.to_string(),
+                action: "login".into(),
+            });
+            let seq = publisher.publish_keyed(user_id, &event).await?;
+            println!("  published: user={user_id}, seq={seq}");
+        }
+
+        // Receive events.
+        println!("\n  Receiving events...");
+        for _ in 0..users.len() {
+            let event: Event<UserAction> =
+                tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+                    .await
+                    .expect("timed out")?;
+            println!(
+                "  received: user={}, action={}, seq={}",
+                event.payload.user_id,
+                event.payload.action,
+                event.seq.unwrap_or(0),
+            );
+        }
+
+        // Manually commit offsets.
+        consumer.commit_sync().await?;
+        println!("\n  Offsets committed (manual).");
+
+        consumer.shutdown().await;
+        drop(publisher);
+        store.shutdown_gracefully().await;
+        drop(store_dir);
+        Ok(())
+    }
+
+    /// Phase 2: Auto-commit mode.
+    async fn phase_auto_commit(session: &zenoh::Session) -> mitiflow::Result<()> {
+        println!("\n=== Phase 2: Auto-commit mode ===\n");
+        const NUM_PARTITIONS: u32 = 4;
+
+        let store_dir = tempfile::tempdir().unwrap();
+        let backend =
+            FjallBackend::open(store_dir.path(), 0).expect("failed to open fjall backend");
+        let store_config = EventBusConfig::builder("demo/consumer_group_auto")
+            .num_partitions(NUM_PARTITIONS)
+            .build()?;
+        let mut store = EventStore::new(session, backend, store_config.clone());
+        store.run().await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let pub_config = EventBusConfig::builder("demo/consumer_group_auto")
+            .cache_size(200)
+            .heartbeat(HeartbeatMode::Periodic(Duration::from_millis(200)))
+            .num_partitions(NUM_PARTITIONS)
+            .build()?;
+        let publisher = EventPublisher::new(session, pub_config).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Auto-commit every 1 second.
+        let group_config = ConsumerGroupConfig {
+            group_id: "auto-group".into(),
+            member_id: "auto-member-1".into(),
+            commit_mode: CommitMode::Auto {
+                interval: Duration::from_secs(1),
+            },
+            offset_reset: OffsetReset::Earliest,
+        };
+        let consumer_config = EventBusConfig::builder("demo/consumer_group_auto")
+            .num_partitions(NUM_PARTITIONS)
+            .build()?;
+        let consumer =
+            ConsumerGroupSubscriber::new(session, consumer_config, group_config).await?;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        println!(
+            "  Auto-commit interval: 1s, offset_reset: Earliest, partitions: {:?}",
+            consumer.assigned_partitions().await
+        );
+
+        // Publish and receive.
+        let event = Event::new(UserAction {
+            user_id: "eve".into(),
+            action: "signup".into(),
+        });
+        publisher.publish_keyed("eve", &event).await?;
+        let received: Event<UserAction> =
+            tokio::time::timeout(Duration::from_secs(5), consumer.recv())
+                .await
+                .expect("timed out")?;
+        println!(
+            "  received: user={}, action={}",
+            received.payload.user_id, received.payload.action
+        );
+
+        // Wait for auto-commit to fire.
+        println!("  waiting for auto-commit...");
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        println!("  offsets auto-committed.");
+
+        consumer.shutdown().await;
+        drop(publisher);
+        store.shutdown_gracefully().await;
+        drop(store_dir);
+        Ok(())
+    }
+
+    /// Phase 3: PartitionManager rebalancing demo.
+    async fn phase_rebalancing(session: &zenoh::Session) -> mitiflow::Result<()> {
+        println!("\n=== Phase 3: PartitionManager rebalancing ===\n");
+        const NUM_PARTITIONS: u32 = 12;
+
         let worker_a =
-            PartitionManager::new(session, worker_config("worker-a", num_partitions)?).await?;
+            PartitionManager::new(session, worker_config("worker-a", NUM_PARTITIONS)?).await?;
         let worker_b =
-            PartitionManager::new(session, worker_config("worker-b", num_partitions)?).await?;
+            PartitionManager::new(session, worker_config("worker-b", NUM_PARTITIONS)?).await?;
         tokio::time::sleep(Duration::from_millis(400)).await;
 
         let parts_a = worker_a.my_partitions().await;
         let parts_b = worker_b.my_partitions().await;
-        println!("--- Initial assignment: 2 workers, {num_partitions} partitions ---");
-        println!("  worker-a ({} partitions): {:?}", parts_a.len(), parts_a);
-        println!("  worker-b ({} partitions): {:?}", parts_b.len(), parts_b);
-        assert_eq!(
-            parts_a.len() + parts_b.len(),
-            num_partitions as usize,
-            "all partitions must be assigned"
-        );
-        Ok((worker_a, worker_b))
-    }
+        println!("  2 workers, {NUM_PARTITIONS} partitions:");
+        println!("    worker-a ({} partitions): {:?}", parts_a.len(), parts_a);
+        println!("    worker-b ({} partitions): {:?}", parts_b.len(), parts_b);
 
-    /// Phase 2: Publish events routed to partitions by user_id.
-    async fn phase_publish_events(
-        session: &zenoh::Session,
-        worker_a: &PartitionManager,
-        _worker_b: &PartitionManager,
-        num_partitions: u32,
-    ) -> mitiflow::Result<()> {
-        const KEY_PREFIX: &str = "demo/user_actions";
-        let publisher = EventPublisher::new(
-            session,
-            EventBusConfig::builder(KEY_PREFIX)
-                .cache_size(200)
-                .heartbeat(HeartbeatMode::Disabled)
-                .num_partitions(num_partitions)
-                .worker_id("publisher")
-                .build()?,
-        )
-        .await?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        let user_ids = [
-            "alice", "bob", "carol", "dave", "eve", "frank", "grace", "henry",
-        ];
-        println!("\n--- Event routing to partitions (via publish_keyed) ---");
-        for user_id in &user_ids {
-            let event = Event::new(UserAction {
-                user_id: user_id.to_string(),
-                action: "login".to_string(),
-            });
-            publisher.publish_keyed(user_id, &event).await?;
-            let partition = worker_a.partition_for(user_id);
-            let owner = if worker_a.my_partitions().await.contains(&partition) {
-                "worker-a"
-            } else {
-                "worker-b"
-            };
-            println!("  user={user_id:6}  partition={partition:2}  owner={owner}");
-        }
-        Ok(())
-    }
-
-    /// Phase 3: A third worker joins — observe rebalance.
-    async fn phase_worker_joins(
-        session: &zenoh::Session,
-        worker_a: &PartitionManager,
-        worker_b: &PartitionManager,
-        rebalance_log: &Arc<Mutex<Vec<String>>>,
-        num_partitions: u32,
-    ) -> mitiflow::Result<PartitionManager> {
-        let log_for_a = Arc::clone(rebalance_log);
+        // A third worker joins.
+        let rebalance_log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let log_clone = Arc::clone(&rebalance_log);
         worker_a
             .on_rebalance(move |gained, lost| {
-                log_for_a
+                log_clone
                     .lock()
                     .unwrap()
                     .push(format!("worker-a  gained={gained:?}  lost={lost:?}"));
@@ -122,90 +223,34 @@ mod inner {
             .await;
 
         let worker_c =
-            PartitionManager::new(session, worker_config("worker-c", num_partitions)?).await?;
-
-        let log_for_c = Arc::clone(rebalance_log);
-        worker_c
-            .on_rebalance(move |gained, lost| {
-                log_for_c
-                    .lock()
-                    .unwrap()
-                    .push(format!("worker-c  gained={gained:?}  lost={lost:?}"));
-            })
-            .await;
-
+            PartitionManager::new(session, worker_config("worker-c", NUM_PARTITIONS)?).await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let parts_a = worker_a.my_partitions().await;
         let parts_b = worker_b.my_partitions().await;
         let parts_c = worker_c.my_partitions().await;
-        println!("\n--- After worker-c joins: 3 workers ---");
-        println!("  worker-a ({} partitions): {:?}", parts_a.len(), parts_a);
-        println!("  worker-b ({} partitions): {:?}", parts_b.len(), parts_b);
-        println!("  worker-c ({} partitions): {:?}", parts_c.len(), parts_c);
-        assert_eq!(
-            parts_a.len() + parts_b.len() + parts_c.len(),
-            num_partitions as usize,
-            "all partitions must remain assigned after rebalance"
-        );
+        println!("\n  After worker-c joins (3 workers):");
+        println!("    worker-a ({} partitions): {:?}", parts_a.len(), parts_a);
+        println!("    worker-b ({} partitions): {:?}", parts_b.len(), parts_b);
+        println!("    worker-c ({} partitions): {:?}", parts_c.len(), parts_c);
 
-        println!("\nRebalance callbacks:");
+        println!("\n  Rebalance callbacks:");
         for msg in rebalance_log.lock().unwrap().iter() {
-            println!("  {msg}");
+            println!("    {msg}");
         }
-        rebalance_log.lock().unwrap().clear();
 
-        Ok(worker_c)
-    }
-
-    /// Phase 4: Show partition-filtered subscription key expressions.
-    async fn phase_show_key_exprs(
-        worker_a: &PartitionManager,
-        worker_b: &PartitionManager,
-        worker_c: &PartitionManager,
-    ) {
-        const KEY_PREFIX: &str = "demo/user_actions";
-        println!("\n--- Partition-filtered subscription key expressions ---");
-        println!(
-            "  worker-a: {:?}",
-            worker_a.subscription_key_exprs(KEY_PREFIX).await
-        );
-        println!(
-            "  worker-b: {:?}",
-            worker_b.subscription_key_exprs(KEY_PREFIX).await
-        );
-        println!(
-            "  worker-c: {:?}",
-            worker_c.subscription_key_exprs(KEY_PREFIX).await
-        );
-    }
-
-    /// Phase 5: worker-c leaves — partitions rebalance back to 2 workers.
-    async fn phase_worker_leaves(
-        worker_a: &PartitionManager,
-        worker_b: &PartitionManager,
-        worker_c: PartitionManager,
-        rebalance_log: &Arc<Mutex<Vec<String>>>,
-        num_partitions: u32,
-    ) {
-        println!("\n--- worker-c leaves ---");
+        // worker-c leaves.
+        println!("\n  worker-c leaves...");
         drop(worker_c);
         tokio::time::sleep(Duration::from_millis(500)).await;
-
         let parts_a = worker_a.my_partitions().await;
         let parts_b = worker_b.my_partitions().await;
-        println!("  worker-a ({} partitions): {:?}", parts_a.len(), parts_a);
-        println!("  worker-b ({} partitions): {:?}", parts_b.len(), parts_b);
-        assert_eq!(
-            parts_a.len() + parts_b.len(),
-            num_partitions as usize,
-            "all partitions must remain assigned after worker-c leaves"
-        );
+        println!("    worker-a ({} partitions): {:?}", parts_a.len(), parts_a);
+        println!("    worker-b ({} partitions): {:?}", parts_b.len(), parts_b);
 
-        println!("\nRebalance callbacks:");
-        for msg in rebalance_log.lock().unwrap().iter() {
-            println!("  {msg}");
-        }
+        drop(worker_a);
+        drop(worker_b);
+        Ok(())
     }
 
     pub async fn run() -> mitiflow::Result<()> {
@@ -214,34 +259,12 @@ mod inner {
             .init();
 
         let session = zenoh::open(zenoh::Config::default()).await.unwrap();
-        const NUM_PARTITIONS: u32 = 12;
 
-        let (worker_a, worker_b) = phase_initial_assignment(&session, NUM_PARTITIONS).await?;
-        phase_publish_events(&session, &worker_a, &worker_b, NUM_PARTITIONS).await?;
+        phase_consumer_group(&session).await?;
+        phase_auto_commit(&session).await?;
+        phase_rebalancing(&session).await?;
 
-        let rebalance_log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let worker_c = phase_worker_joins(
-            &session,
-            &worker_a,
-            &worker_b,
-            &rebalance_log,
-            NUM_PARTITIONS,
-        )
-        .await?;
-        phase_show_key_exprs(&worker_a, &worker_b, &worker_c).await;
-        phase_worker_leaves(
-            &worker_a,
-            &worker_b,
-            worker_c,
-            &rebalance_log,
-            NUM_PARTITIONS,
-        )
-        .await;
-
-        drop(worker_a);
-        drop(worker_b);
         session.close().await.unwrap();
-
         println!("\nConsumer group example complete.");
         Ok(())
     }
