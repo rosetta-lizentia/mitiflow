@@ -51,12 +51,16 @@ async fn main() -> anyhow::Result<()> {
     // Ensure data directory exists.
     tokio::fs::create_dir_all(&config.data_dir).await?;
 
+    let http_bind = config
+        .http_port
+        .map(|port| std::net::SocketAddr::from(([0, 0, 0, 0], port)));
+
     let orch_config = OrchestratorConfig {
         key_prefix: config.key_prefix.clone(),
         data_dir: config.data_dir.clone(),
         lag_interval: Duration::from_millis(config.lag_interval_ms),
         admin_prefix: None, // Use default.
-        http_bind: None,
+        http_bind,
         auth_token: None,
     };
 
@@ -106,15 +110,19 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Run orchestrator until shutdown.
-    tokio::select! {
-        result = orchestrator.run() => {
-            if let Err(e) = result {
-                tracing::error!("Orchestrator error: {}", e);
-            }
-        }
-        _ = cancel.cancelled() => {}
+    // Start orchestrator background tasks.
+    if let Err(e) = orchestrator.run().await {
+        tracing::error!("Orchestrator failed to start: {}", e);
+        session.close().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Err(anyhow::anyhow!("orchestrator start failed"));
     }
+
+    if let Some(addr) = http_bind {
+        tracing::info!("GUI available at http://{}", addr);
+    }
+
+    // Wait for shutdown signal.
+    cancel.cancelled().await;
 
     tracing::info!("Orchestrator shutting down");
     orchestrator.shutdown().await;

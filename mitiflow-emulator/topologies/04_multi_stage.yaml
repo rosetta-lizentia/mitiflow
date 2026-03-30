@@ -33,6 +33,7 @@ components:
   - name: orch
     kind: orchestrator
     lag_interval_ms: 2000
+    http_port: 8080
 
   - name: store-raw
     kind: storage_agent

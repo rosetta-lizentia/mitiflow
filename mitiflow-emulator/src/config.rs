@@ -430,6 +430,9 @@ pub struct ComponentDef {
     /// Lag monitoring interval in milliseconds.
     pub lag_interval_ms: Option<u64>,
 
+    /// HTTP port for the orchestrator GUI/API server.
+    pub http_port: Option<u16>,
+
     /// Override RUST_LOG for this component (e.g. "debug", "mitiflow_agent=trace").
     pub log_level: Option<String>,
 

@@ -179,6 +179,8 @@ pub struct OrchestratorRoleConfig {
     pub lag_interval_ms: u64,
     /// All topic definitions for auto-registration.
     pub topics: Vec<TopicRegistration>,
+    /// Optional HTTP port for the GUI/API server.
+    pub http_port: Option<u16>,
 }
 
 /// Topic info passed to orchestrator for auto-registration.

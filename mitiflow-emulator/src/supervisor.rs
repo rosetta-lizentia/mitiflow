@@ -368,6 +368,7 @@ impl Supervisor {
                     data_dir: instance_dir,
                     lag_interval_ms: comp.lag_interval_ms.unwrap_or(1000),
                     topics,
+                    http_port: comp.http_port,
                 };
                 encode_config(&cfg)?
             }
