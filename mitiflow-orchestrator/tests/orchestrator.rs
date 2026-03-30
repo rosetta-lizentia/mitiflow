@@ -264,6 +264,7 @@ async fn orchestrator_create_list_delete_topic() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -325,6 +326,7 @@ async fn orchestrator_admin_queryable_topics() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -395,6 +397,7 @@ async fn orchestrator_lag_integration() {
         lag_interval: Duration::from_millis(100),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1000,6 +1003,7 @@ async fn admin_cluster_nodes_endpoint() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1061,6 +1065,7 @@ async fn admin_cluster_assignments_endpoint() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1128,6 +1133,7 @@ async fn admin_cluster_status_summary() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: Some(admin.clone()),
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1204,14 +1210,16 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
     orch.run().await.unwrap();
 
     // No per-topic views initially
-    let tm = orch.topic_manager().unwrap();
+    let tm = orch.topic_manager().unwrap().read().await;
     assert!(tm.tracked_topics().is_empty());
+    drop(tm);
 
     // Create a topic WITH a dedicated key prefix
     orch.create_topic(TopicConfig {
@@ -1227,9 +1235,10 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
     .await
     .unwrap();
 
-    let tm = orch.topic_manager().unwrap();
+    let tm = orch.topic_manager().unwrap().read().await;
     assert_eq!(tm.tracked_topics().len(), 1);
     assert!(tm.get_view("sensors").is_some());
+    drop(tm);
 
     // Create a topic WITHOUT a dedicated prefix → no view
     orch.create_topic(TopicConfig {
@@ -1245,12 +1254,13 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
     .await
     .unwrap();
 
-    let tm = orch.topic_manager().unwrap();
+    let tm = orch.topic_manager().unwrap().read().await;
     assert_eq!(
         tm.tracked_topics().len(),
         1,
         "empty prefix should not create a view"
     );
+    drop(tm);
 
     orch.shutdown().await;
 }
@@ -1267,6 +1277,7 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1286,12 +1297,12 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
     .await
     .unwrap();
 
-    assert!(orch.topic_manager().unwrap().get_view("metrics").is_some());
+    assert!(orch.topic_manager().unwrap().read().await.get_view("metrics").is_some());
 
     // Delete topic → view should be removed
     orch.delete_topic("metrics").await.unwrap();
-    assert!(orch.topic_manager().unwrap().get_view("metrics").is_none());
-    assert!(orch.topic_manager().unwrap().tracked_topics().is_empty());
+    assert!(orch.topic_manager().unwrap().read().await.get_view("metrics").is_none());
+    assert!(orch.topic_manager().unwrap().read().await.tracked_topics().is_empty());
 
     orch.shutdown().await;
 }
@@ -1308,6 +1319,7 @@ async fn multi_topic_views_pick_up_independent_agents() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1352,15 +1364,17 @@ async fn multi_topic_views_pick_up_independent_agents() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let view_a = orch.topic_manager().unwrap().get_view("topicA").unwrap();
+    let tm = orch.topic_manager().unwrap().read().await;
+    let view_a = tm.get_view("topicA").unwrap();
     assert_eq!(view_a.online_count().await, 1);
 
-    let view_b = orch.topic_manager().unwrap().get_view("topicB").unwrap();
+    let view_b = tm.get_view("topicB").unwrap();
     assert_eq!(
         view_b.online_count().await,
         0,
         "topicB should have no agents"
     );
+    drop(tm);
 
     orch.shutdown().await;
 }
@@ -1381,6 +1395,7 @@ async fn orchestrator_config_queryable_returns_all_topics() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1451,6 +1466,7 @@ async fn orchestrator_config_queryable_returns_single_topic() {
         lag_interval: Duration::from_secs(10),
         admin_prefix: None,
         http_bind: None,
+        auth_token: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();

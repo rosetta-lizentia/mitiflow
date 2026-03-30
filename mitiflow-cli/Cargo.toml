@@ -10,6 +10,11 @@ rust-version.workspace = true
 name = "mitiflow"
 path = "src/main.rs"
 
+[features]
+default = []
+ui = ["mitiflow-orchestrator/ui"]
+full = ["ui"]
+
 [dependencies]
 mitiflow = { workspace = true, features = ["full"] }
 mitiflow-agent = { workspace = true }

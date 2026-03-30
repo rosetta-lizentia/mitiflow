@@ -98,6 +98,7 @@ impl OrchestratorTestCluster {
             lag_interval: Duration::from_secs(10),
             admin_prefix: Some(format!("{}/_admin", self.prefix)),
             http_bind: None,
+            auth_token: None,
         };
         let mut orch = Orchestrator::new(&session, config).unwrap();
         orch.run().await.unwrap();

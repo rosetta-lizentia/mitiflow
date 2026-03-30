@@ -31,6 +31,12 @@ path = "src/bin/storage_agent.rs"
 name = "mitiflow-emulator-orchestrator"
 path = "src/bin/orchestrator.rs"
 
+
+[features]
+default = []
+ui = ["mitiflow-orchestrator/ui"]
+full = ["ui"]
+
 [dependencies]
 mitiflow = { path = "../mitiflow", features = ["full"] }
 mitiflow-agent = { path = "../mitiflow-agent" }

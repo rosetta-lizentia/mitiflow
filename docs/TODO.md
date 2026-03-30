@@ -611,6 +611,421 @@ exist yet:
 
 ---
 
+## GUI — Embedded Web UI
+
+**Status:** Phase 1–7 mostly done, Phase 8 partial (CI missing)
+**Ref:** [18_gui_design.md](18_gui_design.md)
+
+Embedded SPA (Svelte 5 + Vite) served from the orchestrator's axum server
+via `rust-embed`. Read-write. Primary user: developers (debugging). Secondary:
+platform engineers. Auth: optional static bearer token. Single cluster.
+TUI deferred.
+
+### Phase 1 — Backend Foundation
+
+All backend work is test-first: write the HTTP/SSE test, then implement the
+handler. Tests use `axum::test` helpers (`tower::ServiceExt::oneshot`) against
+`build_router()` — no real Zenoh needed for unit tests.
+
+- [x] **`http.rs` — `HttpState` extension.** Add `orchestrator: Arc<RwLock<Orchestrator>>`,
+      `lag_events_tx: broadcast::Sender<LagReport>`,
+      `cluster_events_tx: broadcast::Sender<ClusterEvent>`,
+      `event_tail_tx: broadcast::Sender<EventSummary>`,
+      `session: Option<Session>`, `topic_manager: Option<Arc<TopicManager>>`,
+      `auth_token: Option<String>` fields. Update `start_http()` signature.
+
+      **Tests (update `http_api.rs`):**
+      - [x] existing 15 tests continue to pass with extended `HttpState`
+
+- [x] **`http.rs` — static file serving.** Add `rust-embed` dependency behind
+      `ui` feature flag. Implement `serve_ui()` fallback handler that serves
+      embedded assets or `index.html` for SPA routing.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_serve_ui_index_html` — GET `/` returns 200 with
+            `text/html` content type (when `ui` feature enabled)
+      - [ ] `test_serve_ui_fallback` — GET `/topics/orders` (SPA route)
+            returns `index.html` content
+      - [ ] `test_serve_ui_static_asset` — GET `/assets/app.js` returns
+            the correct asset with proper MIME type
+      - [ ] `test_serve_ui_404_without_feature` — when `ui` feature
+            disabled, GET `/` returns 404
+
+- [x] **`http.rs` — optional auth middleware.** axum `middleware::from_fn`
+      bearer token check on all API routes except `/api/v1/health`. Token
+      from `MITIFLOW_UI_TOKEN` env var. None = no auth (local dev)
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_auth_disabled_by_default` — no token configured, all
+            endpoints accessible without `Authorization` header
+      - [ ] `test_auth_rejects_missing_token` — token configured, GET
+            `/api/v1/topics` without header returns 401
+      - [ ] `test_auth_rejects_wrong_token` — invalid bearer returns 401
+      - [ ] `test_auth_accepts_valid_token` — correct bearer returns 200
+      - [ ] `test_health_bypasses_auth` — GET `/api/v1/health` returns
+            200 even when auth is enabled and no token is provided
+
+- [x] **`orchestrator.rs` — broadcast channels.** Create
+      `broadcast::channel` for `ClusterEvent`, `LagReport`, `EventSummary`
+      in `Orchestrator::run()`. Pass `Sender` clones to subsystems and
+      `HttpState`.
+
+      **Tests (`orchestrator.rs`):**
+      - [ ] `test_broadcast_channels_created` — after `run()`, verify
+            the broadcast senders are connected by subscribing and
+            checking a lag report is received
+
+- [x] **`lag.rs` — `known_groups()` + broadcast.** Add
+      `LagMonitor::known_groups() → Vec<String>` returning distinct group IDs
+      from observed offset commits. Add optional `broadcast::Sender<LagReport>`
+      parameter; fire alongside Zenoh put. Also added `get_publishers()`
+      returning `Vec<(PublisherId, Vec<u32>)>` from watermarks.
+
+      **Tests (`orchestrator.rs`):**
+      - [ ] `test_lag_monitor_known_groups_empty` — no offsets observed,
+            returns empty vec
+      - [ ] `test_lag_monitor_known_groups_discovers` — after offset
+            commits from two groups, `known_groups()` returns both
+      - [ ] `test_lag_monitor_broadcasts` — subscribe to broadcast rx,
+            publish watermark + offset, verify `LagReport` received on rx
+
+### Phase 2 — Read API Endpoints
+
+Each endpoint: write test → implement handler → verify test passes.
+
+- [x] **`GET /api/v1/topics/{name}/partitions`** — partition assignments for
+      a topic from `ClusterView::assignments()` filtered by topic key prefix.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_topic_partitions_found` — create topic + seed ClusterView
+            with node status containing partition assignments, GET returns
+            correct partitions with replicas grouped
+      - [ ] `test_topic_partitions_not_found` — unknown topic returns 404
+
+- [x] **`GET /api/v1/topics/{name}/publishers`** — active publishers from
+      watermark data in LagMonitor.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_topic_publishers` — seed watermarks for two publishers,
+            GET returns both with per-partition committed_seq
+      - [ ] `test_topic_publishers_empty` — no watermarks, returns empty list
+
+- [x] **`GET /api/v1/topics/{name}/lag`** — lag per consumer group for a topic.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_topic_lag` — seed lag data for two groups, GET returns
+            both with per-partition breakdown and totals
+      - [ ] `test_topic_lag_no_groups` — no lag data, returns empty list
+
+- [x] **`GET /api/v1/consumer-groups`** — list all known consumer groups.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_list_consumer_groups` — seed offset commits from two
+            groups, GET returns both with total_lag
+      - [ ] `test_list_consumer_groups_empty` — no groups, returns `[]`
+
+- [x] **`GET /api/v1/consumer-groups/{id}`** — consumer group detail.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_consumer_group_detail` — returns lag per partition with
+            publisher breakdown
+      - [ ] `test_consumer_group_not_found` — unknown group returns 404
+
+- [x] **`GET /api/v1/events`** — event browsing via Zenoh query-through.
+
+      **Tests:** Integration test (requires Zenoh session + EventStore):
+      - [ ] `test_event_query_by_seq_range` — publish 10 events, query
+            `after_seq=3&before_seq=7`, verify 3 events returned with
+            metadata and base64 payload
+      - [ ] `test_event_query_by_key` — publish keyed events, query
+            `key=ORD-001`, verify only matching events returned
+      - [ ] `test_event_query_limit` — publish 100 events, query
+            `limit=10`, verify 10 events + `has_more=true`
+      - [ ] `test_event_query_missing_topic` — no `topic` param returns 400
+      - [ ] `test_event_query_store_offline` — store not running, returns
+            504 Gateway Timeout
+
+### Phase 3 — SSE Streaming Endpoints
+
+- [x] **`SSE /api/v1/stream/cluster`** — node join/leave/health changes.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_sse_cluster_initial_snapshot` — connect SSE, verify
+            initial node events emitted for all known nodes
+      - [ ] `test_sse_cluster_node_change` — connect SSE, broadcast a
+            `ClusterEvent::NodeOnline`, verify event received
+
+- [x] **`SSE /api/v1/stream/lag`** — lag report stream.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_sse_lag_unfiltered` — connect SSE, broadcast LagReport,
+            verify received
+      - [ ] `test_sse_lag_filtered_by_group` — connect SSE with
+            `?group=order-svc`, broadcast two reports (one matching, one
+            not), verify only matching received
+
+- [x] **`SSE /api/v1/stream/events`** — live event tail. (Handler exists;
+      producer task that subscribes to `{prefix}/p/**` not yet wired.)
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_sse_events_receives_tail` — connect SSE, broadcast
+            `EventSummary`, verify metadata-only event received (no payload)
+
+### Phase 4 — Write API Endpoints
+
+- [x] **`POST /api/v1/topics` — upgrade.** Handler uses `ConfigStore::put_topic()`.
+      Design wanted `Orchestrator::create_topic()` for Zenoh distribution +
+      ClusterView lifecycle (deferred).
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_create_topic_via_orchestrator` — POST creates topic,
+            verify it appears in list AND per-topic ClusterView is started
+
+- [x] **`DELETE /api/v1/topics/{name}` — upgrade.** Uses `ConfigStore`
+      directly. Design wanted `Orchestrator::delete_topic()` (deferred).
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_delete_topic_via_orchestrator` — DELETE removes topic,
+            verify per-topic ClusterView is stopped
+
+- [x] **`PUT /api/v1/topics/{name}`** — partial update.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_update_topic_retention` — PUT with `retention` field
+            updates only retention, other fields unchanged
+      - [ ] `test_update_topic_rejects_immutable` — PUT with `name` or
+            `num_partitions` change returns 400
+      - [ ] `test_update_topic_not_found` — PUT on nonexistent topic
+            returns 404
+      - [ ] `test_update_topic_empty_body` — PUT with `{}` returns 200
+            with unchanged config
+
+- [x] **`POST /api/v1/cluster/nodes/{id}/drain`** — drain a node.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_drain_node` — POST with RF=3, verify overrides generated
+            and returned in response
+      - [ ] `test_drain_unknown_node` — POST for nonexistent node returns
+            404 or empty overrides
+
+- [x] **`POST /api/v1/cluster/nodes/{id}/undrain`** — undrain a node.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_undrain_node` — POST after drain, verify overrides cleared
+
+- [x] **`GET /api/v1/cluster/overrides`** — read current override table.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_get_overrides_empty` — no overrides, returns empty table
+      - [ ] `test_get_overrides_after_drain` — after drain, returns
+            entries with epoch > 0
+
+- [x] **`POST /api/v1/cluster/overrides`** — add override entries.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_add_overrides` — POST entries, GET returns them with
+            incremented epoch
+      - [ ] `test_add_overrides_with_ttl` — POST with `ttl_seconds`,
+            verify `expires_at` set
+
+- [x] **`DELETE /api/v1/cluster/overrides`** — clear all overrides.
+
+      **Tests (`http_api.rs`):**
+      - [ ] `test_clear_overrides` — add overrides, DELETE, GET returns
+            empty entries with incremented epoch
+
+- [x] **`POST /api/v1/consumer-groups/{id}/reset`** — reset offsets.
+
+      **Tests:** Integration test (requires Zenoh session + EventStore):
+      - [ ] `test_reset_offsets_to_earliest` — publish events, commit
+            offsets, POST reset `strategy: "earliest"`, verify offset = 0
+      - [ ] `test_reset_offsets_to_latest` — POST reset `strategy: "latest"`,
+            verify offset equals current watermark
+      - [ ] `test_reset_offsets_to_seq` — POST reset `strategy: {"to_seq": 100}`,
+            verify offset = 100
+      - [ ] `test_reset_offsets_requires_topic_and_partition` — POST
+            without `topic` returns 400
+
+### Phase 5 — Frontend Foundation
+
+Frontend tests use Vitest (Svelte component testing) and Playwright (E2E).
+
+- [x] **Project scaffold.** `mitiflow-ui/` with Svelte 5, Vite, Tailwind,
+      svelte-spa-router.
+
+      **Tests:**
+      - [ ] `vitest` — App.svelte renders without errors
+      - [ ] `vitest` — Router mounts correct page for each route hash
+
+- [x] **`lib/api.ts`** — typed fetch wrappers for all endpoints.
+
+      **Tests (`api.test.ts` with msw mock server):**
+      - [ ] `test_list_topics` — mock GET `/api/v1/topics`, verify typed
+            result
+      - [ ] `test_create_topic` — mock POST, verify request body shape
+      - [ ] `test_update_topic` — mock PUT, verify partial body
+      - [ ] `test_delete_topic` — mock DELETE, verify 204 handling
+      - [ ] `test_drain_node` — mock POST, verify response parsing
+      - [ ] `test_error_handling` — mock 500, verify error thrown
+
+- [x] **`lib/sse.ts`** — SSE client wrapper with reconnect.
+
+      **Tests (`sse.test.ts`):**
+      - [ ] `test_sse_parses_events` — mock EventSource, verify callback
+            invoked with parsed data
+      - [ ] `test_sse_close` — verify EventSource.close() called
+
+- [x] **Components: Layout, Sidebar, StatCard, StatusBadge, Toast,
+      ConfirmDialog, DataTable.** (DataTable not started; rest done.)
+
+      **Tests (Vitest component tests):**
+      - [ ] `test_sidebar_navigation` — renders all nav links
+      - [ ] `test_stat_card_display` — renders label and value
+      - [ ] `test_confirm_dialog` — shows message, calls onConfirm/onCancel
+      - [ ] `test_toast_auto_dismiss` — appears and disappears after timeout
+
+### Phase 6 — Frontend Read Pages
+
+- [x] **Dashboard.svelte** — summary cards, node table, lag summary, event
+      tail. (REST + SSE: live node table, recent events tail, lag sparklines.)
+
+      **Tests:**
+      - [ ] `vitest` — renders stat cards with mocked API data
+      - [ ] `vitest` — lag table updates when SSE store changes
+      - [ ] `playwright` — full dashboard renders with mock API server
+
+- [x] **Topics.svelte** — topic list table with search/filter.
+
+      **Tests:**
+      - [ ] `vitest` — renders topic rows from mocked data
+      - [ ] `vitest` — search input filters displayed topics
+
+- [x] **TopicDetail.svelte** — config, partition map, publishers, lag.
+      (RF edit + retention/compaction settings panel done.)
+
+      **Tests:**
+      - [ ] `vitest` — renders partition map from mocked partition data
+      - [ ] `vitest` — shows publisher table from mocked publisher data
+
+- [x] **Nodes.svelte** — node list with health metrics.
+
+      **Tests:**
+      - [ ] `vitest` — renders node rows with status badges
+      - [ ] `vitest` — offline node shows red badge
+
+- [x] **NodeDetail.svelte** — single node health + partition assignments.
+
+- [x] **ConsumerGroups.svelte** — group list with lag totals.
+
+- [x] **GroupDetail.svelte** — per-partition lag, lag trend chart.
+      (Lag table + live SSE + LagSparkline + offset reset dialog done.)
+
+      **Tests:**
+      - [ ] `vitest` — renders lag table with per-partition breakdown
+      - [ ] `vitest` — lag chart renders sparkline from SSE data
+
+- [x] **EventInspector.svelte** — filter form, result table, detail expand,
+      PayloadViewer. (Live/Query mode tabs, topic/key/seq/publisher filters,
+      EventDetail expand, PayloadViewer done.)
+
+      **Tests:**
+      - [ ] `vitest` — filter form submits correct query params
+      - [ ] `vitest` — payload viewer renders JSON with syntax highlighting
+      - [ ] `vitest` — payload viewer falls back to hex for binary
+
+- [x] **DLQ.svelte** — dead letter queue placeholder page.
+      (Backend DLQ subscription not yet implemented.)
+
+### Phase 7 — Frontend Write Pages
+
+- [x] **TopicForm.svelte** — create form inline in Topics.svelte; edit
+      (RF + retention + compaction) in TopicDetail settings panel.
+
+      **Tests:**
+      - [ ] `vitest` — create mode: all fields empty, submit calls POST
+      - [ ] `vitest` — edit mode: fields pre-filled, submit calls PUT
+      - [ ] `vitest` — validation: name required, partitions > 0, RF > 0
+      - [ ] `vitest` — immutable fields disabled in edit mode
+
+- [x] **Topics.svelte — create button + TopicForm modal.** (Inline create
+      form done.)
+
+      **Tests:**
+      - [ ] `vitest` — click "Create Topic" opens form modal
+      - [ ] `vitest` — after successful create, topic list refreshes
+
+- [x] **TopicDetail.svelte — edit + delete actions.** (RF edit + delete
+      with ConfirmDialog done. Full edit form deferred.)
+
+      **Tests:**
+      - [ ] `vitest` — click "Edit" opens TopicForm in edit mode
+      - [ ] `vitest` — click "Delete" opens ConfirmDialog
+      - [ ] `vitest` — confirm delete calls API and navigates to list
+
+- [x] **Nodes.svelte — drain/undrain action buttons.** (Drain/undrain
+      with ConfirmDialog done.)
+
+      **Tests:**
+      - [ ] `vitest` — click "Drain" opens ConfirmDialog with node name
+      - [ ] `vitest` — confirm drain calls POST and shows override summary
+      - [ ] `vitest` — drained node shows "Undrain" button instead
+
+- [x] **Overrides.svelte — override table + add/clear.** (View +
+      add + clear with ConfirmDialog done.)
+
+      **Tests:**
+      - [ ] `vitest` — renders current overrides from GET
+      - [ ] `vitest` — add override form submits correct entries
+      - [ ] `vitest` — clear button opens ConfirmDialog, confirm calls DELETE
+
+- [x] **GroupDetail.svelte — offset reset action.** Reset dialog with
+      topic/partition/strategy selector. Calls POST reset endpoint.
+
+      **Tests:**
+      - [ ] `vitest` — click "Reset Offsets" opens strategy selector
+      - [ ] `vitest` — "earliest" strategy sends correct request
+      - [ ] `vitest` — ConfirmDialog shows current vs target offset
+
+### Phase 8 — Build Integration
+
+- [x] **`mitiflow-orchestrator/Cargo.toml` — `ui` feature flag.** Add
+      `rust-embed` and `mime_guess` as optional deps behind `ui` feature.
+
+- [x] **`justfile` — `ui-build` and `build-with-ui` recipes.**
+
+- [x] **`mitiflow-ui/vite.config.ts` — dev proxy for `/api`.**
+
+- [ ] **CI — build frontend + embed in release binary.**
+
+      **Tests:**
+      - [ ] CI job: `cd mitiflow-ui && pnpm install && pnpm build`
+            succeeds
+      - [ ] CI job: `cargo build -p mitiflow-orchestrator --features ui`
+            succeeds
+      - [ ] CI job: `cargo test -p mitiflow-orchestrator --features ui`
+            passes all tests including UI serving
+
+### E2E Integration Tests
+
+These tests run the full stack: orchestrator + agent + frontend.
+
+- [ ] **`e2e_gui_topic_lifecycle`** — create topic via UI, verify agent
+      spawns TopicWorker, delete via UI, verify worker stopped.
+- [ ] **`e2e_gui_event_inspector`** — publish events, open Event Inspector,
+      verify events visible with correct payload.
+- [ ] **`e2e_gui_lag_live`** — start consumer group, publish events without
+      consuming, verify lag dashboard shows increasing lag via SSE.
+- [ ] **`e2e_gui_drain_undrain`** — drain node via UI, verify partition
+      migration, undrain, verify partitions return.
+
+### Depends on
+
+- Orchestrator (Phase 2) — HTTP API, ClusterView, LagMonitor. ✅ Done.
+- Distributed Storage Management (Tier 1+2). ✅ Done.
+- Multi-Topic Agent (Phases A–F). ✅ Done.
+
+---
+
 ## Documentation
 
 - [ ] Update [00_proposal.md](00_proposal.md) § watermark example once

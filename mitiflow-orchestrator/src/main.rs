@@ -22,6 +22,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
+    let http_bind: Option<std::net::SocketAddr> = std::env::var("MITIFLOW_HTTP_BIND")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or(Some(([0, 0, 0, 0], 8080).into()));
 
     let session = zenoh::open(zenoh::Config::default()).await?;
 
@@ -30,7 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         data_dir,
         lag_interval: Duration::from_millis(lag_interval_ms),
         admin_prefix: None,
-        http_bind: None,
+        http_bind,
+        auth_token: None,
     };
 
     let mut orchestrator = Orchestrator::new(&session, config)?;

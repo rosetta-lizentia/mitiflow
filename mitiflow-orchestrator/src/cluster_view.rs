@@ -7,10 +7,12 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use mitiflow_agent::{NodeHealth, NodeMetadata, NodeStatus, StoreState};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use zenoh::Session;
+
+use crate::http::ClusterEvent;
 
 /// Source of a partition assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +50,10 @@ pub struct ClusterView {
     key_prefix: String,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Optional broadcast sender for SSE cluster events.
+    /// Held to keep the channel alive; subscribers receive from cloned senders in tasks.
+    #[allow(dead_code)]
+    cluster_tx: Option<broadcast::Sender<ClusterEvent>>,
 }
 
 impl ClusterView {
@@ -61,6 +67,23 @@ impl ClusterView {
         session: &Session,
         key_prefix: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_inner(session, key_prefix, None).await
+    }
+
+    /// Create a new ClusterView with a broadcast sender for SSE streaming.
+    pub async fn new_with_broadcast(
+        session: &Session,
+        key_prefix: &str,
+        tx: broadcast::Sender<ClusterEvent>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_inner(session, key_prefix, Some(tx)).await
+    }
+
+    async fn new_inner(
+        session: &Session,
+        key_prefix: &str,
+        cluster_tx: Option<broadcast::Sender<ClusterEvent>>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let nodes: Arc<RwLock<HashMap<String, NodeInfo>>> = Arc::new(RwLock::new(HashMap::new()));
         let cancel = CancellationToken::new();
         let mut tasks = Vec::new();
@@ -70,6 +93,7 @@ impl ClusterView {
         let status_sub = session.declare_subscriber(&status_key).await?;
         let nodes_status = Arc::clone(&nodes);
         let cancel_status = cancel.clone();
+        let status_tx = cluster_tx.clone();
         tasks.push(tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -80,6 +104,12 @@ impl ClusterView {
                                 if let Ok(status) = serde_json::from_slice::<NodeStatus>(
                                     &sample.payload().to_bytes(),
                                 ) {
+                                    if let Some(ref tx) = status_tx {
+                                        let _ = tx.send(ClusterEvent::NodeStatus {
+                                            node_id: status.node_id.clone(),
+                                            data: serde_json::to_value(&status).unwrap_or_default(),
+                                        });
+                                    }
                                     let mut map = nodes_status.write().await;
                                     let entry = map.entry(status.node_id.clone()).or_insert_with(|| NodeInfo {
                                         metadata: None,
@@ -104,6 +134,7 @@ impl ClusterView {
         let health_sub = session.declare_subscriber(&health_key).await?;
         let nodes_health = Arc::clone(&nodes);
         let cancel_health = cancel.clone();
+        let health_tx = cluster_tx.clone();
         tasks.push(tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -114,6 +145,12 @@ impl ClusterView {
                                 if let Ok(health) = serde_json::from_slice::<NodeHealth>(
                                     &sample.payload().to_bytes(),
                                 ) {
+                                    if let Some(ref tx) = health_tx {
+                                        let _ = tx.send(ClusterEvent::NodeHealth {
+                                            node_id: health.node_id.clone(),
+                                            data: serde_json::to_value(&health).unwrap_or_default(),
+                                        });
+                                    }
                                     let mut map = nodes_health.write().await;
                                     let entry = map.entry(health.node_id.clone()).or_insert_with(|| NodeInfo {
                                         metadata: None,
@@ -165,6 +202,7 @@ impl ClusterView {
         let nodes_live = Arc::clone(&nodes);
         let cancel_live = cancel.clone();
         let kp = key_prefix.to_string();
+        let live_tx = cluster_tx.clone();
         tasks.push(tokio::spawn(async move {
             let prefix = format!("{kp}/_agents/");
             loop {
@@ -180,6 +218,20 @@ impl ClusterView {
                                         continue;
                                     }
                                     let is_online = sample.kind() == zenoh::sample::SampleKind::Put;
+                                    if let Some(ref tx) = live_tx {
+                                        let event = if is_online {
+                                            ClusterEvent::NodeOnline {
+                                                node_id: node_id.to_string(),
+                                                timestamp: Utc::now().to_rfc3339(),
+                                            }
+                                        } else {
+                                            ClusterEvent::NodeOffline {
+                                                node_id: node_id.to_string(),
+                                                timestamp: Utc::now().to_rfc3339(),
+                                            }
+                                        };
+                                        let _ = tx.send(event);
+                                    }
                                     let mut map = nodes_live.write().await;
                                     let entry = map.entry(node_id.to_string()).or_insert_with(|| NodeInfo {
                                         metadata: None,
@@ -206,6 +258,7 @@ impl ClusterView {
             key_prefix: key_prefix.to_string(),
             cancel,
             tasks,
+            cluster_tx,
         })
     }
 

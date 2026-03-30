@@ -36,4 +36,12 @@ check:
     cargo nextest run --workspace --features full --no-fail-fast
 
 install-cli:
-    cargo install --path mitiflow-cli/
+    cargo install --features full --path mitiflow-cli/
+
+# Build the Svelte UI (requires pnpm)
+ui-build:
+    cd mitiflow-ui && pnpm install && pnpm build
+
+# Build the orchestrator with embedded UI
+build-with-ui: ui-build
+    cargo build -p mitiflow-orchestrator --features ui

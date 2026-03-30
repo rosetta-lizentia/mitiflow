@@ -88,3 +88,7 @@ http-body-util = "0.1"
 base64 = "0.22"
 nix = "0.31"
 miette = "7"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+rust-embed = "8"
+mime_guess = "2"

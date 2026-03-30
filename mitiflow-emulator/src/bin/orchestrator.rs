@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
         lag_interval: Duration::from_millis(config.lag_interval_ms),
         admin_prefix: None, // Use default.
         http_bind: None,
+        auth_token: None,
     };
 
     tracing::info!(

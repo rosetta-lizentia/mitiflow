@@ -207,6 +207,7 @@ async fn run_orchestrator(config_path: Option<PathBuf>) -> anyhow::Result<()> {
             lag_interval: Duration::from_millis(lag_interval_ms),
             admin_prefix: None,
             http_bind: None,
+            auth_token: None,
         }
     };
 
@@ -477,6 +478,7 @@ async fn run_dev(
         lag_interval: Duration::from_secs(1),
         admin_prefix: Some(format!("{prefix}/_admin")),
         http_bind: Some("0.0.0.0:8080".parse().unwrap()),
+        auth_token: None,
     };
 
     let mut orchestrator = mitiflow_orchestrator::Orchestrator::new(&session, orch_config)
@@ -564,6 +566,8 @@ struct OrchestratorYamlConfig {
     #[serde(default = "default_lag_interval")]
     lag_interval_ms: u64,
     admin_prefix: Option<String>,
+    /// HTTP API bind address (e.g. "0.0.0.0:8080"). Also settable via `MITIFLOW_HTTP_BIND`.
+    http_bind: Option<String>,
 }
 
 fn default_key_prefix() -> String {
@@ -578,12 +582,19 @@ fn default_lag_interval() -> u64 {
 
 impl OrchestratorYamlConfig {
     fn into_orch_config(self) -> mitiflow_orchestrator::orchestrator::OrchestratorConfig {
+        // Env var takes precedence over YAML config
+        let http_bind = std::env::var("MITIFLOW_HTTP_BIND")
+            .ok()
+            .or(self.http_bind)
+            .and_then(|s| s.parse().ok());
+
         mitiflow_orchestrator::orchestrator::OrchestratorConfig {
             key_prefix: self.key_prefix,
             data_dir: self.data_dir,
             lag_interval: Duration::from_millis(self.lag_interval_ms),
             admin_prefix: self.admin_prefix,
-            http_bind: None,
+            http_bind,
+            auth_token: None,
         }
     }
 }

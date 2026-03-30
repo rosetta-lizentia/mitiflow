@@ -11,16 +11,16 @@
 set dotenv-load := false
 
 topologies_dir := "topologies"
-cargo_run := "cargo run -p mitiflow-emulator --bin mitiflow-emulator"
+cargo_run := "cargo run -p mitiflow-emulator --bin mitiflow-emulator --features full"
 cargo_run_q := "cargo run -q -p mitiflow-emulator --bin mitiflow-emulator"
 
 # Build all emulator binaries (main + role binaries)
 build:
-    cargo build -p mitiflow-emulator 
+    cargo build -p mitiflow-emulator --features full
 
 # Build in release mode
 build-release:
-    cargo build -p mitiflow-emulator --release 
+    cargo build -p mitiflow-emulator --features full --release 
 
 # Run all emulator tests
 test:

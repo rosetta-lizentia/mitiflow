@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use zenoh::Session;
@@ -45,6 +45,10 @@ pub struct LagMonitor {
     offsets: OffsetMap,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Optional broadcast sender for SSE lag streaming.
+    /// Held to keep the channel alive; subscribers receive from cloned senders in tasks.
+    #[allow(dead_code)]
+    lag_tx: Option<broadcast::Sender<LagReport>>,
 }
 
 impl LagMonitor {
@@ -53,6 +57,25 @@ impl LagMonitor {
         session: &Session,
         key_prefix: &str,
         publish_interval: Duration,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_inner(session, key_prefix, publish_interval, None).await
+    }
+
+    /// Create and start a lag monitor with a broadcast sender for SSE streaming.
+    pub async fn new_with_broadcast(
+        session: &Session,
+        key_prefix: &str,
+        publish_interval: Duration,
+        tx: broadcast::Sender<LagReport>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_inner(session, key_prefix, publish_interval, Some(tx)).await
+    }
+
+    async fn new_inner(
+        session: &Session,
+        key_prefix: &str,
+        publish_interval: Duration,
+        lag_tx: Option<broadcast::Sender<LagReport>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let cancel = CancellationToken::new();
         let watermarks: Arc<RwLock<HashMap<(u32, PublisherId), u64>>> =
@@ -133,6 +156,7 @@ impl LagMonitor {
         let lag_prefix = key_prefix.to_string();
         let lag_wm = Arc::clone(&watermarks);
         let lag_offsets = Arc::clone(&offsets);
+        let broadcast_tx = lag_tx.clone();
         tasks.push(tokio::spawn(async move {
             let mut ticker = tokio::time::interval(publish_interval);
             loop {
@@ -163,6 +187,10 @@ impl LagMonitor {
                                 total,
                                 timestamp: chrono::Utc::now(),
                             };
+                            // Broadcast for SSE
+                            if let Some(ref tx) = broadcast_tx {
+                                let _ = tx.send(report.clone());
+                            }
                             if let Ok(bytes) = serde_json::to_vec(&report) {
                                 let key = format!(
                                     "{lag_prefix}/_lag/{group_id}/{partition}"
@@ -185,6 +213,7 @@ impl LagMonitor {
             offsets,
             cancel,
             tasks,
+            lag_tx,
         })
     }
 
@@ -220,6 +249,33 @@ impl LagMonitor {
                 }
             })
             .collect()
+    }
+
+    /// Return distinct consumer group IDs from known offsets.
+    pub async fn known_groups(&self) -> Vec<String> {
+        let offsets = self.offsets.read().await;
+        let mut groups: Vec<String> = offsets
+            .keys()
+            .map(|(gid, _, _)| gid.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        groups.sort();
+        groups
+    }
+
+    /// Return publisher info derived from watermarks.
+    pub async fn get_publishers(&self) -> Vec<(PublisherId, Vec<u32>)> {
+        let wm = self.watermarks.read().await;
+        let mut by_pub: HashMap<PublisherId, Vec<u32>> = HashMap::new();
+        for (partition, pub_id) in wm.keys() {
+            by_pub.entry(*pub_id).or_default().push(*partition);
+        }
+        for partitions in by_pub.values_mut() {
+            partitions.sort();
+            partitions.dedup();
+        }
+        by_pub.into_iter().collect()
     }
 
     /// Shut down the lag monitor.

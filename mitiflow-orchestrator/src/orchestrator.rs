@@ -7,13 +7,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use zenoh::Session;
 
 use crate::cluster_view::ClusterView;
 use crate::config::ConfigStore;
-use crate::lag::LagMonitor;
+use crate::http::{ClusterEvent, EventSummary, HttpState};
+use crate::lag::{LagMonitor, LagReport};
 use crate::lifecycle::StoreTracker;
 use crate::override_manager::OverrideManager;
 use crate::topic_manager::TopicManager;
@@ -30,6 +32,8 @@ pub struct OrchestratorConfig {
     pub admin_prefix: Option<String>,
     /// Bind address for optional HTTP API (e.g. `0.0.0.0:8080`).
     pub http_bind: Option<std::net::SocketAddr>,
+    /// Auth token for HTTP API. Falls back to `MITIFLOW_UI_TOKEN` env var.
+    pub auth_token: Option<String>,
 }
 
 /// The orchestrator control-plane service.
@@ -37,11 +41,11 @@ pub struct Orchestrator {
     session: Session,
     config: OrchestratorConfig,
     config_store: Arc<ConfigStore>,
-    lag_monitor: Option<LagMonitor>,
+    lag_monitor: Option<Arc<LagMonitor>>,
     store_tracker: Option<StoreTracker>,
-    cluster_view: Option<ClusterView>,
-    override_manager: Option<OverrideManager>,
-    topic_manager: Option<TopicManager>,
+    cluster_view: Option<Arc<ClusterView>>,
+    override_manager: Option<Arc<OverrideManager>>,
+    topic_manager: Option<Arc<RwLock<TopicManager>>>,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -69,26 +73,37 @@ impl Orchestrator {
 
     /// Start all background tasks: lag monitoring, store tracking, cluster view, admin API.
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Start lag monitor
-        let lag_monitor = LagMonitor::new(
+        // Create broadcast channels for SSE
+        let (cluster_tx, _) = broadcast::channel::<ClusterEvent>(256);
+        let (lag_tx, _) = broadcast::channel::<LagReport>(256);
+        let (event_tx, _) = broadcast::channel::<EventSummary>(256);
+
+        // Start lag monitor (with broadcast sender)
+        let lag_monitor = LagMonitor::new_with_broadcast(
             &self.session,
             &self.config.key_prefix,
             self.config.lag_interval,
+            lag_tx.clone(),
         )
         .await?;
-        self.lag_monitor = Some(lag_monitor);
+        self.lag_monitor = Some(Arc::new(lag_monitor));
 
         // Start store tracker
         let store_tracker = StoreTracker::new(&self.session, &self.config.key_prefix).await?;
         self.store_tracker = Some(store_tracker);
 
-        // Start cluster view
-        let cluster_view = ClusterView::new(&self.session, &self.config.key_prefix).await?;
-        self.cluster_view = Some(cluster_view);
+        // Start cluster view (with broadcast sender)
+        let cluster_view = ClusterView::new_with_broadcast(
+            &self.session,
+            &self.config.key_prefix,
+            cluster_tx.clone(),
+        )
+        .await?;
+        self.cluster_view = Some(Arc::new(cluster_view));
 
         // Start override manager
         let override_manager = OverrideManager::new(&self.session, &self.config.key_prefix);
-        self.override_manager = Some(override_manager);
+        self.override_manager = Some(Arc::new(override_manager));
 
         // Start topic manager and bootstrap per-topic cluster views
         let mut topic_manager = TopicManager::new(&self.session);
@@ -103,7 +118,7 @@ impl Orchestrator {
                     }
             }
         }
-        self.topic_manager = Some(topic_manager);
+        self.topic_manager = Some(Arc::new(RwLock::new(topic_manager)));
 
         // Start admin queryable
         let admin_prefix = self
@@ -151,17 +166,71 @@ impl Orchestrator {
             .await;
         }));
 
+        // Start event tail subscriber — subscribes to {prefix}/p/** and pushes
+        // EventSummary into the broadcast channel for SSE consumers.
+        {
+            let event_tx = event_tx.clone();
+            let cancel = self.cancel.clone();
+            let key_expr = format!("{}/p/**", self.config.key_prefix);
+            let subscriber = self.session.declare_subscriber(&key_expr).await?;
+            self.tasks.push(tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        sample = subscriber.recv_async() => {
+                            let Ok(sample) = sample else { break };
+                            if let Some(attachment) = sample.attachment() {
+                                if let Ok(meta) = mitiflow::attachment::decode_metadata(attachment) {
+                                    let key_expr_str = sample.key_expr().as_keyexpr().as_str().to_string();
+                                    let key = mitiflow::attachment::extract_key(&key_expr_str).map(String::from);
+                                    let partition = mitiflow::attachment::extract_partition(&key_expr_str);
+                                    let payload_size = sample.payload().len();
+                                    let summary = EventSummary {
+                                        seq: meta.seq,
+                                        partition,
+                                        publisher_id: meta.pub_id.to_string(),
+                                        timestamp: meta.timestamp.to_rfc3339(),
+                                        key,
+                                        key_expr: key_expr_str,
+                                        payload_size,
+                                    };
+                                    let _ = event_tx.send(summary);
+                                }
+                            }
+                        }
+                    }
+                }
+            }));
+        }
+
         // Distribute existing configs on startup
         self.publish_all_configs().await;
 
         // Optionally start HTTP API
         if let Some(bind_addr) = self.config.http_bind {
-            let http_nodes = self.cluster_view.as_ref().map(|cv| cv.nodes_handle());
+            let http_state = HttpState {
+                config_store: Arc::clone(&self.config_store),
+                nodes: self.cluster_view.as_ref().map(|cv| cv.nodes_handle()),
+                cluster_events_tx: cluster_tx.clone(),
+                lag_events_tx: lag_tx.clone(),
+                event_tail_tx: event_tx.clone(),
+                lag_monitor: self.lag_monitor.clone(),
+                session: Some(self.session.clone()),
+                topic_manager: self.topic_manager.clone(),
+                override_manager: self.override_manager.clone(),
+                cluster_view: self.cluster_view.clone(),
+                key_prefix: self.config.key_prefix.clone(),
+            };
+            let auth_token = self
+                .config
+                .auth_token
+                .clone()
+                .or_else(|| std::env::var("MITIFLOW_UI_TOKEN").ok());
             let http_handle = crate::http::start_http(
-                Arc::clone(&self.config_store),
-                http_nodes,
+                http_state,
                 bind_addr,
                 self.cancel.clone(),
+                auth_token,
             )
             .await;
             self.tasks.push(http_handle);
@@ -187,9 +256,9 @@ impl Orchestrator {
         self.session.put(&key, bytes).await?;
 
         // Create per-topic cluster view if applicable
-        if let Some(ref mut tm) = self.topic_manager
+        if let Some(ref tm) = self.topic_manager
             && !config.key_prefix.is_empty() {
-                tm.add_topic(&config.name, &config.key_prefix).await?;
+                tm.write().await.add_topic(&config.name, &config.key_prefix).await?;
             }
 
         info!(topic = %config.name, "topic created");
@@ -208,8 +277,8 @@ impl Orchestrator {
             self.session.delete(&key).await?;
 
             // Remove per-topic cluster view
-            if let Some(ref mut tm) = self.topic_manager {
-                tm.remove_topic(name).await;
+            if let Some(ref tm) = self.topic_manager {
+                tm.write().await.remove_topic(name).await;
             }
 
             info!(topic = %name, "topic deleted");
@@ -247,17 +316,17 @@ impl Orchestrator {
     }
 
     /// Get the cluster view.
-    pub fn cluster_view(&self) -> Option<&ClusterView> {
+    pub fn cluster_view(&self) -> Option<&Arc<ClusterView>> {
         self.cluster_view.as_ref()
     }
 
     /// Get the override manager.
-    pub fn override_manager(&self) -> Option<&OverrideManager> {
+    pub fn override_manager(&self) -> Option<&Arc<OverrideManager>> {
         self.override_manager.as_ref()
     }
 
     /// Get the topic manager.
-    pub fn topic_manager(&self) -> Option<&TopicManager> {
+    pub fn topic_manager(&self) -> Option<&Arc<RwLock<TopicManager>>> {
         self.topic_manager.as_ref()
     }
 
@@ -310,16 +379,22 @@ impl Orchestrator {
             let _ = handle.await;
         }
         if let Some(lag) = self.lag_monitor.take() {
-            lag.shutdown().await;
+            if let Ok(lag) = Arc::try_unwrap(lag) {
+                lag.shutdown().await;
+            }
         }
         if let Some(tracker) = self.store_tracker.take() {
             tracker.shutdown().await;
         }
         if let Some(cv) = self.cluster_view.take() {
-            cv.shutdown().await;
+            if let Ok(cv) = Arc::try_unwrap(cv) {
+                cv.shutdown().await;
+            }
         }
         if let Some(tm) = self.topic_manager.take() {
-            tm.shutdown().await;
+            if let Ok(tm) = Arc::try_unwrap(tm) {
+                tm.into_inner().shutdown().await;
+            }
         }
         info!("orchestrator shut down");
     }

@@ -14,7 +14,8 @@ pub mod topic_manager;
 
 pub use cluster_view::{AssignmentInfo, AssignmentSource, ClusterView, NodeInfo};
 pub use config::{CompactionPolicy, RetentionPolicy, TopicConfig};
-pub use lag::LagMonitor;
+pub use http::{ClusterEvent, EventSummary, HttpState};
+pub use lag::{LagMonitor, LagReport};
 pub use lifecycle::StoreTracker;
 pub use orchestrator::Orchestrator;
 pub use override_manager::OverrideManager;
