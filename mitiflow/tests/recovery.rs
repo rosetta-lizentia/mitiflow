@@ -33,6 +33,7 @@ fn store_config(test_name: &str) -> EventBusConfig {
         .watermark_interval(Duration::from_millis(50))
         .recovery_delay(Duration::from_millis(30))
         .max_recovery_attempts(3)
+        .num_partitions(1)
         .build()
         .expect("valid config")
 }

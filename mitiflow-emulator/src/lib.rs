@@ -13,6 +13,7 @@ pub mod generator;
 pub mod log_aggregator;
 pub mod process_backend;
 pub mod role_config;
+pub(crate) mod serde_helpers;
 pub mod supervisor;
 pub mod validation;
 

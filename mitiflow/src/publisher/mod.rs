@@ -1,6 +1,7 @@
 //! Event publisher with sequencing, caching, and heartbeat.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
@@ -59,6 +60,8 @@ pub struct EventPublisher {
     cache: Arc<RwLock<VecDeque<CachedSample>>>,
     /// Per-partition monotonic sequence counters.
     partition_seqs: Arc<scc::HashMap<u32, u64>>,
+    /// Round-robin counter for default partition assignment.
+    round_robin: AtomicU64,
     /// Unique identity for this publisher.
     publisher_id: PublisherId,
     /// Configuration snapshot.
@@ -253,6 +256,7 @@ impl EventPublisher {
             session: session.clone(),
             cache,
             partition_seqs,
+            round_robin: AtomicU64::new(0),
             publisher_id,
             config,
             cancel,
@@ -277,7 +281,7 @@ impl EventPublisher {
     /// On the subscriber side, use [`EventSubscriber::recv_raw`] to receive
     /// the bytes without a deserialization step.
     pub async fn publish_bytes(&self, bytes: Vec<u8>) -> Result<u64> {
-        let partition = 0u32;
+        let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         let event_id = crate::types::EventId::new();
@@ -307,7 +311,7 @@ impl EventPublisher {
     #[cfg(feature = "store")]
     pub async fn publish_bytes_durable(&self, bytes: Vec<u8>) -> Result<u64> {
         let urgency_ms = self.urgency_ms();
-        let partition = 0u32;
+        let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         let event_id = crate::types::EventId::new();
@@ -418,7 +422,7 @@ impl EventPublisher {
     /// the recovery cache, and publishes via Zenoh. Returns the assigned
     /// sequence number.
     pub async fn publish<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
-        let partition = 0u32;
+        let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         self.publish_inner(&key, event, seq, NO_URGENCY).await?;
@@ -450,7 +454,7 @@ impl EventPublisher {
     #[cfg(feature = "store")]
     pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
         let urgency_ms = self.urgency_ms();
-        let partition = 0u32;
+        let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         self.publish_inner(&key, event, seq, urgency_ms).await?;
@@ -574,6 +578,12 @@ impl EventPublisher {
         self.partition_seqs
             .read_sync(&partition, |_, v| *v)
             .unwrap_or(0)
+    }
+
+    /// Assign the next partition using round-robin across `num_partitions`.
+    fn assign_partition(&self) -> u32 {
+        let n = self.config.num_partitions.max(1);
+        (self.round_robin.fetch_add(1, Ordering::Relaxed) % n as u64) as u32
     }
 
     /// Allocate the next sequence number for the given partition.

@@ -108,3 +108,13 @@ fn validate_08_slow_consumer_with_store() {
         result.warnings
     );
 }
+
+#[test]
+fn validate_10_multi_topic_agent() {
+    let result = load_and_validate("10_multi_topic_agent.yaml");
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
+}

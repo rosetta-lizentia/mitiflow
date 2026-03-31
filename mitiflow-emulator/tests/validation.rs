@@ -529,3 +529,151 @@ components:
     assert_eq!(resolved.num_partitions, 32);
     assert_eq!(resolved.replication_factor, 3);
 }
+
+// ---------------------------------------------------------------------------
+// Agent component validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn valid_agent_multi_topic() {
+    let config = parse(
+        r#"
+topics:
+  - name: orders
+    key_prefix: app/orders
+  - name: payments
+    key_prefix: app/payments
+
+components:
+  - name: store
+    kind: agent
+    topics:
+      - orders
+      - payments
+  - name: prod1
+    kind: producer
+    topic: orders
+  - name: prod2
+    kind: producer
+    topic: payments
+  - name: cons
+    kind: consumer
+    topic: orders
+"#,
+    );
+    let result = validate(&config).unwrap();
+    // No storage coverage warnings — agent covers both topics.
+    assert!(result.warnings.is_empty(), "got: {:?}", result.warnings);
+}
+
+#[test]
+fn valid_agent_auto_discover_no_topics() {
+    let config = parse(
+        r#"
+topics:
+  - name: events
+    key_prefix: app/events
+
+components:
+  - name: store
+    kind: agent
+    auto_discover_topics: true
+    global_prefix: app
+  - name: prod
+    kind: producer
+    topic: events
+  - name: cons
+    kind: consumer
+    topic: events
+"#,
+    );
+    // Agent with auto_discover_topics but no managed_topics is valid.
+    let result = validate(&config).unwrap();
+    // However, topics will show a storage warning since the agent doesn't
+    // statically declare them in managed_topics.
+    assert!(!result.warnings.is_empty());
+}
+
+#[test]
+fn error_agent_no_topics_no_auto_discover() {
+    let config = parse(
+        r#"
+topics:
+  - name: events
+    key_prefix: app/events
+
+components:
+  - name: store
+    kind: agent
+  - name: prod
+    kind: producer
+    topic: events
+  - name: cons
+    kind: consumer
+    topic: events
+"#,
+    );
+    let err = validate(&config).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("at least one topic"), "got: {msg}");
+}
+
+#[test]
+fn error_agent_unknown_topic_ref() {
+    let config = parse(
+        r#"
+topics:
+  - name: events
+    key_prefix: app/events
+
+components:
+  - name: store
+    kind: agent
+    topics:
+      - events
+      - nonexistent
+  - name: prod
+    kind: producer
+    topic: events
+  - name: cons
+    kind: consumer
+    topic: events
+"#,
+    );
+    let err = validate(&config).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("unknown topic"), "got: {msg}");
+    assert!(msg.contains("nonexistent"), "got: {msg}");
+}
+
+#[test]
+fn agent_storage_coverage_partial() {
+    // Agent covers "orders" but not "payments" — should warn about "payments".
+    let config = parse(
+        r#"
+topics:
+  - name: orders
+    key_prefix: app/orders
+  - name: payments
+    key_prefix: app/payments
+
+components:
+  - name: store
+    kind: agent
+    topics:
+      - orders
+  - name: prod1
+    kind: producer
+    topic: orders
+  - name: prod2
+    kind: producer
+    topic: payments
+  - name: cons
+    kind: consumer
+    topic: orders
+"#,
+    );
+    let result = validate(&config).unwrap();
+    assert_eq!(result.warnings.len(), 1);
+    assert!(result.warnings[0].message.contains("payments"));
+}

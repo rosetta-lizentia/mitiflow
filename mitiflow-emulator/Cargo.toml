@@ -28,6 +28,10 @@ name = "mitiflow-emulator-storage-agent"
 path = "src/bin/storage_agent.rs"
 
 [[bin]]
+name = "mitiflow-emulator-agent"
+path = "src/bin/agent.rs"
+
+[[bin]]
 name = "mitiflow-emulator-orchestrator"
 path = "src/bin/orchestrator.rs"
 

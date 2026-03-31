@@ -152,6 +152,27 @@ fn validate_topic_references(
                     )));
                 }
             }
+            ComponentKind::Agent => {
+                if comp.managed_topics.is_empty()
+                    && !comp.auto_discover_topics.unwrap_or(false)
+                {
+                    return Err(EmulatorError::Validation(format!(
+                        "agent \"{}\" must have at least one topic in \"topics\" or enable \"auto_discover_topics\"",
+                        comp.name
+                    )));
+                }
+                for topic_name in &comp.managed_topics {
+                    if !registry.contains_key(topic_name.as_str()) {
+                        let available: Vec<&str> = registry.keys().copied().collect();
+                        return Err(EmulatorError::Validation(format!(
+                            "agent \"{}\" references unknown topic \"{}\"\nAvailable topics: {}",
+                            comp.name,
+                            topic_name,
+                            available.join(", ")
+                        )));
+                    }
+                }
+            }
             ComponentKind::Orchestrator => {}
         }
     }
@@ -283,17 +304,24 @@ fn validate_source_coverage(
     Ok(())
 }
 
-/// Warn about topics with no storage_agent component.
+/// Warn about topics with no storage_agent or agent component.
 fn check_storage_coverage(
     components: &[ComponentDef],
     topics: &[TopicDef],
     warnings: &mut Vec<ValidationWarning>,
 ) {
-    let stored: HashSet<&str> = components
+    let mut stored: HashSet<&str> = components
         .iter()
         .filter(|c| c.kind == ComponentKind::StorageAgent)
         .filter_map(|c| c.topic.as_deref())
         .collect();
+
+    // Include topics served by multi-topic agent components.
+    for comp in components.iter().filter(|c| c.kind == ComponentKind::Agent) {
+        for t in &comp.managed_topics {
+            stored.insert(t.as_str());
+        }
+    }
 
     for topic in topics {
         if !stored.contains(topic.name.as_str()) {

@@ -19,14 +19,12 @@ topics:
     num_partitions: 8
 
 components:
-  - name: store-raw
-    kind: storage_agent
-    topic: raw-events
+  - name: store
+    kind: agent
+    topics:
+      - raw-events
+      - enriched
     capacity: 100
-
-  - name: store-enriched
-    kind: storage_agent
-    topic: enriched
 
   - name: prod-1
     kind: producer

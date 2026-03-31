@@ -288,6 +288,7 @@ async fn event_store_persists_and_publishes_watermark() {
         .heartbeat(HeartbeatMode::Disabled)
         .history_on_subscribe(false)
         .watermark_interval(Duration::from_millis(50))
+        .num_partitions(1)
         .build()
         .unwrap();
 

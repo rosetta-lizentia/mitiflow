@@ -7,7 +7,7 @@ use std::time::Duration;
 use chrono::Utc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use zenoh::Session;
 
 use crate::config::{CommitMode, ConsumerGroupConfig, EventBusConfig};
@@ -107,6 +107,14 @@ impl ConsumerGroupSubscriber {
                 .map(|p| format!("{}/p/{p}/**", config.key_prefix))
                 .collect()
         };
+
+        info!(
+            group = %group_config.group_id,
+            member = %group_config.member_id,
+            partitions = ?my_parts,
+            key_exprs = ?key_exprs,
+            "consumer group: subscribing to partitions"
+        );
 
         let cancel = CancellationToken::new();
         let (event_tx, event_rx) = flume::unbounded::<crate::event::RawEvent>();
@@ -251,6 +259,13 @@ impl ConsumerGroupSubscriber {
                         assigned_guard.push(p);
                     }
                 }
+                tracing::info!(
+                    group = %group_id,
+                    gained = ?gained,
+                    lost = ?lost,
+                    current = ?*assigned_guard,
+                    "consumer group: rebalance updated subscribed partitions"
+                );
             });
         })
         .await;

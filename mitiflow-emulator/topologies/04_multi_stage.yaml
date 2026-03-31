@@ -35,14 +35,12 @@ components:
     lag_interval_ms: 2000
     http_port: 8080
 
-  - name: store-raw
-    kind: storage_agent
-    topic: raw
+  - name: store
+    kind: agent
+    topics:
+      - raw
+      - output
     capacity: 200
-
-  - name: store-output
-    kind: storage_agent
-    topic: output
 
   - name: ingest
     kind: producer

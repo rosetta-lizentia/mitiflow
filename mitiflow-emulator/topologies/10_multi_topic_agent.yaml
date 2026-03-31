@@ -1,0 +1,102 @@
+# Multi-Topic Agent with Auto-Discovery
+#
+# Demonstrates a single agent process serving multiple topics,
+# with auto_discover_topics enabled for dynamic topic provisioning
+# from the orchestrator.
+
+defaults:
+  codec: json
+  cache_size: 256
+  heartbeat_ms: 1000
+  recovery_mode: both
+
+logging:
+  level: info
+
+topics:
+  - name: orders
+    key_prefix: app/orders
+    num_partitions: 4
+    replication_factor: 1
+
+  - name: payments
+    key_prefix: app/payments
+    num_partitions: 4
+    replication_factor: 1
+
+  - name: notifications
+    key_prefix: app/notifications
+    num_partitions: 2
+    replication_factor: 1
+
+components:
+  - name: orch
+    kind: orchestrator
+    lag_interval_ms: 2000
+
+  # Single agent process serving all three topics.
+  # Also watches for new topics published by the orchestrator.
+  - name: store
+    kind: agent
+    topics:
+      - orders
+      - payments
+      - notifications
+    global_prefix: app
+    auto_discover_topics: true
+    capacity: 200
+
+  - name: order-producer
+    kind: producer
+    topic: orders
+    rate: 50.0
+    payload:
+      generator: schema
+      schema:
+        order_id:
+          type: uuid
+        amount:
+          type: float
+          min: 1.0
+          max: 999.99
+        status:
+          type: enum
+          values: [pending, confirmed, shipped]
+
+  - name: payment-producer
+    kind: producer
+    topic: payments
+    rate: 30.0
+    payload:
+      generator: schema
+      schema:
+        payment_id:
+          type: uuid
+        amount:
+          type: float
+          min: 1.0
+          max: 999.99
+        method:
+          type: enum
+          values: [card, bank, wallet]
+
+  - name: notifier
+    kind: processor
+    input_topic: payments
+    output_topic: notifications
+    processing:
+      mode: passthrough
+
+  - name: order-consumer
+    kind: consumer
+    topic: orders
+    output:
+      mode: count
+      report_interval_sec: 5
+
+  - name: notification-consumer
+    kind: consumer
+    topic: notifications
+    output:
+      mode: count
+      report_interval_sec: 5

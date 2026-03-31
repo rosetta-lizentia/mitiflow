@@ -625,3 +625,94 @@ components:
     let config = TopologyConfig::from_yaml(yaml).unwrap();
     assert_eq!(config.components[0].codec, Some(CodecConfig::Postcard));
 }
+
+#[test]
+fn parse_agent_component() {
+    let yaml = r#"
+topics:
+  - name: orders
+    key_prefix: app/orders
+    num_partitions: 4
+  - name: payments
+    key_prefix: app/payments
+    num_partitions: 8
+
+components:
+  - name: store
+    kind: agent
+    topics:
+      - orders
+      - payments
+    capacity: 200
+    global_prefix: app
+
+  - name: prod
+    kind: producer
+    topic: orders
+"#;
+    let config = TopologyConfig::from_yaml(yaml).unwrap();
+    let agent = &config.components[0];
+    assert_eq!(agent.kind, ComponentKind::Agent);
+    assert_eq!(agent.managed_topics, vec!["orders", "payments"]);
+    assert_eq!(agent.capacity, Some(200));
+    assert_eq!(agent.global_prefix, Some("app".into()));
+}
+
+#[test]
+fn parse_agent_with_auto_discover() {
+    let yaml = r#"
+topics:
+  - name: events
+    key_prefix: app/events
+
+components:
+  - name: store
+    kind: agent
+    topics:
+      - events
+    auto_discover_topics: true
+    global_prefix: app
+    labels:
+      rack: us-east-1a
+      tier: ssd
+
+  - name: prod
+    kind: producer
+    topic: events
+"#;
+    let config = TopologyConfig::from_yaml(yaml).unwrap();
+    let agent = &config.components[0];
+    assert_eq!(agent.kind, ComponentKind::Agent);
+    assert_eq!(agent.auto_discover_topics, Some(true));
+    let labels = agent.labels.as_ref().unwrap();
+    assert_eq!(labels["rack"], "us-east-1a");
+    assert_eq!(labels["tier"], "ssd");
+}
+
+#[test]
+fn parse_agent_empty_topics_with_auto_discover() {
+    let yaml = r#"
+topics:
+  - name: events
+    key_prefix: app/events
+
+components:
+  - name: store
+    kind: agent
+    auto_discover_topics: true
+    global_prefix: app
+
+  - name: prod
+    kind: producer
+    topic: events
+
+  - name: cons
+    kind: consumer
+    topic: events
+"#;
+    let config = TopologyConfig::from_yaml(yaml).unwrap();
+    let agent = &config.components[0];
+    assert_eq!(agent.kind, ComponentKind::Agent);
+    assert!(agent.managed_topics.is_empty());
+    assert_eq!(agent.auto_discover_topics, Some(true));
+}

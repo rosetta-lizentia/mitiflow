@@ -192,6 +192,40 @@ pub struct TopicRegistration {
     pub replication_factor: u32,
 }
 
+/// Multi-topic agent role configuration.
+///
+/// Passed to the `mitiflow-emulator-agent` binary via `MITIFLOW_EMU_CONFIG`.
+/// Maps to `mitiflow_agent::AgentConfig` on the receiving side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRoleConfig {
+    /// Node identifier (defaults to `"{component_name}-{instance}"`).
+    pub node_id: Option<String>,
+    /// Base data directory for all topic stores.
+    pub data_dir: PathBuf,
+    /// HRW capacity weight.
+    pub capacity: u32,
+    /// Placement labels for rack-aware assignment.
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
+    /// Global prefix for health/liveliness/discovery.
+    pub global_prefix: String,
+    /// Enable dynamic topic discovery from orchestrator.
+    pub auto_discover_topics: bool,
+    /// Static list of topics to serve.
+    pub topics: Vec<AgentTopicRoleEntry>,
+    /// Override RUST_LOG for the agent process.
+    pub log_level: Option<String>,
+}
+
+/// A resolved topic entry passed to the agent binary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTopicRoleEntry {
+    pub name: String,
+    pub key_prefix: String,
+    pub num_partitions: u32,
+    pub replication_factor: u32,
+}
+
 /// Encode a role config to base64 JSON for the environment variable.
 pub fn encode_config<T: Serialize>(config: &T) -> crate::error::Result<String> {
     let json = serde_json::to_vec(config)?;

@@ -7,6 +7,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::serde_helpers;
+
 // ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
@@ -420,11 +422,34 @@ pub struct ComponentDef {
     pub num_processing_shards: Option<usize>,
 
     // -- Storage agent settings --
-    /// Data directory for storage agents and orchestrator.
+    /// Data directory for storage agents, agents, and orchestrator.
     pub data_dir: Option<PathBuf>,
 
     /// Node capacity weight for HRW assignment.
     pub capacity: Option<u32>,
+
+    // -- Multi-topic agent settings --
+    /// List of topic names this agent serves (for `kind: agent`).
+    /// In YAML, use `topics: [...]` on the agent component.
+    #[serde(
+        default,
+        alias = "topics",
+        deserialize_with = "serde_helpers::deserialize_managed_topics",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub managed_topics: Vec<String>,
+
+    /// Placement labels for the agent node (rack-aware assignment).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
+
+    /// Well-known global prefix for topic discovery and health reporting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_prefix: Option<String>,
+
+    /// Enable dynamic topic discovery from orchestrator via TopicWatcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_discover_topics: Option<bool>,
 
     // -- Orchestrator settings --
     /// Lag monitoring interval in milliseconds.
@@ -460,6 +485,8 @@ pub enum ComponentKind {
     Consumer,
     Processor,
     StorageAgent,
+    /// Multi-topic storage agent backed by `mitiflow-agent` `AgentConfig`.
+    Agent,
     Orchestrator,
 }
 
@@ -471,6 +498,7 @@ impl ComponentKind {
             Self::Consumer => "mitiflow-emulator-consumer",
             Self::Processor => "mitiflow-emulator-processor",
             Self::StorageAgent => "mitiflow-emulator-storage-agent",
+            Self::Agent => "mitiflow-emulator-agent",
             Self::Orchestrator => "mitiflow-emulator-orchestrator",
         }
     }
@@ -479,7 +507,7 @@ impl ComponentKind {
     pub fn tier(&self) -> u8 {
         match self {
             Self::Orchestrator => 1,
-            Self::StorageAgent => 2,
+            Self::StorageAgent | Self::Agent => 2,
             Self::Producer => 3,
             Self::Processor => 4,
             Self::Consumer => 5,
@@ -758,6 +786,8 @@ mod tests {
     #[test]
     fn component_kind_tier_ordering() {
         assert!(ComponentKind::Orchestrator.tier() < ComponentKind::StorageAgent.tier());
+        assert!(ComponentKind::Orchestrator.tier() < ComponentKind::Agent.tier());
+        assert_eq!(ComponentKind::StorageAgent.tier(), ComponentKind::Agent.tier());
         assert!(ComponentKind::StorageAgent.tier() < ComponentKind::Producer.tier());
         assert!(ComponentKind::Producer.tier() < ComponentKind::Processor.tier());
         assert!(ComponentKind::Processor.tier() < ComponentKind::Consumer.tier());
@@ -772,6 +802,10 @@ mod tests {
         assert_eq!(
             ComponentKind::StorageAgent.binary_name(),
             "mitiflow-emulator-storage-agent"
+        );
+        assert_eq!(
+            ComponentKind::Agent.binary_name(),
+            "mitiflow-emulator-agent"
         );
     }
 }

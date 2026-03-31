@@ -11,9 +11,9 @@ use crate::backend::{ComponentHandle, ComponentSpec, ExecutionBackend};
 use crate::config::{ComponentDef, ComponentKind, IsolationMode, TopologyConfig};
 use crate::log_aggregator::LogAggregator;
 use crate::role_config::{
-    ConsumerGroupRoleConfig, ConsumerRoleConfig, OrchestratorRoleConfig, OutputRoleConfig,
-    PayloadRoleConfig, ProcessorRoleConfig, ProducerRoleConfig, StorageAgentRoleConfig,
-    TopicRegistration, ZenohRoleConfig, encode_config,
+    AgentRoleConfig, AgentTopicRoleEntry, ConsumerGroupRoleConfig, ConsumerRoleConfig,
+    OrchestratorRoleConfig, OutputRoleConfig, PayloadRoleConfig, ProcessorRoleConfig,
+    ProducerRoleConfig, StorageAgentRoleConfig, TopicRegistration, ZenohRoleConfig, encode_config,
 };
 use crate::validation::{resolve_component_config, validate};
 
@@ -99,7 +99,7 @@ impl Supervisor {
         for tier in &tiers {
             for comp in tier {
                 let topic = match comp.kind {
-                    ComponentKind::Orchestrator => None,
+                    ComponentKind::Orchestrator | ComponentKind::Agent => None,
                     ComponentKind::Processor => comp
                         .input_topic
                         .as_deref()
@@ -151,8 +151,8 @@ impl Supervisor {
                     }
                 }
 
-                // Readiness gate for storage agents.
-                if comp.kind == ComponentKind::StorageAgent {
+                // Readiness gate for storage agents and agents.
+                if matches!(comp.kind, ComponentKind::StorageAgent | ComponentKind::Agent) {
                     // Small delay to let storage agents start.
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -329,6 +329,55 @@ impl Supervisor {
                     cache_size: resolved.cache_size,
                     heartbeat_ms: resolved.heartbeat_ms,
                     recovery_mode: self.config.defaults.recovery_mode,
+                    log_level: comp.log_level.clone(),
+                };
+                encode_config(&cfg)?
+            }
+
+            ComponentKind::Agent => {
+                let data_dir = comp
+                    .data_dir
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("/tmp/mitiflow-emu"));
+                let instance_dir = data_dir.join(format!("{}-{}", comp.name, instance));
+
+                // Resolve each managed topic into an AgentTopicRoleEntry.
+                let topics: Vec<AgentTopicRoleEntry> = comp
+                    .managed_topics
+                    .iter()
+                    .filter_map(|name| {
+                        topic_map.get(name.as_str()).map(|t| AgentTopicRoleEntry {
+                            name: t.name.clone(),
+                            key_prefix: t.key_prefix.clone(),
+                            num_partitions: t.num_partitions,
+                            replication_factor: t.replication_factor,
+                        })
+                    })
+                    .collect();
+
+                // Derive global_prefix: explicit > first topic's parent prefix > "mitiflow".
+                let global_prefix = comp
+                    .global_prefix
+                    .clone()
+                    .or_else(|| {
+                        topics.first().map(|t| {
+                            // Strip last path segment to get parent prefix.
+                            t.key_prefix
+                                .rsplit_once('/')
+                                .map(|(parent, _)| parent.to_string())
+                                .unwrap_or_else(|| t.key_prefix.clone())
+                        })
+                    })
+                    .unwrap_or_else(|| "mitiflow".into());
+
+                let cfg = AgentRoleConfig {
+                    node_id: Some(format!("{}-{}", comp.name, instance)),
+                    data_dir: instance_dir,
+                    capacity: comp.capacity.unwrap_or(100),
+                    labels: comp.labels.clone().unwrap_or_default(),
+                    global_prefix,
+                    auto_discover_topics: comp.auto_discover_topics.unwrap_or(false),
+                    topics,
                     log_level: comp.log_level.clone(),
                 };
                 encode_config(&cfg)?
