@@ -1,5 +1,7 @@
 # Durability & Watermark Protocol
 
+**Status:** Implemented — EventStore with FjallBackend, watermark broadcast, `publish_durable()`, GC.
+
 How mitiflow ensures events are never lost, without requiring every producer to
 maintain local storage.
 

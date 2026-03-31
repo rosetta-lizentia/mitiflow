@@ -1,10 +1,11 @@
 # Sequence & Ordering Design Discussion
 
+**Status:** Decided — Approach C (per-partition, per-publisher sequencing) implemented.
+
 ## The Problem
 
-mitiflow currently assigns sequence numbers **per-publisher** (one global `AtomicU64`
-per `EventPublisher`). A publisher's sequence counter increments regardless of which
-partition or key the event targets.
+mitiflow assigns sequence numbers **per-(partition, publisher)** using `scc::HashMap<u32, AtomicU64>`
+on `EventPublisher`. Each partition has an independent monotonic counter per publisher.
 
 Consider a publisher sending to 4 partitions round-robin:
 

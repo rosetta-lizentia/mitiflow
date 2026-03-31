@@ -24,133 +24,41 @@ What Zenoh (v1.x) provides via its **stable** core APIs, and what mitiflow build
 
 ### 2.1 Sequence Numbers (via Attachments)
 
-Zenoh core has no per-publisher sequence numbering. mitiflow assigns a monotonic `u64` per publisher and attaches it to every sample:
+Zenoh core has no per-publisher sequence numbering. mitiflow assigns a monotonic `u64` per (partition, publisher) and encodes metadata in a **50-byte binary attachment header**:
 
-```rust
-// Publisher side
-let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
-let attachment = Attachment::new()
-    .insert("seq", seq.to_be_bytes())
-    .insert("pub_id", self.publisher_id.as_bytes());
-
-self.publisher
-    .put(payload)
-    .attachment(attachment)
-    .congestion_control(CongestionControl::Block)
-    .await?;
 ```
+[seq: u64 LE][publisher_id: UUID 16 bytes][event_id: UUID 16 bytes][timestamp_ns: i64 LE][urgency_ms: u16 LE]
+```
+
+The payload contains only the serialized `T` — metadata travels out-of-band. Encoding/decoding in `src/attachment.rs` (`encode_attachment()` / `decode_attachment()`).
 
 ### 2.2 Gap Detection (Subscriber-Side Tracking)
 
-The subscriber maintains a `HashMap<PublisherId, u64>` tracking the last-seen sequence per publisher:
+The subscriber tracks the last-seen sequence per (publisher, partition) via the `SequenceTracker` trait (impl: `GapDetector` in `subscriber/gap_detector.rs`):
 
-```rust
-// Subscriber side
-fn on_sample(&mut self, sample: Sample) -> Option<MissInfo> {
-    let (pub_id, seq) = extract_metadata(&sample);
-    let expected = self.last_seen.get(&pub_id).map(|s| s + 1).unwrap_or(0);
-
-    if seq > expected {
-        // GAP: missed sequences [expected..seq)
-        let miss = MissInfo { source: pub_id, missed: expected..seq };
-        self.last_seen.insert(pub_id, seq);
-        return Some(miss);
-    }
-
-    if seq <= expected.saturating_sub(1) {
-        // DUPLICATE: already seen (dedup)
-        return None; // skip
-    }
-
-    self.last_seen.insert(pub_id, seq);
-    None // normal delivery
-}
-```
+- **Normal:** `seq == expected` → deliver
+- **Gap:** `seq > expected` → trigger recovery for missed `[expected..seq)`
+- **Duplicate:** `seq < expected` → drop
 
 ### 2.3 Publisher Cache + Recovery (via Queryable)
 
-Each publisher declares a Queryable on a cache key expression. On gap detection, the subscriber queries the publisher's cache:
+Each publisher declares a queryable on `{prefix}/_cache/{publisher_id}` serving cached recent samples from a bounded `VecDeque<CachedSample>`. On gap detection, the subscriber queries this cache first, then falls back to the Event Store if present.
 
-```rust
-// Publisher side — cache recent samples
-let queryable = session
-    .declare_queryable(&format!("{}/cache/{}", prefix, pub_id))
-    .await?;
-
-// Background task: answer cache queries
-while let Ok(query) = queryable.recv_async().await {
-    let params = query.parameters(); // e.g., ?after_seq=42
-    let after_seq: u64 = params.get("after_seq").parse().unwrap_or(0);
-    for cached in self.cache.iter_from(after_seq) {
-        query.reply(&cached.key, &cached.payload).await?;
-    }
-}
-```
-
-```rust
-// Subscriber side — recover on gap
-async fn recover(&self, pub_id: &str, from_seq: u64) -> Result<Vec<Sample>> {
-    let replies = self.session
-        .get(&format!("{}/cache/{}?after_seq={}", self.prefix, pub_id, from_seq))
-        .await?;
-    // Process recovered samples
-}
-```
+See [09_cache_recovery_design.md](09_cache_recovery_design.md) for the tiered recovery design (publisher cache → Event Store).
 
 ### 2.4 Heartbeat (Periodic Sequence Beacon)
 
-The publisher periodically publishes its current sequence number so subscribers can detect stale connections:
+The publisher periodically publishes a `HeartbeatPayload` to `{prefix}/_heartbeat/{publisher_id}` containing its per-partition sequence map (`partition_seqs: HashMap<u32, u64>`) plus publisher metadata.
 
-```rust
-// Publisher background task
-async fn heartbeat_loop(&self) {
-    let mut interval = tokio::time::interval(self.config.heartbeat_interval); // 1s
-    loop {
-        interval.tick().await;
-        let beacon = HeartbeatBeacon {
-            pub_id: self.publisher_id,
-            current_seq: self.next_seq.load(Ordering::SeqCst) - 1,
-            timestamp: chrono::Utc::now(),
-        };
-        self.session
-            .put(&self.heartbeat_key, serde_json::to_vec(&beacon).unwrap())
-            .await
-            .ok();
-    }
-}
-```
-
-Subscriber uses heartbeats to detect gaps in otherwise quiet streams — if the publisher says `current_seq: 50` but the subscriber last saw `seq: 45`, it triggers recovery.
+Subscribers use heartbeats to detect gaps in otherwise quiet streams — if the publisher reports a higher sequence than the subscriber last saw, it triggers recovery.
 
 ### 2.5 History on Late Join (via Get)
 
-When a new subscriber starts, it queries the Event Store for historical data:
-
-```rust
-// On subscriber init
-async fn fetch_history(&self) -> Result<Vec<Event>> {
-    let replies = self.session
-        .get(&format!("{}/**?from_seq=0", self.store_prefix))
-        .await?;
-    // Returns stored events from the Event Store's Queryable
-}
-```
-
-This replaces `zenoh_ext`'s `history()` config — instead of querying publisher caches (which are bounded and in-memory), we query the Event Store (which is durable and unbounded).
+When a new subscriber starts, it can query the Event Store for historical events via `session.get("{store_prefix}/**")`. This replaces `zenoh_ext`'s `history()` config — instead of querying publisher caches (bounded, in-memory), we query the Event Store (durable, unbounded).
 
 ### 2.6 Presence Detection (Liveliness)
 
-```rust
-// Publisher declares presence
-let token = session.liveliness()
-    .declare_token(&format!("{}/publishers/{}", prefix, pub_id))
-    .await?;
-
-// Subscriber/PartitionManager watches for join/leave
-let watcher = session.liveliness()
-    .declare_subscriber(&format!("{}/publishers/*", prefix))
-    .await?;
-```
+Publishers declare liveliness tokens at `{prefix}/_publishers/{publisher_id}`. The `PartitionManager` and `MembershipTracker` watch liveliness tokens to detect join/leave events for consumer groups and partition rebalancing.
 
 ---
 

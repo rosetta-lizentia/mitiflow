@@ -1,5 +1,7 @@
 # Pub/Sub-Based Storage Replication
 
+**Status:** Design document — multi-store deployment works; quorum watermark not yet implemented.
+
 How mitiflow achieves replicated durability without Raft, leveraging Zenoh's
 pub/sub as the replication transport.
 

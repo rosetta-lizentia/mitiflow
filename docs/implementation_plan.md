@@ -2,30 +2,28 @@
 
 Detailed implementation plan for the `mitiflow` crate, with test validation and benchmark strategies.
 
+> **Status (2025-06):** Phases 1–4 and 3.5 are fully implemented. Phase 5 (Kafka Gateway) remains a stub. Benchmarks are in `mitiflow-bench/`.
+
 > **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_ordering.md](04_ordering.md) for sequence design, [07_kafka_compatibility.md](07_kafka_compatibility.md) for the gateway design, [08_replay_ordering.md](08_replay_ordering.md) for HLC replay, [09_cache_recovery_design.md](09_cache_recovery_design.md) for tiered recovery, [10_graceful_termination.md](10_graceful_termination.md) for shutdown protocol, and [11_consumer_group_commits.md](11_consumer_group_commits.md) for consumer group offset commits.
 
 ---
 
 ## 1. Workspace Layout
 
-The project is organized as a Cargo workspace with three crates:
+The project is organized as a Cargo workspace with eight crates:
 
 ```
 mitiflow/
 ├── Cargo.toml                    # workspace root
 ├── mitiflow/                     # core library crate
-│   ├── Cargo.toml
-│   ├── src/
-│   └── tests/                    # integration tests
-├── mitiflow-gateway/             # Kafka protocol gateway binary
-│   ├── Cargo.toml
-│   └── src/
-├── mitiflow-bench/               # benchmark harness
-│   ├── Cargo.toml
-│   ├── benches/
-│   └── src/                      # shared benchmark utilities
-├── docs/
-└── examples/
+├── mitiflow-agent/               # multi-topic storage agent
+├── mitiflow-orchestrator/        # control plane (config, lag, alerts)
+├── mitiflow-cli/                 # unified CLI (agent, orchestrator, ctl)
+├── mitiflow-emulator/            # topology simulation
+├── mitiflow-gateway/             # Kafka protocol gateway (stub)
+├── mitiflow-bench/               # comparative benchmarks
+├── mitiflow-ui/                  # Svelte web dashboard
+└── docs/
 ```
 
 ### Dependency Graph
@@ -44,7 +42,7 @@ graph TD
 
 ## 2. Implementation Phases
 
-### Phase 1 — Core Pub/Sub (MVP)
+### Phase 1 — Core Pub/Sub (MVP) ✅
 
 > Reliable pub/sub over Zenoh stable APIs with sequencing, gap detection, recovery, and dedup.
 >
@@ -117,12 +115,9 @@ EventPublisher::new() spawns:
 - `publish_to(&self, key: &str, event: &Event<T>) -> Result<u64>` — explicit partition key (seq is per this partition)
 - `publish_durable(&self, event: &Event<T>) -> Result<()>` — added in Phase 2
 
-> **Current state:** The publisher still uses a single global `AtomicU64` counter
-> instead of per-partition counters. This works as long as each publisher writes
-> to one partition, but breaks with multi-partition publishing (phantom gaps in
-> watermark tracking). See [04_ordering.md](04_ordering.md) for the full
-> analysis. Migration to per-partition counters is tracked in
-> [TODO.md](TODO.md).
+> **Current state:** Per-partition `scc::HashMap<u32, AtomicU64>` counters are
+> implemented. Each publisher maintains independent monotonic sequences per
+> partition, consistent with Approach C from [04_ordering.md](04_ordering.md).
 
 #### 2.1.5 EventSubscriber — `src/subscriber/mod.rs`
 
@@ -168,7 +163,7 @@ Additional heartbeat-triggered gap detection: if heartbeat says `current_seq: 50
 
 ---
 
-### Phase 2 — Event Store + Watermark
+### Phase 2 — Event Store + Watermark ✅
 
 > Durable persistence with confirmed durability via watermark stream.
 >
@@ -268,7 +263,7 @@ Publisher subscribes to watermark key on construction and routes `CommitWatermar
 
 ---
 
-### Phase 3 — Partitioned Consumer Groups
+### Phase 3 — Partitioned Consumer Groups ✅
 
 > Load-balanced consumption via rendezvous hashing + liveliness-driven rebalancing.
 >
@@ -323,7 +318,7 @@ On membership change (worker join or leave detected via liveliness):
 
 ---
 
-### Phase 3.5 — Consumer Group Commits
+### Phase 3.5 — Consumer Group Commits ✅
 
 > Store-managed offset commits with generation fencing.
 >
@@ -361,7 +356,7 @@ Add `offsets` keyspace to `FjallBackend`:
 
 ---
 
-### Phase 4 — Cross-Restart Dedup + DLQ
+### Phase 4 — Cross-Restart Dedup + DLQ ✅
 
 > Exactly-once semantics across restarts and poison message isolation.
 >
@@ -410,9 +405,9 @@ DLQ events are stored as regular events in a separate key-space, queryable by th
 
 ---
 
-### Phase 5 — Kafka Protocol Gateway
+### Phase 5 — Kafka Protocol Gateway (stub)
 
-> Kafka wire protocol compatibility layer.
+> Kafka wire protocol compatibility layer. **Not yet implemented.**
 >
 > **Foundation:** Full design in [07_kafka_compatibility.md](07_kafka_compatibility.md). This is a **separate binary crate** (`mitiflow-gateway`), not part of the core library.
 >
@@ -682,27 +677,26 @@ Each phase is independently testable and shippable. Phase 1 is a usable MVP — 
 
 ---
 
-## 5. Estimated Scope
+## 5. Phase Status
 
-| Phase | New Files | Est. LOC | Priority | Depends On |
-|-------|-----------|----------|----------|------------|
-| 1: Core Pub/Sub | ~8 | ~1,500 | 🔴 Critical | — |
-| 2: Event Store + Watermark | ~6 | ~1,200 | 🔴 Critical | Phase 1 |
-| 3: Consumer Groups | ~4 | ~800 | 🟡 Important | Phase 2 |
-| 3.5: Consumer Group Commits | ~3 | ~400 | 🟡 Important | Phase 3 |
-| 4: Dedup + DLQ | ~3 | ~500 | 🟢 Nice-to-have | Phase 2 |
-| 5: Kafka Gateway | ~10 | ~2,000 | 🟡 Important | Phases 3.5+4 |
-| Benchmarks | ~8 | ~800 | 🟡 Important | Phases 1+ |
-| **Total** | **~39** | **~6,800** | | |
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 1: Core Pub/Sub | ✅ Complete | Per-partition sequencing, gap detection, tiered recovery, heartbeat |
+| 2: Event Store + Watermark | ✅ Complete | FjallBackend, watermark broadcast, durable publish, GC |
+| 3: Consumer Groups | ✅ Complete | HRW hashing, liveliness rebalance, ConsumerGroupSubscriber |
+| 3.5: Consumer Group Commits | ✅ Complete | Generation-fenced offsets, manual + auto commit |
+| 4: Dedup + DLQ | ✅ Complete | SequenceCheckpoint, DeadLetterQueue |
+| 5: Kafka Gateway | ⬜ Stub | Crate exists, protocol handlers not implemented |
+| Benchmarks | ✅ Complete | mitiflow-bench with Kafka/NATS/Redis/Redpanda comparisons |
 
 ---
 
-## 6. Open Questions
+## 6. Resolved Questions
 
-| # | Question | Affects | Default Assumption |
-|---|----------|---------|-------------------|
-| 1 | Should Phase 5 (Gateway) be deferred to a separate milestone? | Timeline | Proceed after Phase 3+4 |
-| 2 | Kafka comparison benchmarks: include NATS JetStream? | Benchmark scope | Kafka-only initially |
-| 3 | Support PostgreSQL backend from day one or fjall-only? | Phase 2 scope | fjall-only, PG later as a separate `StorageBackend` impl |
-| 4 | Minimum supported Zenoh version? | Dependencies | `zenoh 1.8` (current stable) |
-| 5 | CI pipeline target? | DevOps | GitHub Actions, `cargo test` + `cargo bench` |
+| # | Question | Resolution |
+|---|----------|------------|
+| 1 | Should Phase 5 (Gateway) be deferred? | Yes — deferred. Phases 1–4 shipped first. |
+| 2 | Include NATS JetStream in benchmarks? | Yes — `mitiflow-bench` includes Kafka, NATS, Redis, Redpanda. |
+| 3 | PostgreSQL backend? | fjall-only for now. `StorageBackend` trait allows future backends. |
+| 4 | Minimum supported Zenoh version? | Zenoh 1.8 (current). |
+| 5 | CI pipeline? | GitHub Actions with `cargo nextest run --features full`. |

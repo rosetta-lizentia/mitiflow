@@ -1,5 +1,7 @@
 # Deterministic Replay & Publisher Lifecycle
 
+**Status:** Implemented — HLC-based replay index in FjallBackend, publisher registry, deterministic cross-replica ordering.
+
 How mitiflow achieves deterministic, replica-independent replay ordering and
 manages ephemeral publisher state over time.
 

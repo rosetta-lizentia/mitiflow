@@ -271,7 +271,7 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | **Scalability** | ✅ Partition + replicate Event Store | ✅ Native partitions + ISR |
 | **Replication cost** | ✅ Free (Zenoh fan-out, quorum watermark) | ⚠️ Followers fetch from leader |
 | **Durability** | ✅ Event Store sidecar | ✅ Native |
-| **Consumer groups** | ⚠️ L3 (app-level) | ✅ Native |
+| **Consumer groups** | ✅ Store-managed offsets + generation fencing | ✅ Native |
 | **Ecosystem maturity** | ❌ Young (Rust-only) | ✅ Battle-tested, multi-language |
 | **Managed offerings** | ❌ Self-hosted only | ✅ Multiple cloud providers |
 | **Edge deployment** | ✅ Peer-to-peer, no infra | ❌ Requires server |

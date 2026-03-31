@@ -1,5 +1,7 @@
 # Cache & Recovery Design
 
+**Status:** Implemented — tiered recovery (publisher cache → Event Store), `RecoveryMode::Both` default.
+
 How mitiflow recovers when a subscriber detects a missed event.
 
 ---

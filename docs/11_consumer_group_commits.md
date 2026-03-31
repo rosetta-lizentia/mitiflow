@@ -18,10 +18,10 @@ offset management:
 | `on_rebalance(gained, lost)` | ✅ Exists | Callback when partitions are reassigned |
 | `SequenceCheckpoint` | ✅ Exists | Per-(publisher, partition) checkpoint stored locally in fjall |
 | `GapDetector::with_checkpoints()` | ✅ Exists | Pre-seeds tracker from restored checkpoints |
-| Consumer group offset commit | ❌ Missing | No shared offset storage across group members |
-| Generation fencing | ❌ Missing | No mechanism to fence zombie consumers |
-| Rebalance offset handoff | ❌ Missing | New partition owner can't retrieve previous owner's offset |
-| Store/config automation | ❌ Missing | Manual deployment of EventStore per partition |
+| Consumer group offset commit | ✅ Implemented | `commit_sync()` / `commit_async()` on `ConsumerGroupSubscriber` |
+| Generation fencing | ✅ Implemented | `PartitionManager::current_generation()` + fenced `commit_offsets()` on `FjallBackend` |
+| Rebalance offset handoff | ✅ Implemented | `fetch_offsets()` via store queryable on `_offsets/{partition}/**` |
+| Store/config automation | ✅ Implemented | Multi-topic agent (`mitiflow-agent`) + orchestrator topic provisioning |
 
 ### The Gap
 

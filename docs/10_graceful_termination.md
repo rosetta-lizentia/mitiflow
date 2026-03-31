@@ -1,5 +1,7 @@
 # 10 — Graceful Termination
 
+**Status:** Implemented — `shutdown()` method on EventPublisher, EventSubscriber, EventStore.
+
 ## Problem
 
 EventPublisher, EventSubscriber, and EventStore all spawn background tokio tasks

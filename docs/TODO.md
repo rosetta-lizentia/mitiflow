@@ -1028,9 +1028,8 @@ These tests run the full stack: orchestrator + agent + frontend.
 
 ## Documentation
 
-- [ ] Update [00_proposal.md](00_proposal.md) § watermark example once
-      per-partition sequences are implemented (currently shows per-publisher
-      which is correct for now).
+- [x] Update [00_proposal.md](00_proposal.md) — status markers, actual API
+      examples, crate structure table.
 - [ ] Add `ARCHITECTURE.md` at repo root as a quick-start pointer to the docs.
 - [x] Add [08_replay_ordering.md](08_replay_ordering.md) — deterministic replay
       ordering via HLC and publisher lifecycle management.
