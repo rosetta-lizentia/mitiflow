@@ -514,6 +514,8 @@ fn replay_hlc_range_filter() {
                 logical: 0,
             }),
             limit: None,
+            key: None,
+            key_prefix: None,
         })
         .unwrap();
 
@@ -985,4 +987,177 @@ fn fjall_query_latest_by_keys_returns_one_per_key() {
         .find(|e| e.metadata.key.as_deref() == Some("order-B"))
         .unwrap();
     assert_eq!(b.metadata.seq, 5, "latest seq for order-B");
+}
+
+// ── Key-scoped replay (Phase 2) ─────────────────────────────────────────────
+
+/// query_replay with exact key filter returns only events with that key.
+#[test]
+fn replay_key_filter_exact() {
+    let dir = temp_dir("replay_key_exact");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let base_ns = 2_000_000_000u64;
+    let keys = ["alpha", "beta", "alpha", "gamma", "alpha"];
+
+    for (seq, key_name) in keys.iter().enumerate() {
+        let seq = seq as u64;
+        let hlc = HlcTimestamp {
+            physical_ns: base_ns + seq * 100,
+            logical: 0,
+        };
+        let key_expr = format!("test/replay_key/p/0/k/{key_name}/{seq}");
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: key_expr.clone(),
+            key: Some(key_name.to_string()),
+            hlc_timestamp: Some(hlc),
+        };
+        backend.store(&key_expr, b"{}", meta).unwrap();
+    }
+
+    let results = backend
+        .query_replay(&ReplayFilters {
+            key: Some("alpha".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    assert_eq!(results.len(), 3);
+    for event in &results {
+        assert_eq!(event.metadata.key.as_deref(), Some("alpha"));
+    }
+    // Verify HLC ordering
+    let seqs: Vec<u64> = results.iter().map(|e| e.metadata.seq).collect();
+    assert_eq!(seqs, vec![0, 2, 4]);
+}
+
+/// query_replay with key_prefix filter returns events whose key starts with the prefix.
+#[test]
+fn replay_key_filter_prefix() {
+    let dir = temp_dir("replay_key_prefix");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let base_ns = 3_000_000_000u64;
+    let keys = ["order-123", "order-456", "user-789", "order-123"];
+
+    for (seq, key_name) in keys.iter().enumerate() {
+        let seq = seq as u64;
+        let hlc = HlcTimestamp {
+            physical_ns: base_ns + seq * 100,
+            logical: 0,
+        };
+        let key_expr = format!("test/replay_prefix/p/0/k/{key_name}/{seq}");
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: key_expr.clone(),
+            key: Some(key_name.to_string()),
+            hlc_timestamp: Some(hlc),
+        };
+        backend.store(&key_expr, b"{}", meta).unwrap();
+    }
+
+    let results = backend
+        .query_replay(&ReplayFilters {
+            key_prefix: Some("order-".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    assert_eq!(results.len(), 3);
+    for event in &results {
+        assert!(event.metadata.key.as_deref().unwrap().starts_with("order-"));
+    }
+}
+
+/// query_replay with key filter + HLC range returns bounded keyed events.
+#[test]
+fn replay_key_filter_with_hlc_range() {
+    let dir = temp_dir("replay_key_hlc");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let base_ns = 4_000_000_000u64;
+    let keys = ["alpha", "beta", "alpha", "beta", "alpha"];
+
+    for (seq, key_name) in keys.iter().enumerate() {
+        let seq = seq as u64;
+        let hlc = HlcTimestamp {
+            physical_ns: base_ns + seq * 100,
+            logical: 0,
+        };
+        let key_expr = format!("test/replay_key_hlc/p/0/k/{key_name}/{seq}");
+        let meta = EventMetadata {
+            seq,
+            publisher_id: pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: key_expr.clone(),
+            key: Some(key_name.to_string()),
+            hlc_timestamp: Some(hlc),
+        };
+        backend.store(&key_expr, b"{}", meta).unwrap();
+    }
+
+    // HLC range: after seq 0 (base+0), before seq 4 (base+400).
+    // Alpha events in range: seq 2 (base+200) only.
+    let results = backend
+        .query_replay(&ReplayFilters {
+            key: Some("alpha".to_string()),
+            after_hlc: Some(HlcTimestamp {
+                physical_ns: base_ns,
+                logical: 0,
+            }),
+            before_hlc: Some(HlcTimestamp {
+                physical_ns: base_ns + 400,
+                logical: 0,
+            }),
+            limit: None,
+            key_prefix: None,
+        })
+        .unwrap();
+
+    let seqs: Vec<u64> = results.iter().map(|e| e.metadata.seq).collect();
+    assert_eq!(seqs, vec![2]);
+}
+
+/// query_replay with non-existent key returns empty vec.
+#[test]
+fn replay_key_filter_no_match() {
+    let dir = temp_dir("replay_key_none");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_id = PublisherId::new();
+    let hlc = HlcTimestamp {
+        physical_ns: 5_000_000_000,
+        logical: 0,
+    };
+    let key_expr = "test/replay_none/p/0/k/exists/0".to_string();
+    let meta = EventMetadata {
+        seq: 0,
+        publisher_id: pub_id,
+        event_id: EventId::new(),
+        timestamp: Utc::now(),
+        key_expr: key_expr.clone(),
+        key: Some("exists".to_string()),
+        hlc_timestamp: Some(hlc),
+    };
+    backend.store(&key_expr, b"{}", meta).unwrap();
+
+    let results = backend
+        .query_replay(&ReplayFilters {
+            key: Some("does-not-exist".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+    assert!(results.is_empty());
 }

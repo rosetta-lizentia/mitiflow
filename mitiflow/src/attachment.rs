@@ -26,6 +26,9 @@ use crate::types::{EventId, PublisherId};
 
 const ATTACHMENT_SIZE: usize = 8 + 16 + 16 + 8 + 2; // 50 bytes
 
+/// Extended attachment size: base (50) + HLC physical_ns (8) + HLC logical (4) = 62 bytes.
+const EXTENDED_ATTACHMENT_SIZE: usize = ATTACHMENT_SIZE + 12; // 62 bytes
+
 /// Sentinel value: no urgency — use the store's default watermark interval.
 pub const NO_URGENCY: u16 = u16::MAX; // 0xFFFF
 
@@ -44,6 +47,10 @@ pub struct EventMeta {
     /// `0` = broadcast watermark immediately.
     /// [`NO_URGENCY`] (`0xFFFF`) = use the store's default watermark interval.
     pub urgency_ms: u16,
+    /// HLC timestamp from the store's replay index (present only in store replies).
+    pub hlc_physical_ns: Option<u64>,
+    /// HLC logical counter (present only in store replies).
+    pub hlc_logical: Option<u32>,
 }
 
 /// Encode per-event metadata into a Zenoh attachment.
@@ -60,6 +67,31 @@ pub fn encode_metadata(
     buf[24..40].copy_from_slice(&event_id.to_bytes());
     buf[40..48].copy_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
     buf[48..50].copy_from_slice(&urgency_ms.to_be_bytes());
+    ZBytes::from(buf.to_vec())
+}
+
+/// Encode per-event metadata with an HLC timestamp extension (62 bytes).
+///
+/// Used by the store's queryable task when replying to key-scoped queries.
+/// The extra 12 bytes carry the HLC physical_ns (u64 BE) and logical (u32 BE)
+/// from the replay index so the consumer can use the exact store HLC as cursor.
+pub fn encode_metadata_with_hlc(
+    pub_id: &PublisherId,
+    seq: u64,
+    event_id: &EventId,
+    timestamp: &chrono::DateTime<chrono::Utc>,
+    urgency_ms: u16,
+    hlc_physical_ns: u64,
+    hlc_logical: u32,
+) -> ZBytes {
+    let mut buf = [0u8; EXTENDED_ATTACHMENT_SIZE];
+    buf[0..8].copy_from_slice(&seq.to_be_bytes());
+    buf[8..24].copy_from_slice(&pub_id.to_bytes());
+    buf[24..40].copy_from_slice(&event_id.to_bytes());
+    buf[40..48].copy_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
+    buf[48..50].copy_from_slice(&urgency_ms.to_be_bytes());
+    buf[50..58].copy_from_slice(&hlc_physical_ns.to_be_bytes());
+    buf[58..62].copy_from_slice(&hlc_logical.to_be_bytes());
     ZBytes::from(buf.to_vec())
 }
 
@@ -81,10 +113,10 @@ fn read_uuid_bytes(bytes: &[u8], offset: usize, field: &str) -> Result<[u8; 16]>
 /// Decode per-event metadata from a Zenoh attachment.
 pub fn decode_metadata(attachment: &ZBytes) -> Result<EventMeta> {
     let bytes = attachment.to_bytes();
-    if bytes.len() != ATTACHMENT_SIZE {
+    if bytes.len() != ATTACHMENT_SIZE && bytes.len() != EXTENDED_ATTACHMENT_SIZE {
         return Err(Error::InvalidAttachment(format!(
-            "expected {} bytes, got {}",
-            ATTACHMENT_SIZE,
+            "expected {} or {} bytes, got {}",
+            ATTACHMENT_SIZE, EXTENDED_ATTACHMENT_SIZE,
             bytes.len()
         )));
     }
@@ -100,12 +132,25 @@ pub fn decode_metadata(attachment: &ZBytes) -> Result<EventMeta> {
             .map_err(|e| Error::InvalidAttachment(format!("urgency_ms decode: {e}")))?,
     );
 
+    // Parse optional HLC extension (bytes 50..62).
+    let (hlc_physical_ns, hlc_logical) = if bytes.len() == EXTENDED_ATTACHMENT_SIZE {
+        let phys = read_u64(&bytes, 50, "hlc_physical_ns")?;
+        let log_bytes: [u8; 4] = bytes[58..62]
+            .try_into()
+            .map_err(|e| Error::InvalidAttachment(format!("hlc_logical decode: {e}")))?;
+        (Some(phys), Some(u32::from_be_bytes(log_bytes)))
+    } else {
+        (None, None)
+    };
+
     Ok(EventMeta {
         seq,
         pub_id: PublisherId::from_bytes(pub_id_bytes),
         event_id: EventId::from_bytes(event_id_bytes),
         timestamp,
         urgency_ms,
+        hlc_physical_ns,
+        hlc_logical,
     })
 }
 

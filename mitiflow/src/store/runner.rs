@@ -26,7 +26,7 @@ use crate::error::{Error, Result};
 use crate::types::PublisherId;
 
 use super::backend::{CompactionStats, EventMetadata, HlcTimestamp, StorageBackend, StoredEvent};
-use super::query::QueryFilters;
+use super::query::{QueryFilters, ReplayFilters};
 use super::watermark::{CommitWatermark, PublisherWatermark};
 
 /// Sentinel: no urgent deadline pending.
@@ -49,6 +49,10 @@ enum BackendRequest {
         filters: QueryFilters,
         reply: flume::Sender<Result<Vec<StoredEvent>>>,
     },
+    QueryReplay {
+        filters: ReplayFilters,
+        reply: flume::Sender<Result<Vec<StoredEvent>>>,
+    },
     PublisherWatermarks {
         reply: flume::Sender<HashMap<PublisherId, PublisherWatermark>>,
     },
@@ -66,6 +70,15 @@ enum BackendRequest {
     FetchOffsets {
         group_id: String,
         reply: flume::Sender<Result<HashMap<PublisherId, u64>>>,
+    },
+    CommitKeyedOffset {
+        commit: super::offset::KeyedOffsetCommit,
+        reply: flume::Sender<Result<()>>,
+    },
+    FetchKeyedOffset {
+        group_id: String,
+        key_filter_hash: u64,
+        reply: flume::Sender<Result<Option<HlcTimestamp>>>,
     },
 }
 
@@ -108,6 +121,20 @@ impl BackendHandle {
         let (reply_tx, reply_rx) = flume::bounded(1);
         self.tx
             .send(BackendMsg::Request(BackendRequest::Query {
+                filters,
+                reply: reply_tx,
+            }))
+            .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
+        reply_rx
+            .recv_async()
+            .await
+            .map_err(|_| Error::StoreError("backend worker dropped reply".into()))?
+    }
+
+    async fn query_replay(&self, filters: ReplayFilters) -> Result<Vec<StoredEvent>> {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        self.tx
+            .send(BackendMsg::Request(BackendRequest::QueryReplay {
                 filters,
                 reply: reply_tx,
             }))
@@ -177,6 +204,42 @@ impl BackendHandle {
         self.tx
             .send(BackendMsg::Request(BackendRequest::FetchOffsets {
                 group_id,
+                reply: reply_tx,
+            }))
+            .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
+        reply_rx
+            .recv_async()
+            .await
+            .map_err(|_| Error::StoreError("backend worker dropped reply".into()))?
+    }
+
+    async fn commit_keyed_offset(
+        &self,
+        commit: super::offset::KeyedOffsetCommit,
+    ) -> Result<()> {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        self.tx
+            .send(BackendMsg::Request(BackendRequest::CommitKeyedOffset {
+                commit,
+                reply: reply_tx,
+            }))
+            .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
+        reply_rx
+            .recv_async()
+            .await
+            .map_err(|_| Error::StoreError("backend worker dropped reply".into()))?
+    }
+
+    async fn fetch_keyed_offset(
+        &self,
+        group_id: String,
+        key_filter_hash: u64,
+    ) -> Result<Option<HlcTimestamp>> {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        self.tx
+            .send(BackendMsg::Request(BackendRequest::FetchKeyedOffset {
+                group_id,
+                key_filter_hash,
                 reply: reply_tx,
             }))
             .map_err(|_| Error::StoreError("backend workers shut down".into()))?;
@@ -277,6 +340,9 @@ fn dispatch_request(backend: &Arc<dyn StorageBackend>, request: BackendRequest, 
         BackendRequest::Query { filters, reply } => {
             let _ = reply.send(backend.query(&filters));
         }
+        BackendRequest::QueryReplay { filters, reply } => {
+            let _ = reply.send(backend.query_replay(&filters));
+        }
         BackendRequest::PublisherWatermarks { reply } => {
             let _ = reply.send(backend.publisher_watermarks());
         }
@@ -295,6 +361,16 @@ fn dispatch_request(backend: &Arc<dyn StorageBackend>, request: BackendRequest, 
         }
         BackendRequest::FetchOffsets { group_id, reply } => {
             let _ = reply.send(backend.fetch_offsets(&group_id));
+        }
+        BackendRequest::CommitKeyedOffset { commit, reply } => {
+            let _ = reply.send(backend.commit_keyed_offset(&commit));
+        }
+        BackendRequest::FetchKeyedOffset {
+            group_id,
+            key_filter_hash,
+            reply,
+        } => {
+            let _ = reply.send(backend.fetch_keyed_offset(&group_id, key_filter_hash));
         }
     }
 }
@@ -331,21 +407,11 @@ fn decode_sample(sample: &Sample) -> Option<DecodedSample> {
 
     // Extract HLC timestamp from the Zenoh sample if available.
     let hlc_timestamp = sample.timestamp().map(|ts| {
-        let ntp64 = ts.get_time().0;
-        // NTP64: upper 32 bits = seconds since 1900-01-01, lower 32 = fraction.
-        // Convert to nanoseconds since Unix epoch (1970-01-01).
-        // NTP epoch offset: 70 years = 2_208_988_800 seconds.
-        const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
-        let seconds = ntp64 >> 32;
-        let fraction = ntp64 & 0xFFFF_FFFF;
-        let unix_seconds = seconds.saturating_sub(NTP_UNIX_OFFSET);
-        let nanos = (fraction * 1_000_000_000) >> 32;
-        let physical_ns = unix_seconds * 1_000_000_000 + nanos;
-        // Zenoh HLC uses the ID part for logical ordering; we use a
-        // simple counter of 0 here since the NTP64 already encodes
-        // sub-nanosecond resolution.  A more accurate approach would
-        // parse the HLC logical counter, but the fraction bits are
-        // sufficient for ordering.
+        // uhlc's NTP64 stores seconds since UNIX_EPOCH in the upper 32 bits
+        // and fraction-of-second in the lower 32 bits. Use its built-in
+        // as_nanos() for correct conversion.
+        let ntp64 = ts.get_time();
+        let physical_ns = ntp64.as_nanos();
         HlcTimestamp {
             physical_ns,
             logical: 0,
@@ -452,15 +518,29 @@ async fn run_queryable_task(
                 match query_result {
                     Ok(query) => {
                         let params = query.parameters().to_string();
-                        let filters = match QueryFilters::from_selector(&params) {
-                            Ok(f) => f,
-                            Err(e) => {
-                                warn!("invalid query filters: {e}");
-                                continue;
-                            }
+
+                        // Key-scoped queries route through ReplayFilters (HLC-ordered).
+                        let events = if params.contains("key=") || params.contains("key_prefix=") {
+                            let filters = match ReplayFilters::from_selector(&params) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    warn!("invalid replay filters: {e}");
+                                    continue;
+                                }
+                            };
+                            handle.query_replay(filters).await
+                        } else {
+                            let filters = match QueryFilters::from_selector(&params) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    warn!("invalid query filters: {e}");
+                                    continue;
+                                }
+                            };
+                            handle.query(filters).await
                         };
 
-                        let events = match handle.query(filters).await {
+                        let events = match events {
                             Ok(e) => e,
                             Err(e) => {
                                 warn!("store query failed: {e}");
@@ -469,13 +549,25 @@ async fn run_queryable_task(
                         };
 
                         for event in &events {
-                            let meta_attachment = crate::attachment::encode_metadata(
-                                &event.metadata.publisher_id,
-                                event.metadata.seq,
-                                &event.metadata.event_id,
-                                &event.metadata.timestamp,
-                                crate::attachment::NO_URGENCY,
-                            );
+                            let meta_attachment = if let Some(hlc) = &event.metadata.hlc_timestamp {
+                                crate::attachment::encode_metadata_with_hlc(
+                                    &event.metadata.publisher_id,
+                                    event.metadata.seq,
+                                    &event.metadata.event_id,
+                                    &event.metadata.timestamp,
+                                    crate::attachment::NO_URGENCY,
+                                    hlc.physical_ns,
+                                    hlc.logical,
+                                )
+                            } else {
+                                crate::attachment::encode_metadata(
+                                    &event.metadata.publisher_id,
+                                    event.metadata.seq,
+                                    &event.metadata.event_id,
+                                    &event.metadata.timestamp,
+                                    crate::attachment::NO_URGENCY,
+                                )
+                            };
                             if let Err(e) = query
                                 .reply(&event.key, event.payload.clone())
                                 .attachment(meta_attachment)
@@ -682,6 +774,90 @@ fn extract_param(params: &str, key: &str) -> Option<String> {
     })
 }
 
+/// Task for keyed offset commits and fetches via `{prefix}/_offsets/key/**`.
+async fn run_keyed_offset_task(
+    queryable: zenoh::query::Queryable<FifoChannelHandler<zenoh::query::Query>>,
+    subscriber: zenoh::pubsub::Subscriber<FifoChannelHandler<Sample>>,
+    handle: BackendHandle,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            query_result = queryable.recv_async() => {
+                match query_result {
+                    Ok(query) => {
+                        let params = query.parameters().to_string();
+                        if params.contains("fetch=true") {
+                            // Fetch keyed offset: extract group_id and key_filter_hash
+                            let group_id = extract_param(&params, "group_id")
+                                .unwrap_or_default();
+                            let key_filter_hash = extract_param(&params, "key_filter_hash")
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
+                            match handle.fetch_keyed_offset(group_id, key_filter_hash).await {
+                                Ok(hlc) => {
+                                    let reply_bytes = serde_json::to_vec(&hlc)
+                                        .unwrap_or_else(|_| b"null".to_vec());
+                                    let _ = query.reply(query.key_expr(), reply_bytes).await;
+                                }
+                                Err(e) => {
+                                    warn!("keyed offset fetch failed: {e}");
+                                }
+                            }
+                        } else {
+                            // Commit: payload is a KeyedOffsetCommit
+                            let payload = query.payload()
+                                .map(|p| p.to_bytes().to_vec())
+                                .unwrap_or_default();
+                            match serde_json::from_slice::<super::offset::KeyedOffsetCommit>(&payload) {
+                                Ok(commit) => {
+                                    let result = handle.commit_keyed_offset(commit).await;
+                                    let reply_payload = match &result {
+                                        Ok(()) => b"ok".to_vec(),
+                                        Err(e) => format!("error:{e}").into_bytes(),
+                                    };
+                                    let _ = query.reply(query.key_expr(), reply_payload).await;
+                                }
+                                Err(e) => {
+                                    warn!("invalid keyed offset commit query: {e}");
+                                    let _ = query
+                                        .reply(query.key_expr(), format!("error:{e}").into_bytes())
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            // Handle fire-and-forget keyed offset commits via put
+            sub_result = subscriber.recv_async() => {
+                match sub_result {
+                    Ok(sample) => {
+                        if sample.kind() != zenoh::sample::SampleKind::Put {
+                            continue;
+                        }
+                        let payload = sample.payload().to_bytes().to_vec();
+                        match serde_json::from_slice::<super::offset::KeyedOffsetCommit>(&payload) {
+                            Ok(commit) => {
+                                if let Err(e) = handle.commit_keyed_offset(commit).await {
+                                    warn!("async keyed offset commit failed: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                trace!("ignoring non-keyed-offset put: {e}");
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    debug!("store keyed offset task stopped");
+}
+
 // ---------------------------------------------------------------------------
 // EventStore — public API
 // ---------------------------------------------------------------------------
@@ -820,6 +996,23 @@ impl EventStore {
         self._tasks.push(tokio::spawn(run_offset_task(
             offset_queryable,
             offset_subscriber,
+            handle.clone(),
+            self.cancel.clone(),
+        )));
+
+        // -- Keyed offset commit/fetch tasks --
+        let keyed_offset_key = format!("{key_prefix}/_offsets/key");
+        let keyed_offset_queryable = self
+            .session
+            .declare_queryable(format!("{keyed_offset_key}/**"))
+            .await?;
+        let keyed_offset_subscriber = self
+            .session
+            .declare_subscriber(format!("{keyed_offset_key}/**"))
+            .await?;
+        self._tasks.push(tokio::spawn(run_keyed_offset_task(
+            keyed_offset_queryable,
+            keyed_offset_subscriber,
             handle,
             self.cancel.clone(),
         )));

@@ -37,7 +37,7 @@ pub struct EventMetadata {
 /// Used as the sort key for the replay index:
 /// `(physical_ns, logical, publisher_id, seq)` provides a deterministic
 /// total order that is the same on every replica.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HlcTimestamp {
     /// Physical time in nanoseconds since epoch.
     pub physical_ns: u64,
@@ -141,6 +141,25 @@ pub trait StorageBackend: Send + Sync {
     fn fetch_offsets(&self, _group_id: &str) -> Result<HashMap<PublisherId, u64>> {
         Ok(HashMap::new())
     }
+
+    /// Persist a keyed offset commit (HLC cursor for a key filter).
+    fn commit_keyed_offset(
+        &self,
+        _commit: &crate::store::offset::KeyedOffsetCommit,
+    ) -> Result<()> {
+        Err(crate::error::Error::StoreError(
+            "keyed offsets not supported by this backend".into(),
+        ))
+    }
+
+    /// Fetch the last committed HLC cursor for a (group, key filter) pair.
+    fn fetch_keyed_offset(
+        &self,
+        _group_id: &str,
+        _key_filter_hash: u64,
+    ) -> Result<Option<HlcTimestamp>> {
+        Ok(None)
+    }
 }
 
 // Blanket impl: `Arc<dyn StorageBackend>` itself implements `StorageBackend`,
@@ -197,6 +216,21 @@ impl StorageBackend for std::sync::Arc<dyn StorageBackend> {
 
     fn fetch_offsets(&self, group_id: &str) -> Result<HashMap<PublisherId, u64>> {
         (**self).fetch_offsets(group_id)
+    }
+
+    fn commit_keyed_offset(
+        &self,
+        commit: &crate::store::offset::KeyedOffsetCommit,
+    ) -> Result<()> {
+        (**self).commit_keyed_offset(commit)
+    }
+
+    fn fetch_keyed_offset(
+        &self,
+        group_id: &str,
+        key_filter_hash: u64,
+    ) -> Result<Option<HlcTimestamp>> {
+        (**self).fetch_keyed_offset(group_id, key_filter_hash)
     }
 }
 
@@ -505,6 +539,87 @@ mod fjall_impl {
 
             Ok(result)
         }
+
+        /// Keyed offset key: `[key_filter_hash:8 BE][group_hash:8 BE]` = 16 bytes.
+        fn keyed_offset_key(group_id: &str, key_filter_hash: u64) -> [u8; 16] {
+            let mut key = [0u8; 16];
+            key[..8].copy_from_slice(&key_filter_hash.to_be_bytes());
+            key[8..16].copy_from_slice(&Self::xxhash_group(group_id).to_be_bytes());
+            key
+        }
+
+        /// Keyed offset value: `[hlc_physical_ns:8 BE][hlc_logical:4 BE][generation:8 BE][timestamp_ms:8 BE]` = 28 bytes.
+        fn encode_keyed_offset_value(
+            hlc: &HlcTimestamp,
+            generation: u64,
+            timestamp: DateTime<Utc>,
+        ) -> [u8; 28] {
+            let mut val = [0u8; 28];
+            val[..8].copy_from_slice(&hlc.physical_ns.to_be_bytes());
+            val[8..12].copy_from_slice(&hlc.logical.to_be_bytes());
+            val[12..20].copy_from_slice(&generation.to_be_bytes());
+            val[20..28].copy_from_slice(&(timestamp.timestamp_millis() as u64).to_be_bytes());
+            val
+        }
+
+        fn decode_keyed_offset_value(value: &[u8]) -> Option<(HlcTimestamp, u64)> {
+            if value.len() < 20 {
+                return None;
+            }
+            let physical_ns = u64::from_be_bytes(value[..8].try_into().ok()?);
+            let logical = u32::from_be_bytes(value[8..12].try_into().ok()?);
+            let generation = u64::from_be_bytes(value[12..20].try_into().ok()?);
+            Some((HlcTimestamp { physical_ns, logical }, generation))
+        }
+
+        /// Persist an HLC-based keyed offset commit. Only accepts if generation >= stored generation.
+        pub fn commit_keyed_offset(
+            &self,
+            commit: &crate::store::offset::KeyedOffsetCommit,
+        ) -> Result<()> {
+            let key = Self::keyed_offset_key(&commit.group_id, commit.key_filter.hash());
+
+            // Fencing: reject commits from older generations
+            if let Some(existing) = self
+                .offsets
+                .get(key)
+                .map_err(|e| Error::StoreError(format!("keyed offset read failed: {e}")))?
+                && let Some((_, stored_gen)) = Self::decode_keyed_offset_value(existing.as_ref())
+                    && commit.generation < stored_gen
+            {
+                return Err(Error::StaleFencedCommit {
+                    group: commit.group_id.clone(),
+                    commit_gen: commit.generation,
+                    stored_gen,
+                });
+            }
+
+            let value =
+                Self::encode_keyed_offset_value(&commit.last_hlc, commit.generation, commit.timestamp);
+            self.offsets
+                .insert(key, value)
+                .map_err(|e| Error::StoreError(format!("keyed offset commit failed: {e}")))?;
+            Ok(())
+        }
+
+        /// Fetch the committed HLC offset for a group + key filter on this partition.
+        pub fn fetch_keyed_offset(
+            &self,
+            group_id: &str,
+            key_filter_hash: u64,
+        ) -> Result<Option<HlcTimestamp>> {
+            let key = Self::keyed_offset_key(group_id, key_filter_hash);
+            match self
+                .offsets
+                .get(key)
+                .map_err(|e| Error::StoreError(format!("keyed offset read failed: {e}")))?
+            {
+                Some(val) => {
+                    Ok(Self::decode_keyed_offset_value(val.as_ref()).map(|(hlc, _gen)| hlc))
+                }
+                None => Ok(None),
+            }
+        }
     }
 
     impl StorageBackend for FjallBackend {
@@ -758,6 +873,13 @@ mod fjall_impl {
 
                 let (meta, payload) = decode_event_value(&event_value)?;
 
+                // Apply key filter if present.
+                if filters.has_key_filter()
+                    && !filters.matches_key(meta.key.as_deref())
+                {
+                    continue;
+                }
+
                 results.push(StoredEvent {
                     key: meta.key_expr.clone(),
                     payload,
@@ -996,6 +1118,21 @@ mod fjall_impl {
 
         fn fetch_offsets(&self, group_id: &str) -> Result<HashMap<PublisherId, u64>> {
             FjallBackend::fetch_offsets(self, group_id)
+        }
+
+        fn commit_keyed_offset(
+            &self,
+            commit: &crate::store::offset::KeyedOffsetCommit,
+        ) -> Result<()> {
+            FjallBackend::commit_keyed_offset(self, commit)
+        }
+
+        fn fetch_keyed_offset(
+            &self,
+            group_id: &str,
+            key_filter_hash: u64,
+        ) -> Result<Option<HlcTimestamp>> {
+            FjallBackend::fetch_keyed_offset(self, group_id, key_filter_hash)
         }
     }
 }

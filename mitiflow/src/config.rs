@@ -172,6 +172,11 @@ pub struct EventBusConfig {
     /// and consumer share this backpressure channel. Default: 1024.
     pub event_channel_capacity: usize,
 
+    /// Capacity of the event-ID deduplication set used by key-filtered
+    /// subscribers (passthrough mode). Ignored for unfiltered subscribers.
+    /// Default: 10,000.
+    pub dedup_capacity: usize,
+
     // -- Store (feature = "store") --
     /// Key prefix for the event store queryable. Defaults to `"{key_prefix}/_store"`.
     #[cfg(feature = "store")]
@@ -286,6 +291,7 @@ pub struct EventBusConfigBuilder {
     recovery_delay: Duration,
     max_recovery_attempts: u32,
     event_channel_capacity: usize,
+    dedup_capacity: usize,
     #[cfg(feature = "store")]
     store_key_prefix: Option<String>,
     #[cfg(feature = "store")]
@@ -326,6 +332,7 @@ impl EventBusConfigBuilder {
             recovery_delay: Duration::from_millis(50),
             max_recovery_attempts: 3,
             event_channel_capacity: 1024,
+            dedup_capacity: 10_000,
             #[cfg(feature = "store")]
             store_key_prefix: None,
             #[cfg(feature = "store")]
@@ -420,6 +427,13 @@ impl EventBusConfigBuilder {
     /// Default: 1024.
     pub fn event_channel_capacity(mut self, capacity: usize) -> Self {
         self.event_channel_capacity = capacity.max(1);
+        self
+    }
+
+    /// Set the capacity of the event-ID dedup set for key-filtered subscribers.
+    /// Default: 10,000.
+    pub fn dedup_capacity(mut self, capacity: usize) -> Self {
+        self.dedup_capacity = capacity.max(1);
         self
     }
 
@@ -537,6 +551,7 @@ impl EventBusConfigBuilder {
             recovery_delay: self.recovery_delay,
             max_recovery_attempts: self.max_recovery_attempts,
             event_channel_capacity: self.event_channel_capacity,
+            dedup_capacity: self.dedup_capacity,
             #[cfg(feature = "store")]
             store_key_prefix: self.store_key_prefix,
             #[cfg(feature = "store")]

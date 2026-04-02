@@ -13,6 +13,7 @@ use crate::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
 use crate::event::RawEvent;
 use crate::types::PublisherId;
 
+use super::event_id_dedup::EventIdDedup;
 use super::forwarder::{DecodedSample, ForwarderControl, decode_heartbeat};
 use super::gap_detector::{GapDetector, MissInfo, SampleResult, SequenceTracker};
 use super::recovery::{RecoveryConfig, deliver_event, spawn_recovery};
@@ -124,6 +125,7 @@ pub(crate) async fn spawn_single_shard_worker(
     sample_rx: flume::Receiver<DecodedSample>,
     event_tx: flume::Sender<RawEvent>,
     cancel: tokio_util::sync::CancellationToken,
+    key_filtered: bool,
     #[cfg(feature = "store")] forwarder_control: Option<ForwarderControl>,
     #[cfg(feature = "store")] offload_event_rx_slot: &mut Option<flume::Receiver<super::offload::OffloadEvent>>,
 ) -> crate::error::Result<tokio::task::JoinHandle<()>> {
@@ -173,8 +175,10 @@ pub(crate) async fn spawn_single_shard_worker(
     };
 
     let cancel_clone = cancel.clone();
+    let dedup_capacity = config.dedup_capacity;
     let handle = tokio::spawn(async move {
         let mut gd = GapDetector::new();
+        let mut dedup = EventIdDedup::new(dedup_capacity);
         let mut sample_count = 0u64;
         #[cfg(feature = "store")]
         let mut offload_mgr = offload_mgr;
@@ -185,6 +189,19 @@ pub(crate) async fn spawn_single_shard_worker(
                 sample_result = sample_rx.recv_async() => {
                     match sample_result {
                         Ok((meta, key, payload)) => {
+                            if key_filtered {
+                                // Key-filtered passthrough: dedup by EventId, skip gap detection.
+                                if dedup.is_new(meta.event_id) {
+                                    deliver_event(
+                                        &tx, meta.pub_id, meta.seq, &key, &payload,
+                                        meta.event_id, meta.timestamp,
+                                    );
+                                } else {
+                                    trace!(seq = meta.seq, pub_id = %meta.pub_id, "key-filtered duplicate, dropping");
+                                }
+                                continue;
+                            }
+
                             let partition = crate::attachment::extract_partition(&key);
                             let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
 
@@ -209,7 +226,7 @@ pub(crate) async fn spawn_single_shard_worker(
                         Err(_) => break,
                     }
                 }
-                hb_result = async { hb_sub.as_ref().unwrap().recv_async().await }, if has_hb => {
+                hb_result = async { hb_sub.as_ref().unwrap().recv_async().await }, if has_hb && !key_filtered => {
                     match hb_result {
                         Ok(sample) => {
                             if let Some(beacon) = decode_heartbeat(&sample) {
@@ -259,6 +276,7 @@ pub(crate) async fn spawn_multi_shard_workers(
     sample_rx: flume::Receiver<DecodedSample>,
     event_tx: flume::Sender<RawEvent>,
     cancel: tokio_util::sync::CancellationToken,
+    key_filtered: bool,
     #[cfg(feature = "store")] forwarder_control: Option<ForwarderControl>,
     #[cfg(feature = "store")] offload_event_rx_slot: &mut Option<flume::Receiver<super::offload::OffloadEvent>>,
 ) -> crate::error::Result<Vec<tokio::task::JoinHandle<()>>> {
@@ -347,8 +365,10 @@ pub(crate) async fn spawn_multi_shard_workers(
 
     let cancel_clone = cancel.clone();
     let tx = event_tx.clone();
+    let dedup_capacity = config.dedup_capacity;
     let handle = tokio::spawn(async move {
         let mut gd = GapDetector::new();
+        let mut dedup = EventIdDedup::new(dedup_capacity);
         let mut sample_count = 0u64;
         #[cfg(feature = "store")]
         let mut offload_mgr = offload_mgr;
@@ -359,6 +379,21 @@ pub(crate) async fn spawn_multi_shard_workers(
                 sample_result = sample_rx.recv_async() => {
                     match sample_result {
                         Ok((meta, key, payload)) => {
+                            if key_filtered {
+                                // Key-filtered passthrough: dedup by EventId, skip gap detection.
+                                if dedup.is_new(meta.event_id) {
+                                    let shard_idx = shard_for(&meta.pub_id, num_shards);
+                                    let _ = shard_txs[shard_idx].send(ShardMsg::Deliver {
+                                        meta: meta.clone(),
+                                        key: key.to_string(),
+                                        payload: payload.to_vec(),
+                                    });
+                                } else {
+                                    trace!(seq = meta.seq, pub_id = %meta.pub_id, "key-filtered duplicate, dropping");
+                                }
+                                continue;
+                            }
+
                             let partition = crate::attachment::extract_partition(&key);
                             let result = gd.on_sample(&meta.pub_id, partition, meta.seq);
 
@@ -383,7 +418,7 @@ pub(crate) async fn spawn_multi_shard_workers(
                         Err(_) => break,
                     }
                 }
-                hb_result = async { hb_sub.as_ref().unwrap().recv_async().await }, if has_hb => {
+                hb_result = async { hb_sub.as_ref().unwrap().recv_async().await }, if has_hb && !key_filtered => {
                     match hb_result {
                         Ok(sample) => {
                             if let Some(beacon) = decode_heartbeat(&sample) {

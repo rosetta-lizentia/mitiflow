@@ -33,6 +33,9 @@ pub use types::{EventId, PublisherId};
 #[cfg(feature = "store")]
 pub use store::{EventStore, OffsetCommit};
 
+#[cfg(feature = "store")]
+pub use store::offset::KeyedOffsetCommit;
+
 #[cfg(feature = "fjall-backend")]
 pub use store::{FjallBackend, StoreManager};
 
@@ -43,6 +46,9 @@ pub use partition::{NodeDescriptor, PartitionManager};
 
 #[cfg(feature = "store")]
 pub use subscriber::consumer_group::ConsumerGroupSubscriber;
+
+#[cfg(feature = "store")]
+pub use subscriber::keyed_consumer::{KeyFilter, KeyedConsumer};
 
 #[cfg(feature = "store")]
 pub use config::OffloadConfig;

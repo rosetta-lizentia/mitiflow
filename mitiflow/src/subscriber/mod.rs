@@ -10,6 +10,7 @@
 //! - [`checkpoint`] — Persistent sequence checkpoints (store feature)
 //! - [`consumer_group`] — Consumer group with offset management (store feature)
 
+pub mod event_id_dedup;
 pub mod gap_detector;
 pub(crate) mod forwarder;
 pub(crate) mod pipeline;
@@ -20,6 +21,9 @@ pub mod checkpoint;
 
 #[cfg(feature = "store")]
 pub mod consumer_group;
+
+#[cfg(feature = "store")]
+pub mod keyed_consumer;
 
 #[cfg(feature = "store")]
 pub mod offload;
@@ -60,7 +64,7 @@ impl EventSubscriber {
     /// heartbeat listening, and gap recovery.
     pub async fn new(session: &Session, config: EventBusConfig) -> Result<Self> {
         let key_expr = format!("{}/**", config.key_prefix);
-        Self::init(session, config, &[key_expr]).await
+        Self::init(session, config, &[key_expr], false).await
     }
 
     /// Create a subscriber that only receives events for the specified partitions.
@@ -77,23 +81,31 @@ impl EventSubscriber {
                 .map(|p| format!("{}/p/{p}/**", config.key_prefix))
                 .collect()
         };
-        Self::init(session, config, &key_exprs).await
+        Self::init(session, config, &key_exprs, false).await
     }
 
     /// Create a subscriber for events with a specific application key.
+    ///
+    /// Uses passthrough mode: gap detection is disabled (sequences are
+    /// inherently sparse for key-filtered views), deduplication is
+    /// event-ID based, and heartbeat recovery is skipped.
     pub async fn new_keyed(session: &Session, config: EventBusConfig, key: &str) -> Result<Self> {
         let key_expr = config.key_expr_for_key(key);
-        Self::init(session, config, &[key_expr]).await
+        Self::init(session, config, &[key_expr], true).await
     }
 
     /// Create a subscriber for events matching a key prefix.
+    ///
+    /// Uses passthrough mode: gap detection is disabled (sequences are
+    /// inherently sparse for key-filtered views), deduplication is
+    /// event-ID based, and heartbeat recovery is skipped.
     pub async fn new_key_prefix(
         session: &Session,
         config: EventBusConfig,
         key_prefix: &str,
     ) -> Result<Self> {
         let key_expr = config.key_expr_for_key_prefix(key_prefix);
-        Self::init(session, config, &[key_expr]).await
+        Self::init(session, config, &[key_expr], true).await
     }
 
     /// Create a subscriber with explicit Zenoh key expressions.
@@ -102,11 +114,16 @@ impl EventSubscriber {
         config: EventBusConfig,
         key_exprs: &[String],
     ) -> Result<Self> {
-        Self::init(session, config, key_exprs).await
+        Self::init(session, config, key_exprs, false).await
     }
 
     /// Shared initialization: spawn forwarders and processing pipeline.
-    async fn init(session: &Session, config: EventBusConfig, key_exprs: &[String]) -> Result<Self> {
+    async fn init(
+        session: &Session,
+        config: EventBusConfig,
+        key_exprs: &[String],
+        key_filtered: bool,
+    ) -> Result<Self> {
         let ch_cap = config.event_channel_capacity;
         let num_shards = config.num_processing_shards;
 
@@ -134,6 +151,7 @@ impl EventSubscriber {
                 sample_rx,
                 event_tx,
                 cancel.clone(),
+                key_filtered,
                 #[cfg(feature = "store")]
                 if config.offload.enabled { Some(fwd_control.clone()) } else { None },
                 #[cfg(feature = "store")]
@@ -143,6 +161,7 @@ impl EventSubscriber {
         } else {
             let mut worker_tasks = pipeline::spawn_multi_shard_workers(
                 session, &config, sample_rx, event_tx, cancel.clone(),
+                key_filtered,
                 #[cfg(feature = "store")]
                 if config.offload.enabled { Some(fwd_control.clone()) } else { None },
                 #[cfg(feature = "store")]
