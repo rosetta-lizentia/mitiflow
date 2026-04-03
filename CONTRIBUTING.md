@@ -77,7 +77,7 @@ async fn test_something() {
 - Each test uses a unique `test_name` to scope key prefixes and prevent cross-test interference
 - Use `common::setup_pubsub()` for standard pub/sub, `common::temp_dir()` for store tests
 - Always drop publisher/subscriber before `session.close().await`
-- Tests requiring storage use `#[cfg(feature = "store")]`; partition tests use `#[cfg(feature = "partition")]`
+- Tests requiring storage use `#[cfg(feature = "store")]`; tests requiring the fjall backend use `#[cfg(feature = "fjall-backend")]`
 - Never use `#[tokio::test(flavor = "current_thread")]` — Zenoh requires multi-thread
 
 ## Submitting Changes

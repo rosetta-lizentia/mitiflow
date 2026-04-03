@@ -155,6 +155,8 @@ fn bench_store_query_replay(c: &mut Criterion) {
         }),
         before_hlc: None,
         limit: Some(100),
+        key: None,
+        key_prefix: None,
     };
 
     c.bench_function("store_query/replay_10k", |b| {

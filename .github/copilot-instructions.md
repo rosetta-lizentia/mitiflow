@@ -4,14 +4,19 @@ Mitiflow is a brokerless event streaming platform built on Zenoh, providing Kafk
 
 ## Architecture
 
-Four crates in a Cargo workspace:
+Seven crates in a Cargo workspace (plus a standalone Svelte UI):
 
 | Crate | Purpose |
-|-------|---------|
+|-------|--------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
-| `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, store lifecycle |
-| `mitiflow-gateway` | Kafka protocol gateway (stub, not yet implemented) |
+| `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API |
+| `mitiflow-agent` | Storage agent — distributed partition management, multi-topic |
+| `mitiflow-cli` | Unified CLI binary — `agent`, `orchestrator`, `ctl`, `dev` subcommands |
+| `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks vs Kafka, NATS, Redis, Redpanda |
+| `mitiflow-gateway` | Kafka protocol gateway (stub, not yet implemented) |
+
+`mitiflow-ui` is a standalone Svelte 5 dashboard (not in the Cargo workspace).
 
 **Core abstractions:** `EventPublisher` → Zenoh pub/sub → `EventSubscriber`, with `EventStore` (fjall LSM) for durability and `PartitionManager` (rendezvous hashing) for consumer groups.
 
@@ -29,15 +34,15 @@ cargo bench -p mitiflow                      # Criterion micro-benchmarks
 ```
 
 **Feature flags** (in `mitiflow` crate):
-- `store` (default) — EventStore + fjall backend
+- `store` (default) — EventStore + storage backend trait
+- `fjall-backend` — Concrete fjall LSM-tree backend (implies `store`)
 - `wal` — Write-ahead log for durable publisher
-- `partition` — PartitionManager + rendezvous hashing
 - `full` — All of the above
 
 ## Code Conventions
 
 ### Rust Patterns
-- **Edition 2024**, Rust 1.85+
+- **Edition 2024**, Rust 1.93+
 - **Builder pattern** for configuration: `EventBusConfig::builder("key/prefix").cache_size(100).build()?`
 - **Error handling:** `thiserror`-derived non-exhaustive `Error` enum; use the crate-level `Result<T>` alias
 - **Async runtime:** Tokio multi-thread (required by Zenoh). Never use `flavor = "current_thread"` in tests
@@ -76,7 +81,7 @@ async fn test_something() {
 - Each test uses a unique `test_name` → scoped key prefix prevents cross-test interference
 - Use `common::setup_pubsub()` for standard pub/sub setup, `common::temp_dir()` for store tests
 - Always drop publisher/subscriber before `session.close().await`
-- Tests requiring storage use `#[cfg(feature = "store")]`; partition tests use `#[cfg(feature = "partition")]`
+- Tests requiring storage use `#[cfg(feature = "store")]`; tests requiring the fjall backend use `#[cfg(feature = "fjall-backend")]`
 
 ## Key Files
 
@@ -87,10 +92,16 @@ async fn test_something() {
 | Configuration | `mitiflow/src/config.rs` |
 | Publisher | `mitiflow/src/publisher/mod.rs` |
 | Subscriber + gap detection | `mitiflow/src/subscriber/mod.rs`, `subscriber/gap_detector.rs` |
+| Slow consumer offload | `mitiflow/src/subscriber/offload.rs` |
+| Keyed consumer | `mitiflow/src/subscriber/keyed_consumer.rs` |
+| Sequence checkpoint | `mitiflow/src/subscriber/checkpoint.rs` |
 | Storage backend trait | `mitiflow/src/store/backend.rs` |
 | Partition assignment | `mitiflow/src/partition/mod.rs`, `partition/hash_ring.rs` |
 | Consumer group subscriber | `mitiflow/src/subscriber/consumer_group.rs` |
 | Test helpers | `mitiflow/tests/common/mod.rs` |
+| Storage agent | `mitiflow-agent/src/agent.rs`, `topic_supervisor.rs` |
 | Orchestrator | `mitiflow-orchestrator/src/orchestrator.rs` |
+| Unified CLI | `mitiflow-cli/src/main.rs` |
+| Emulator | `mitiflow-emulator/src/` |
 | Key-based publishing design | `docs/15_key_based_publishing.md` |
 | Implementation roadmap | `docs/implementation_plan.md` |

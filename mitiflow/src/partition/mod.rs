@@ -1,7 +1,5 @@
 //! Partitioned consumer groups via rendezvous hashing + liveliness-driven rebalancing.
 //!
-//! This module is gated behind the `partition` feature flag.
-//!
 //! # Overview
 //!
 //! The [`PartitionManager`] distributes partitions across workers using
