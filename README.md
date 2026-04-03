@@ -21,6 +21,22 @@ coordinator.
 
 ## Architecture
 
+Mitiflow is **truly brokerless** — there is no central process that routes
+messages. Events flow directly from publishers to subscribers over Zenoh's
+peer-to-peer mesh. The components that *do* exist serve different roles than a
+traditional message broker:
+
+- **Event store** — a **sidecar storage layer**, not a message router. It
+  persists events for durability, replay, and gap recovery. Publishers and
+  subscribers communicate directly; the store is only consulted when a
+  subscriber needs to recover missed events or replay history.
+- **Orchestrator** — an **optional operations tool**. It provides config CRUD,
+  lag monitoring, and an HTTP admin API. The system is fully functional without
+  it — it makes things easier to operate, but never makes them possible.
+- **Storage agent** — manages partition-to-node assignment and recovery using
+  decentralized Zenoh primitives (liveliness, rendezvous hashing). It does not
+  participate in the message path.
+
 ```
 ┌─────────────┐    Zenoh pub/sub    ┌──────────────────────────┐
 │  Publisher  │ ──────────────────► │       Subscriber         │
@@ -38,15 +54,15 @@ coordinator.
        ▼                                         ▼
 ┌──────────────────────────────────────────────────┐
 │              EventStore (fjall LSM)              │
-│              per-partition storage               │
+│          sidecar — durability & recovery         │
 └──────────────────────────────────────────────────┘
 ```
 
 | Crate | Purpose |
 |-------|---------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
-| `mitiflow-agent` | Storage agent — distributed partition management |
-| `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API |
+| `mitiflow-agent` | Storage agent — distributed partition management (not on the message path) |
+| `mitiflow-orchestrator` | Optional control plane — config CRUD, lag monitoring, HTTP API (not required for operation) |
 | `mitiflow-cli` | Unified CLI binary (`mitiflow agent`, `orchestrator`, `ctl`, `dev`) |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks (Kafka, NATS, Redis, Redpanda) |
@@ -202,7 +218,7 @@ Design documents are in [`docs/`](docs/):
 |----------|-------|
 | [Architecture](docs/02_architecture.md) | System design, crate structure, metadata protocol |
 | [Durability](docs/03_durability.md) | Write-ahead log, watermarks, store confirmation |
-| [Ordering](docs/04_ordering.md) | Sequence model, HLC replay, brokerless constraints |
+| [Sequencing & Replay](docs/04_sequencing_and_replay.md) | Sequence model, HLC replay, brokerless constraints |
 | [Consumer Groups](docs/11_consumer_group_commits.md) | Offset commits, zombie fencing, auto-commit |
 | [Distributed Storage](docs/13_distributed_storage.md) | StorageAgent, reconciler, recovery |
 | [Key-Based Publishing](docs/15_key_based_publishing.md) | Key expressions, partition affinity, compaction |
@@ -210,11 +226,7 @@ Design documents are in [`docs/`](docs/):
 
 ## Roadmap
 
-See [docs/TODO.md](docs/TODO.md) for detailed status. Key remaining items:
-
-- **Kafka gateway** — Kafka wire protocol adapter (Phase 5, not yet implemented)
-- **Orchestrator HA** — leader election for multi-instance orchestrator
-- **Consumer group sessions** — JoinGroup/SyncGroup protocol (alternative to liveliness-based)
+See [docs/implementation_plan.md](docs/implementation_plan.md) for detailed status and [docs/ROADMAP.md](docs/ROADMAP.md) for planned features.
 
 ## License
 

@@ -80,8 +80,8 @@ seq. Events with seq ≤ committed are treated as duplicates.
 - Works with `GapDetector::with_checkpoints()` directly.
 - Provides exactly-once semantics without requiring idempotent consumers.
 - Cursor size is bounded by active publishers (dead publishers are cleaned up
-  via the publisher lifecycle — see [08_replay_ordering.md](08_replay_ordering.md)
-  § Part 6).
+  via the publisher lifecycle — see [04_sequencing_and_replay.md](04_sequencing_and_replay.md)
+  § Publisher Lifecycle).
 
 **Trade-offs accepted:**
 - Cursor grows with the number of publishers that have ever written to the
@@ -832,3 +832,45 @@ mitiflow-orchestrator/
     ├── admin.rs        # HTTP + Zenoh queryable admin API
     └── lifecycle.rs    # Store provisioning and health checks
 ```
+
+---
+
+## Part 10: E2E Test Plan
+
+Systematic test scenarios for consumer group commits, rebalance, and fencing.
+All tests use `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`
+with unique key prefixes, short timeouts, and `temp_dir()` for storage.
+
+### Category 1: Basic Offset Commit & Fetch
+
+| Test | What it verifies |
+|------|-----------------|
+| `commit_and_fetch_round_trip` | Single consumer commits, new consumer fetches and resumes correctly |
+| `commit_multiple_publishers` | Offsets for multiple publishers on same partition round-trip correctly |
+| `commit_across_partitions` | Consumer owning multiple partitions commits and recovers all |
+| `commit_sync_vs_async` | `commit_sync()` provides immediate confirmation; `commit_async()` propagates after delay |
+| `offset_reset_earliest_vs_latest` | `OffsetReset::Earliest` replays from beginning; `Latest` skips history |
+
+### Category 2: Rebalance & Offset Handoff
+
+| Test | What it verifies |
+|------|-----------------|
+| `rebalance_transfers_offsets` | Partition moves from C0→C1; C1 resumes from C0's last commit (no dupes) |
+| `rebalance_commit_before_release` | Leaving consumer commits final offsets for lost partitions before release |
+| `rapid_rebalance_three_consumers` | Third consumer joins mid-rebalance; cascading rebalance settles correctly |
+| `consumer_leaves_gracefully` | Clean shutdown commits final offsets; remaining member absorbs partitions |
+| `all_consumers_restart` | All crash simultaneously; new instances recover from stored offsets |
+
+### Category 3: Generation Fencing
+
+| Test | What it verifies |
+|------|-----------------|
+| `zombie_commit_rejected` | Stale consumer's commit (old generation) is rejected by store |
+| `generation_increments_on_every_rebalance` | Generation counter increments on each membership change |
+| `same_generation_commit_accepted` | Equal-generation commits pass the `>=` fencing check |
+| `zombie_detects_fencing_and_stops` | Fenced consumer receives `StaleFencedCommit` and stops processing |
+
+**Test implementation:** `mitiflow/tests/consumer_group_commit.rs` — 8 tests
+covering commit round-trip, multi-publisher, generation fencing, auto-commit,
+per-publisher independence, independent groups, sync vs async, and store crash
+recovery.

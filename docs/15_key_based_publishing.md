@@ -7,8 +7,8 @@ subscribers can filter by key natively.
 **Status:** Implemented — all four phases complete (core keyed publish, store key index, log compaction, subscriber convenience).
 
 **Related docs:**
-[04_ordering.md](04_ordering.md),
-[08_replay_ordering.md](08_replay_ordering.md),
+[04_sequencing_and_replay.md](04_sequencing_and_replay.md),
+[04_sequencing_and_replay.md](04_sequencing_and_replay.md),
 [02_architecture.md](02_architecture.md),
 [11_consumer_group_commits.md](11_consumer_group_commits.md)
 
@@ -76,13 +76,13 @@ filtering can match.
 ### The Ordering Question
 
 mitiflow uses **Approach C: Per-(Partition, Publisher) Sequences** from
-[04_ordering.md](04_ordering.md). This means:
+[04_sequencing_and_replay.md](04_sequencing_and_replay.md). This means:
 
 - Within a single publisher's stream for a single partition, events are
   **strictly ordered and contiguous**.
 - Across publishers, events in the same partition have **no total order** —
   only approximately-physical-time ordering via HLC (see
-  [08_replay_ordering.md](08_replay_ordering.md)).
+  [04_sequencing_and_replay.md](04_sequencing_and_replay.md)).
 
 Kafka, by contrast, provides **total order per partition** because the broker
 assigns a monotonic offset to every record regardless of producer.

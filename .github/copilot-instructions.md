@@ -22,7 +22,7 @@ Seven crates in a Cargo workspace (plus a standalone Svelte UI):
 
 **Metadata travels in Zenoh attachments** (50-byte binary header: seq, publisher_id, event_id, timestamp, urgency) — payload contains only serialized `T`. This enables zero-copy routing without deserializing the body.
 
-See [docs/02_architecture.md](docs/02_architecture.md) for detailed design, [docs/TODO.md](docs/TODO.md) for open work items.
+See [docs/02_architecture.md](docs/02_architecture.md) for detailed design, [docs/implementation_plan.md](docs/implementation_plan.md) for status, and [docs/ROADMAP.md](docs/ROADMAP.md) for planned features.
 
 ## Build & Test
 

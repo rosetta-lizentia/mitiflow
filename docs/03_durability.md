@@ -60,7 +60,7 @@ publishers subscribe and block until covered.
 Sequences are assigned **per (partition, publisher)** — each publisher maintains
 an independent monotonic counter for each partition it writes to. This ensures
 contiguous sequences within each stream without any coordination between
-publishers. See [04_ordering.md](04_ordering.md) for the design rationale.
+publishers. See [04_sequencing_and_replay.md](04_sequencing_and_replay.md) for the design rationale.
 
 ### Protocol
 
@@ -105,7 +105,7 @@ pub struct PublisherWatermark {
 ///
 /// Published periodically on `{key_prefix}/_watermark`.
 /// Only includes publishers in ACTIVE, SUSPECTED, or DRAINING lifecycle state.
-/// See [08_replay_ordering.md](08_replay_ordering.md) § Publisher Lifecycle.
+/// See [04_sequencing_and_replay.md](04_sequencing_and_replay.md) § Publisher Lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitWatermark {
     /// Per-publisher durability progress (only active/suspected/draining).

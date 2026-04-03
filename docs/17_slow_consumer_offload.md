@@ -113,7 +113,7 @@ records the last-delivered sequence per (publisher, partition) as the
 
 The consumer unsubscribes from Zenoh pub/sub and reads events from the Event
 Store via `session.get()` queries. Events are returned in deterministic order
-(HLC-sorted per the replay protocol in [08_replay_ordering.md](08_replay_ordering.md)).
+(HLC-sorted per the replay protocol in [04_sequencing_and_replay.md](04_sequencing_and_replay.md)).
 
 The consumer queries in batches, advancing its cursor after each batch.
 

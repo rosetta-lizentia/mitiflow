@@ -12,7 +12,7 @@ Modern distributed systems need event streaming with sequencing, durability, con
 
 **`mitiflow`** bridges this gap by layering production-grade event streaming patterns on top of Zenoh's stable core APIs (`put`, `subscribe`, `queryable`, `get`, `liveliness`).
 
-> **Status (2026-03):** All core features implemented. See [TODO.md](TODO.md) for remaining work.
+> **Status (2026-03):** All core features implemented. See [implementation_plan.md](implementation_plan.md) for status and [ROADMAP.md](ROADMAP.md) for planned features.
 
 ## What You Get
 
@@ -81,21 +81,19 @@ pub/sub fan-out as the replication transport.
 | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) | Zenoh stable API foundation + what mitiflow builds on top |
 | [02_architecture.md](02_architecture.md) | Crate design, core types, feature flags |
 | [03_durability.md](03_durability.md) | Durability strategies, watermark protocol, quorum confirmation |
-| [04_ordering.md](04_ordering.md) | Sequence ordering: per-(partition, publisher) design rationale |
+| [04_sequencing_and_replay.md](04_sequencing_and_replay.md) | Sequence ordering, HLC replay, brokerless constraints |
 | [05_replication.md](05_replication.md) | Pub/sub-based storage replication without Raft |
 | [06_comparison.md](06_comparison.md) | Detailed comparison with Kafka, RabbitMQ, NATS, Pulsar, Redis Streams |
-| [07_kafka_compatibility.md](07_kafka_compatibility.md) | Kafka wire protocol gateway design (stub, not yet implemented) |
-| [08_replay_ordering.md](08_replay_ordering.md) | HLC-based deterministic replay ordering and publisher lifecycle management |
 | [09_cache_recovery_design.md](09_cache_recovery_design.md) | Tiered recovery: ZBytes publisher cache + EventStore fallback |
 | [10_graceful_termination.md](10_graceful_termination.md) | Explicit `shutdown(self)` for publisher, subscriber, and store |
 | [11_consumer_group_commits.md](11_consumer_group_commits.md) | Consumer group offset commits, generation fencing |
-| [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md) | E2E test plan for consumer group edge cases |
+
 | [13_distributed_storage.md](13_distributed_storage.md) | Two-tier distributed storage: StorageAgent + Orchestrator |
-| [14_emulator.md](14_emulator.md) | YAML-driven topology runner & chaos testbed |
+
 | [15_key_based_publishing.md](15_key_based_publishing.md) | Key-based publishing: partition affinity, key filtering, compaction |
 | [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) | Multi-topic agent, unified CLI, developer experience |
 | [17_slow_consumer_offload.md](17_slow_consumer_offload.md) | Automatic pub/sub → store-query demotion for slow consumers |
-| [18_gui_design.md](18_gui_design.md) | Embedded web UI design (Svelte 5, partially implemented) |
+| [ROADMAP.md](ROADMAP.md) | Kafka gateway, key-scoped subscribing, and other planned features |
 
 ## Quick Start
 

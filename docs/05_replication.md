@@ -153,7 +153,7 @@ mitiflow doesn't need either:
 
 ### No Leader Election Needed
 
-With per-(partition, publisher) sequences (see [04_ordering.md](04_ordering.md)), **there is no total order to agree on**. Each publisher independently
+With per-(partition, publisher) sequences (see [04_sequencing_and_replay.md](04_sequencing_and_replay.md)), **there is no total order to agree on**. Each publisher independently
 assigns its own sequences. The store doesn't assign offsets — it just persists
 what arrives. There is no "which write comes first?" question that requires a
 leader to answer.

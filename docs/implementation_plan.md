@@ -4,7 +4,7 @@ Detailed implementation plan for the `mitiflow` crate, with test validation and 
 
 > **Status (2025-06):** Phases 1–4 and 3.5 are fully implemented. Phase 5 (Kafka Gateway) remains a stub. Benchmarks are in `mitiflow-bench/`.
 
-> **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_ordering.md](04_ordering.md) for sequence design, [07_kafka_compatibility.md](07_kafka_compatibility.md) for the gateway design, [08_replay_ordering.md](08_replay_ordering.md) for HLC replay, [09_cache_recovery_design.md](09_cache_recovery_design.md) for tiered recovery, [10_graceful_termination.md](10_graceful_termination.md) for shutdown protocol, and [11_consumer_group_commits.md](11_consumer_group_commits.md) for consumer group offset commits.
+> **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_sequencing_and_replay.md](04_sequencing_and_replay.md) for sequence design and HLC replay, [09_cache_recovery_design.md](09_cache_recovery_design.md) for tiered recovery, [10_graceful_termination.md](10_graceful_termination.md) for shutdown protocol, [11_consumer_group_commits.md](11_consumer_group_commits.md) for consumer group offset commits, and [ROADMAP.md](ROADMAP.md) for the Kafka gateway and other planned features.
 
 ---
 
@@ -95,7 +95,7 @@ Core publisher combining sequencing, caching, and heartbeat. Implements the patt
 | Component | Responsibility | Reference |
 |-----------|---------------|-----------|
 | `Publisher` (Zenoh) | Core `put()` with `CongestionControl::Block` | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.1 |
-| `HashMap<u32, AtomicU64>` partition_seqs | Per-partition monotonic sequence counter (see [04_ordering.md](04_ordering.md) Approach C) | — |
+| `HashMap<u32, AtomicU64>` partition_seqs | Per-partition monotonic sequence counter (see [04_sequencing_and_replay.md](04_sequencing_and_replay.md) § Approach C) | — |
 | `VecDeque<CachedSample>` | Bounded in-memory cache for recovery | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.3 |
 | `Queryable` (cache) | Answers `session.get()` from subscribers on gap | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.3 |
 | Heartbeat loop | Periodic sequence beacon for stale connection detection | [01_zenoh_capabilities.md](01_zenoh_capabilities.md) § 2.4 |
@@ -117,7 +117,7 @@ EventPublisher::new() spawns:
 
 > **Current state:** Per-partition `scc::HashMap<u32, AtomicU64>` counters are
 > implemented. Each publisher maintains independent monotonic sequences per
-> partition, consistent with Approach C from [04_ordering.md](04_ordering.md).
+> partition, consistent with Approach C from [04_sequencing_and_replay.md](04_sequencing_and_replay.md).
 
 #### 2.1.5 EventSubscriber — `src/subscriber/mod.rs`
 
@@ -209,7 +209,7 @@ pub struct PublisherWatermark {
 }
 ```
 
-Watermarks are tracked per publisher — see [03_durability.md](03_durability.md) and [04_ordering.md](04_ordering.md) for the design rationale.
+Watermarks are tracked per publisher — see [03_durability.md](03_durability.md) and [04_sequencing_and_replay.md](04_sequencing_and_replay.md) for the design rationale.
 
 **Broadcast loop** (runs inside EventStore):
 1. Every `watermark_interval` (default 100ms), compute `CommitWatermark` from backend state
@@ -314,7 +314,7 @@ On membership change (worker join or leave detected via liveliness):
 5. Update Zenoh subscriber key expression to match new assignment
 ```
 
-**Cooperative rebalance:** Only affected partitions pause — other partitions continue processing. This is an improvement over Kafka's "stop the world" rebalance (see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 6).
+**Cooperative rebalance:** Only affected partitions pause — other partitions continue processing. This is an improvement over Kafka's "stop the world" rebalance (see [ROADMAP.md](ROADMAP.md) § Kafka Gateway).
 
 ---
 
@@ -323,7 +323,7 @@ On membership change (worker join or leave detected via liveliness):
 > Store-managed offset commits with generation fencing.
 >
 > **Foundation:** Full design in [11_consumer_group_commits.md](11_consumer_group_commits.md).
-> E2E test plan in [12_consumer_group_e2e_tests.md](12_consumer_group_e2e_tests.md).
+> E2E test plan in [11_consumer_group_commits.md](11_consumer_group_commits.md) Part 10.
 
 #### 2.3.5.1 Offset Keyspace — `src/store/backend.rs` (extension)
 
@@ -409,7 +409,7 @@ DLQ events are stored as regular events in a separate key-space, queryable by th
 
 > Kafka wire protocol compatibility layer. **Not yet implemented.**
 >
-> **Foundation:** Full design in [07_kafka_compatibility.md](07_kafka_compatibility.md). This is a **separate binary crate** (`mitiflow-gateway`), not part of the core library.
+> **Foundation:** Full design in [ROADMAP.md](ROADMAP.md) § Kafka Gateway. This is a **separate binary crate** (`mitiflow-gateway`), not part of the core library.
 >
 > **Architectural note:** The gateway acts as a Kafka-compatible broker — it
 > serializes writes per partition to assign monotonic offsets, which is
@@ -417,12 +417,12 @@ DLQ events are stored as regular events in a separate key-space, queryable by th
 > mitiflow clients bypass the gateway entirely and benefit from the brokerless
 > per-(partition, publisher) model, while Kafka clients get the familiar
 > offset-based API through the gateway at the cost of a serialization point.
-> See [04_ordering.md](04_ordering.md) § "The Brokerless Constraint" for why
+> See [04_sequencing_and_replay.md](04_sequencing_and_replay.md) § "The Brokerless Constraint" for why
 > total partition order cannot be achieved without coordination.
 
 #### 2.5.1 Gateway Architecture
 
-As specified in [07_kafka_compatibility.md](07_kafka_compatibility.md) § 2:
+As specified in [ROADMAP.md](ROADMAP.md) § Kafka Gateway:
 
 ```
 mitiflow-gateway/
@@ -445,13 +445,13 @@ mitiflow-gateway/
 
 **Phase 5a: Read/Write (MVP)**
 - 6 API keys: Produce, Fetch, Metadata, OffsetCommit, OffsetFetch, ListOffsets
-- acks mapping: `acks=0` → fire-and-forget, `acks=1` → Block, `acks=all` → `publish_durable()` — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 4
-- Fetch: live stream via `EventSubscriber` + historical replay via Event Store queryable — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 5
+- acks mapping: `acks=0` → fire-and-forget, `acks=1` → Block, `acks=all` → `publish_durable()` — see [ROADMAP.md](ROADMAP.md) § Kafka Gateway
+- Fetch: live stream via `EventSubscriber` + historical replay via Event Store queryable — see [ROADMAP.md](ROADMAP.md) § Kafka Gateway
 - Validation: `rdkafka` Rust client smoke test
 
 **Phase 5b: Consumer Groups**
 - 5 API keys: FindCoordinator, JoinGroup, SyncGroup, Heartbeat, LeaveGroup
-- Maps to `PartitionManager` — see [07_kafka_compatibility.md](07_kafka_compatibility.md) § 6
+- Maps to `PartitionManager` — see [ROADMAP.md](ROADMAP.md) § Kafka Gateway
 - OffsetCommit/Fetch via `EventSubscriber::commit_sync()` / `load_offsets()` (see [11_consumer_group_commits.md](11_consumer_group_commits.md))
 - Validation: `kafka-console-consumer` with `--group`
 
@@ -691,11 +691,55 @@ Each phase is independently testable and shippable. Phase 1 is a usable MVP — 
 
 ---
 
-## 6. Resolved Questions
+## 6. Extended Features Status
+
+Features beyond the core library phases, tracked across the codebase.
+
+### Completed
+
+| Feature | Crate | Tests | Ref |
+|---------|-------|-------|-----|
+| Consumer Group Commits | `mitiflow` | 8 tests in `consumer_group_commit.rs` | [11_consumer_group_commits.md](11_consumer_group_commits.md) |
+| Orchestrator (config, lag, admin, HTTP API) | `mitiflow-orchestrator` | 28 + 15 + 7 tests | [11_consumer_group_commits.md](11_consumer_group_commits.md) |
+| Key-Based Publishing (phases 1–4) | `mitiflow` | `keyed_publish.rs`, `key_scoped.rs` | [15_key_based_publishing.md](15_key_based_publishing.md) |
+| Deterministic Replay (HLC + lifecycle) | `mitiflow` | Part of `store.rs` | [04_sequencing_and_replay.md](04_sequencing_and_replay.md) |
+| Distributed Storage (Tier 1 + Tier 2) | `mitiflow-agent` | 47+ tests across 10 test files | [13_distributed_storage.md](13_distributed_storage.md) |
+| Multi-Topic Agent & DX (phases A–F) | `mitiflow-agent`, `mitiflow-cli` | topic_supervisor, topic_watcher, yaml_config tests | [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) |
+| Slow Consumer Offload (core) | `mitiflow` | 14 unit + 6 E2E tests | [17_slow_consumer_offload.md](17_slow_consumer_offload.md) |
+| Graceful Termination | `mitiflow` | Integrated in existing tests | [10_graceful_termination.md](10_graceful_termination.md) |
+| Emulator (phases 1–3) | `mitiflow-emulator` | Topology runner tests | `mitiflow-emulator/DESIGN.md` |
+| GUI (phases 1–7) | `mitiflow-ui`, `mitiflow-orchestrator` | HTTP API + Vitest | `mitiflow-ui/DESIGN.md` |
+| Alert Manager | `mitiflow-orchestrator` | 8 unit tests | — |
+| Replication (multi-store + recovery) | `mitiflow-agent` | recovery.rs (5 tests) | [05_replication.md](05_replication.md) |
+
+### Open / Deferred
+
+| Item | Notes |
+|------|-------|
+| Kafka Gateway (phases 5a–5c) | Stub only. See [ROADMAP.md](ROADMAP.md). |
+| Key-Scoped Subscribing (Mode 2: store queries) | Design only. See [ROADMAP.md](ROADMAP.md). |
+| Orchestrator HA | Leader election via liveliness + lowest UUID |
+| Quorum watermark tracker | `QuorumTracker` collecting watermarks from N replicas |
+| Publisher quorum confirmation | `publish_durable()` waiting for quorum instead of single-store |
+| Durability levels (Single/Quorum/All) | Configurable per-publish |
+| OpenTelemetry integration | `tracing-opentelemetry` + `opentelemetry-prometheus` |
+| `mitiflow dev` subcommand | Co-locate orchestrator + agent + Zenoh router in one process |
+| Auto-drain on node failure | Automatic override generation when node goes offline |
+| Rebalance advisor | Load-aware override generation |
+| Topic data deletion command | Orchestrator triggers on-disk cleanup on agents |
+| Consumer group offload compatibility | Test offload with `ConsumerGroupSubscriber` |
+| Remove `history_on_subscribe` | Dead config field never acted upon |
+| `tests/watermark.rs` full suite | Currently partial in `store.rs` |
+| GUI E2E tests (Playwright) | Not yet written |
+| GUI CI (build + embed in release) | Not yet configured |
+
+---
+
+## 7. Resolved Questions
 
 | # | Question | Resolution |
 |---|----------|------------|
-| 1 | Should Phase 5 (Gateway) be deferred? | Yes — deferred. Phases 1–4 shipped first. |
+| 1 | Should Phase 5 (Gateway) be deferred? | Yes — see [ROADMAP.md](ROADMAP.md). |
 | 2 | Include NATS JetStream in benchmarks? | Yes — `mitiflow-bench` includes Kafka, NATS, Redis, Redpanda. |
 | 3 | PostgreSQL backend? | fjall-only for now. `StorageBackend` trait allows future backends. |
 | 4 | Minimum supported Zenoh version? | Zenoh 1.8 (current). |
