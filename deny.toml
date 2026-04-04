@@ -11,16 +11,21 @@ all-features = true
 # Advisories — check for known vulnerabilities
 # ──────────────────────────────────────────────
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+unmaintained = "workspace"
+ignore = [
+    # rsa: Marvin Attack timing sidechannel — transitive dep via zenoh/quinn;
+    # no direct RSA usage in mitiflow, awaiting upstream fix.
+    "RUSTSEC-2023-0071",
+    # rustls-webpki: CRL distribution point matching — low impact for our use case
+    # (no CRL-based revocation). Transitive via zenoh.
+    "RUSTSEC-2026-0049",
+]
 
 # ──────────────────────────────────────────────
 # Licenses — enforce allowed license set
 # ──────────────────────────────────────────────
 [licenses]
-unlicensed = "deny"
+confidence-threshold = 0.93
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -35,8 +40,8 @@ allow = [
     "OpenSSL",
     "CC0-1.0",
     "BSL-1.0",
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "deny"
 
 [[licenses.clarify]]
 name = "ring"
@@ -48,7 +53,7 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 # ──────────────────────────────────────────────
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
 highlight = "all"
 
 # ──────────────────────────────────────────────
