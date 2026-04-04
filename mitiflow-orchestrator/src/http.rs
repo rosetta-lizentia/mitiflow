@@ -448,7 +448,9 @@ async fn sse_lag(
     let rx = state.lag_events_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
         Ok(report) => {
-            if let Some(ref group) = params.group && &report.group_id != group {
+            if let Some(ref group) = params.group
+                && &report.group_id != group
+            {
                 return None;
             }
             serde_json::to_string(&report)
@@ -468,7 +470,9 @@ async fn sse_events(
     let rx = state.event_tail_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
         Ok(summary) => {
-            if let Some(p) = params.partition && summary.partition != p {
+            if let Some(p) = params.partition
+                && summary.partition != p
+            {
                 return None;
             }
             serde_json::to_string(&summary)
@@ -687,13 +691,17 @@ async fn create_topic(
     // Publish config via Zenoh so agents discover it
     if let Some(ref session) = state.session {
         let key = format!("{}/_config/{}", state.key_prefix, cfg.name);
-        if let Ok(bytes) = serde_json::to_vec(&cfg) && let Err(e) = session.put(&key, bytes).await {
+        if let Ok(bytes) = serde_json::to_vec(&cfg)
+            && let Err(e) = session.put(&key, bytes).await
+        {
             warn!(topic = %cfg.name, "failed to publish topic config: {e}");
         }
     }
 
     // Create per-topic cluster view
-    if let Some(ref tm) = state.topic_manager && !cfg.key_prefix.is_empty() {
+    if let Some(ref tm) = state.topic_manager
+        && !cfg.key_prefix.is_empty()
+    {
         let mut tm = tm.write().await;
         if let Err(e) = tm.add_topic(&cfg.name, &cfg.key_prefix).await {
             warn!(topic = %cfg.name, "failed to create per-topic cluster view: {e}");
@@ -985,7 +993,9 @@ async fn query_events(
                 let key = mitiflow::attachment::extract_key(&key_expr_str).map(String::from);
 
                 // Optionally filter by application key
-                if let Some(ref filter_key) = params.key && key.as_deref() != Some(filter_key.as_str()) {
+                if let Some(ref filter_key) = params.key
+                    && key.as_deref() != Some(filter_key.as_str())
+                {
                     continue;
                 }
 

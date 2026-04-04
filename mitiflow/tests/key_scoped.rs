@@ -183,9 +183,7 @@ async fn key_filtered_heartbeat_no_recovery() {
 
     // Should receive exactly 2 "target" events — no recovered non-target events.
     let mut count = 0;
-    while let Ok(Ok(raw)) =
-        tokio::time::timeout(Duration::from_millis(500), sub.recv_raw()).await
-    {
+    while let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), sub.recv_raw()).await {
         assert_eq!(
             raw.key(),
             Some("target"),
@@ -346,8 +344,7 @@ async fn key_prefix_many_subkeys() {
     }
 
     let mut count = 0;
-    while let Ok(Ok(raw)) =
-        tokio::time::timeout(Duration::from_millis(1000), sub.recv_raw()).await
+    while let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(1000), sub.recv_raw()).await
     {
         assert!(
             raw.key().unwrap().starts_with("org/acme"),

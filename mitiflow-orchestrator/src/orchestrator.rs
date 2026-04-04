@@ -377,16 +377,22 @@ impl Orchestrator {
         for handle in self.tasks.drain(..) {
             let _ = handle.await;
         }
-        if let Some(lag) = self.lag_monitor.take() && let Ok(lag) = Arc::try_unwrap(lag) {
+        if let Some(lag) = self.lag_monitor.take()
+            && let Ok(lag) = Arc::try_unwrap(lag)
+        {
             lag.shutdown().await;
         }
         if let Some(tracker) = self.store_tracker.take() {
             tracker.shutdown().await;
         }
-        if let Some(cv) = self.cluster_view.take() && let Ok(cv) = Arc::try_unwrap(cv) {
+        if let Some(cv) = self.cluster_view.take()
+            && let Ok(cv) = Arc::try_unwrap(cv)
+        {
             cv.shutdown().await;
         }
-        if let Some(tm) = self.topic_manager.take() && let Ok(tm) = Arc::try_unwrap(tm) {
+        if let Some(tm) = self.topic_manager.take()
+            && let Ok(tm) = Arc::try_unwrap(tm)
+        {
             tm.into_inner().shutdown().await;
         }
         info!("orchestrator shut down");
