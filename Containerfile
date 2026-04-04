@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Production Containerfile for Mitiflow (Agent & Orchestrator)
 # Multi-stage build with cargo-chef for optimal layer caching
 #
@@ -12,11 +13,18 @@ ARG PACKAGE=mitiflow-agent
 # ============================================
 FROM docker.io/library/rust:1.94-slim-bookworm AS chef
 
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    apt-get update && apt-get install -y \
     libssl-dev \
     pkg-config \
-    && rm -rf /var/lib/apt/lists/* \
-    && cargo install cargo-chef
+    && cargo install cargo-chef --locked \
+    && cargo install sccache --locked
+
+ENV SCCACHE_DIR=/sccache \
+    RUSTC_WRAPPER=/usr/local/cargo/bin/sccache
 
 WORKDIR /app
 
@@ -43,7 +51,11 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS deps
 
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    --mount=type=cache,target=/sccache,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
 
 # ============================================
 # Stage 4a: UI Builder (Node.js, only for orchestrator)
@@ -60,14 +72,18 @@ WORKDIR /app
 
 COPY mitiflow-ui/package.json mitiflow-ui/pnpm-lock.yaml ./mitiflow-ui/
 
-RUN if [ "$BUILD_UI" = "true" ]; then \
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
+    if [ "$BUILD_UI" = "true" ]; then \
+      pnpm config set store-dir /pnpm/store && \
       cd mitiflow-ui && pnpm install --frozen-lockfile; \
     fi
 
 COPY mitiflow-ui ./mitiflow-ui
 
-RUN mkdir -p /app/mitiflow-ui/build && \
+RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
+    mkdir -p /app/mitiflow-ui/build && \
     if [ "$BUILD_UI" = "true" ]; then \
+      pnpm config set store-dir /pnpm/store && \
       cd mitiflow-ui && pnpm build; \
     fi
 
@@ -93,11 +109,19 @@ COPY mitiflow-orchestrator ./mitiflow-orchestrator
 COPY --from=ui-builder /app/mitiflow-ui/build ./mitiflow-ui/build
 
 # Build the specified package (dependencies already cached)
-RUN if [ "$BUILD_UI" = "true" ]; then \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    --mount=type=cache,target=/sccache,sharing=locked \
+    if [ "$BUILD_UI" = "true" ]; then \
       cargo build --release --package ${PACKAGE} --features ui; \
     else \
       cargo build --release --package ${PACKAGE}; \
     fi
+
+# Copy binary from cache mount to a persistent location in the image layer
+RUN --mount=type=cache,target=/app/target,sharing=locked \
+    cp /app/target/release/${PACKAGE} /app/${PACKAGE}
 
 # ============================================
 # Stage 5: Runtime
@@ -109,12 +133,13 @@ ARG PACKAGE
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     curl \
-    tini \
-    && rm -rf /var/lib/apt/lists/*
+    tini
 
 # Create non-root user
 RUN useradd -m -u 1000 -s /bin/bash appuser
@@ -123,9 +148,8 @@ RUN useradd -m -u 1000 -s /bin/bash appuser
 RUN mkdir -p /app/orchestrator_data && chown -R appuser:appuser /app
 
 # Copy built binary from builder stage
-RUN --mount=from=builder,source=/app/target/release,target=/build \
-    cp /build/${PACKAGE} /usr/local/bin/app; \
-    chown appuser:appuser /usr/local/bin/app
+COPY --from=builder /app/${PACKAGE} /usr/local/bin/app
+RUN chown appuser:appuser /usr/local/bin/app
 
 USER appuser
 

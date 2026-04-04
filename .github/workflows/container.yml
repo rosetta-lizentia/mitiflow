@@ -81,5 +81,9 @@ jobs:
           build-args: |
             PACKAGE=${{ matrix.package }}
             BUILD_UI=${{ matrix.build_ui }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: |
+            type=gha,scope=container-common
+            type=gha,scope=container-${{ matrix.image }}
+          cache-to: |
+            type=gha,mode=max,scope=container-common
+            type=gha,mode=max,scope=container-${{ matrix.image }}
