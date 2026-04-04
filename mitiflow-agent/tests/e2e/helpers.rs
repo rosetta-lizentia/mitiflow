@@ -253,9 +253,10 @@ impl TestCluster {
         {
             while let Ok(reply) = replies.recv_async().await {
                 if let Ok(sample) = reply.result()
-                    && sample.attachment().is_some() {
-                        count += 1;
-                    }
+                    && sample.attachment().is_some()
+                {
+                    count += 1;
+                }
             }
         }
 
@@ -278,9 +279,10 @@ impl TestCluster {
             while let Ok(reply) = replies.recv_async().await {
                 if let Ok(sample) = reply.result()
                     && let Some(attachment) = sample.attachment()
-                        && let Ok(meta) = decode_metadata(attachment) {
-                            seqs.push(meta.seq);
-                        }
+                    && let Ok(meta) = decode_metadata(attachment)
+                {
+                    seqs.push(meta.seq);
+                }
             }
         }
 

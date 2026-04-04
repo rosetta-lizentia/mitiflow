@@ -132,34 +132,36 @@ impl ChaosScheduler {
 
             ChaosAction::Pause => {
                 if let Some(target) = &def.target
-                    && let Some(handle) = lookup(target, def.instance) {
-                        if let Err(e) = handle.pause().await {
-                            error!("Chaos pause failed for {}: {}", target, e);
-                        }
+                    && let Some(handle) = lookup(target, def.instance)
+                {
+                    if let Err(e) = handle.pause().await {
+                        error!("Chaos pause failed for {}: {}", target, e);
+                    }
 
-                        // Resume after duration.
-                        if let Some(duration) = def.duration {
-                            let target = target.clone();
-                            let handle_ref = lookup(&target, def.instance);
-                            if let Some(h) = handle_ref {
-                                let dur = duration;
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(dur).await;
-                                    info!("Chaos: resuming {} after pause", target);
-                                    let _ = h.resume().await;
-                                });
-                            }
+                    // Resume after duration.
+                    if let Some(duration) = def.duration {
+                        let target = target.clone();
+                        let handle_ref = lookup(&target, def.instance);
+                        if let Some(h) = handle_ref {
+                            let dur = duration;
+                            tokio::spawn(async move {
+                                tokio::time::sleep(dur).await;
+                                info!("Chaos: resuming {} after pause", target);
+                                let _ = h.resume().await;
+                            });
                         }
                     }
+                }
             }
 
             ChaosAction::Restart => {
                 if let Some(target) = &def.target
                     && let Some(handle) = lookup(target, def.instance)
-                        && let Err(e) = handle.stop().await {
-                            warn!("Chaos restart stop failed for {}: {}", target, e);
-                        }
-                        // The supervisor should detect the exit and handle restart.
+                    && let Err(e) = handle.stop().await
+                {
+                    warn!("Chaos restart stop failed for {}: {}", target, e);
+                }
+                // The supervisor should detect the exit and handle restart.
             }
 
             ChaosAction::Slow => {
@@ -181,9 +183,10 @@ impl ChaosScheduler {
                     info!("Chaos: kill_random selected {}", target);
 
                     if let Some(handle) = lookup(target, None)
-                        && let Err(e) = handle.kill().await {
-                            error!("Chaos kill_random failed for {}: {}", target, e);
-                        }
+                        && let Err(e) = handle.kill().await
+                    {
+                        error!("Chaos kill_random failed for {}: {}", target, e);
+                    }
                 }
             }
         }

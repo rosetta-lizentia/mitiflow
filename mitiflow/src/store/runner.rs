@@ -213,10 +213,7 @@ impl BackendHandle {
             .map_err(|_| Error::StoreError("backend worker dropped reply".into()))?
     }
 
-    async fn commit_keyed_offset(
-        &self,
-        commit: super::offset::KeyedOffsetCommit,
-    ) -> Result<()> {
+    async fn commit_keyed_offset(&self, commit: super::offset::KeyedOffsetCommit) -> Result<()> {
         let (reply_tx, reply_rx) = flume::bounded(1);
         self.tx
             .send(BackendMsg::Request(BackendRequest::CommitKeyedOffset {
@@ -642,9 +639,10 @@ async fn run_watermark_task(
         };
 
         if let Ok(bytes) = serde_json::to_vec(&watermark)
-            && let Err(e) = session.put(&watermark_key, bytes).await {
-                warn!("watermark publish failed: {e}");
-            }
+            && let Err(e) = session.put(&watermark_key, bytes).await
+        {
+            warn!("watermark publish failed: {e}");
+        }
     }
     debug!("store watermark task stopped");
 }

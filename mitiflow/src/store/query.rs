@@ -166,7 +166,9 @@ impl ReplayFilters {
 /// Parse an HLC timestamp from `"{physical_ns}:{logical}"` format.
 fn parse_hlc(s: &str) -> Result<HlcTimestamp> {
     let (phys_str, log_str) = s.split_once(':').ok_or_else(|| {
-        Error::InvalidConfig(format!("invalid HLC format (expected physical:logical): {s}"))
+        Error::InvalidConfig(format!(
+            "invalid HLC format (expected physical:logical): {s}"
+        ))
     })?;
     let physical_ns = phys_str
         .parse::<u64>()
@@ -214,8 +216,7 @@ mod tests {
 
     #[test]
     fn replay_filters_from_selector_with_key() {
-        let f =
-            ReplayFilters::from_selector("key=order-123&after_hlc=1000:0&limit=50").unwrap();
+        let f = ReplayFilters::from_selector("key=order-123&after_hlc=1000:0&limit=50").unwrap();
         assert_eq!(f.key, Some("order-123".to_string()));
         assert_eq!(
             f.after_hlc,
@@ -240,8 +241,7 @@ mod tests {
 
     #[test]
     fn replay_filters_from_selector_hlc_format() {
-        let f =
-            ReplayFilters::from_selector("after_hlc=1711843200000000000:5").unwrap();
+        let f = ReplayFilters::from_selector("after_hlc=1711843200000000000:5").unwrap();
         let hlc = f.after_hlc.unwrap();
         assert_eq!(hlc.physical_ns, 1711843200000000000);
         assert_eq!(hlc.logical, 5);
@@ -249,10 +249,7 @@ mod tests {
 
     #[test]
     fn replay_filters_from_selector_before_hlc() {
-        let f = ReplayFilters::from_selector(
-            "after_hlc=100:0&before_hlc=200:3",
-        )
-        .unwrap();
+        let f = ReplayFilters::from_selector("after_hlc=100:0&before_hlc=200:3").unwrap();
         assert_eq!(
             f.after_hlc,
             Some(HlcTimestamp {

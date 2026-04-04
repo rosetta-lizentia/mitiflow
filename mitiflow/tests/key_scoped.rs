@@ -137,7 +137,10 @@ async fn key_prefix_filtered_no_false_gaps() {
 
     // No extra events.
     let extra = tokio::time::timeout(Duration::from_millis(500), sub.recv_raw()).await;
-    assert!(extra.is_err(), "should not receive non-matching prefix events");
+    assert!(
+        extra.is_err(),
+        "should not receive non-matching prefix events"
+    );
 
     drop(sub);
     drop(publisher);
@@ -180,18 +183,15 @@ async fn key_filtered_heartbeat_no_recovery() {
 
     // Should receive exactly 2 "target" events — no recovered non-target events.
     let mut count = 0;
-    loop {
-        match tokio::time::timeout(Duration::from_millis(500), sub.recv_raw()).await {
-            Ok(Ok(raw)) => {
-                assert_eq!(
-                    raw.key(),
-                    Some("target"),
-                    "key-filtered subscriber should only deliver target events"
-                );
-                count += 1;
-            }
-            _ => break,
-        }
+    while let Ok(Ok(raw)) =
+        tokio::time::timeout(Duration::from_millis(500), sub.recv_raw()).await
+    {
+        assert_eq!(
+            raw.key(),
+            Some("target"),
+            "key-filtered subscriber should only deliver target events"
+        );
+        count += 1;
     }
     assert_eq!(count, 2, "should receive exactly 2 target events");
 
@@ -210,7 +210,9 @@ async fn key_filtered_and_unfiltered_coexist() {
     let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
 
     // Unfiltered subscriber (standard gap detection).
-    let all_sub = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let all_sub = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     // Key-filtered subscriber for "target".
     let key_sub = EventSubscriber::new_keyed(&session, config, "target")
         .await
@@ -344,18 +346,15 @@ async fn key_prefix_many_subkeys() {
     }
 
     let mut count = 0;
-    loop {
-        match tokio::time::timeout(Duration::from_millis(1000), sub.recv_raw()).await {
-            Ok(Ok(raw)) => {
-                assert!(
-                    raw.key().unwrap().starts_with("org/acme"),
-                    "should match prefix, got: {}",
-                    raw.key().unwrap()
-                );
-                count += 1;
-            }
-            _ => break,
-        }
+    while let Ok(Ok(raw)) =
+        tokio::time::timeout(Duration::from_millis(1000), sub.recv_raw()).await
+    {
+        assert!(
+            raw.key().unwrap().starts_with("org/acme"),
+            "should match prefix, got: {}",
+            raw.key().unwrap()
+        );
+        count += 1;
     }
     assert_eq!(count, 4, "should receive exactly 4 org/acme events");
 
@@ -521,18 +520,17 @@ mod keyed_consumer_tests {
     /// poll() returns events in HLC order for an exact key.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_poll_exact_key() {
-        let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_poll_exact",
-                &[
-                    ("order-A", 1),
-                    ("order-B", 2),
-                    ("order-A", 3),
-                    ("order-B", 4),
-                    ("order-A", 5),
-                ],
-            )
-            .await;
+        let (session, publisher, store, _backend, _tmp, config) = setup_store_with_keyed_events(
+            "kc_poll_exact",
+            &[
+                ("order-A", 1),
+                ("order-B", 2),
+                ("order-A", 3),
+                ("order-B", 4),
+                ("order-A", 5),
+            ],
+        )
+        .await;
 
         let mut consumer = KeyedConsumer::builder(&session, config)
             .key("order-A")
@@ -563,18 +561,17 @@ mod keyed_consumer_tests {
     /// poll() returns events for a key prefix.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_poll_key_prefix() {
-        let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_poll_prefix",
-                &[
-                    ("order-100", 1),
-                    ("user-42", 2),
-                    ("order-200", 3),
-                    ("user-43", 4),
-                    ("order-100", 5),
-                ],
-            )
-            .await;
+        let (session, publisher, store, _backend, _tmp, config) = setup_store_with_keyed_events(
+            "kc_poll_prefix",
+            &[
+                ("order-100", 1),
+                ("user-42", 2),
+                ("order-200", 3),
+                ("user-43", 4),
+                ("order-100", 5),
+            ],
+        )
+        .await;
 
         let mut consumer = KeyedConsumer::builder(&session, config)
             .key_prefix("order-")
@@ -599,11 +596,8 @@ mod keyed_consumer_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_cursor_advances() {
         let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_cursor",
-                &[("alpha", 1), ("beta", 2), ("alpha", 3)],
-            )
-            .await;
+            setup_store_with_keyed_events("kc_cursor", &[("alpha", 1), ("beta", 2), ("alpha", 3)])
+                .await;
 
         let mut consumer = KeyedConsumer::builder(&session, config.clone())
             .key("alpha")
@@ -641,11 +635,7 @@ mod keyed_consumer_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_empty_poll() {
         let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_empty",
-                &[("order-A", 1)],
-            )
-            .await;
+            setup_store_with_keyed_events("kc_empty", &[("order-A", 1)]).await;
 
         let mut consumer = KeyedConsumer::builder(&session, config)
             .key("non-existent-key")
@@ -667,11 +657,8 @@ mod keyed_consumer_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_seek() {
         let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_seek",
-                &[("alpha", 1), ("alpha", 2), ("alpha", 3)],
-            )
-            .await;
+            setup_store_with_keyed_events("kc_seek", &[("alpha", 1), ("alpha", 2), ("alpha", 3)])
+                .await;
 
         let mut consumer = KeyedConsumer::builder(&session, config)
             .key("alpha")
@@ -701,12 +688,11 @@ mod keyed_consumer_tests {
     /// commit() + fetch_offset() roundtrip: committed HLC is retrievable.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_commit_fetch_roundtrip() {
-        let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_commit_rt",
-                &[("alpha", 1), ("alpha", 2), ("alpha", 3)],
-            )
-            .await;
+        let (session, publisher, store, _backend, _tmp, config) = setup_store_with_keyed_events(
+            "kc_commit_rt",
+            &[("alpha", 1), ("alpha", 2), ("alpha", 3)],
+        )
+        .await;
 
         let mut consumer = KeyedConsumer::builder(&session, config)
             .key("alpha")
@@ -719,7 +705,10 @@ mod keyed_consumer_tests {
         let events = consumer.poll().await.unwrap();
         assert_eq!(events.len(), 3);
         let cursor_before = consumer.cursor();
-        assert!(cursor_before.physical_ns > 0, "cursor should be non-zero after poll");
+        assert!(
+            cursor_before.physical_ns > 0,
+            "cursor should be non-zero after poll"
+        );
 
         // Commit the current cursor.
         consumer.commit("test-group").await.unwrap();
@@ -749,17 +738,11 @@ mod keyed_consumer_tests {
     /// Different key filters maintain independent offsets within the same group.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_independent_offsets() {
-        let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_indep_off",
-                &[
-                    ("alpha", 1),
-                    ("beta", 2),
-                    ("alpha", 3),
-                    ("beta", 4),
-                ],
-            )
-            .await;
+        let (session, publisher, store, _backend, _tmp, config) = setup_store_with_keyed_events(
+            "kc_indep_off",
+            &[("alpha", 1), ("beta", 2), ("alpha", 3), ("beta", 4)],
+        )
+        .await;
 
         let mut alpha_consumer = KeyedConsumer::builder(&session, config.clone())
             .key("alpha")
@@ -789,7 +772,10 @@ mod keyed_consumer_tests {
         let alpha_offset = alpha_consumer.fetch_offset("shared-group").await.unwrap();
         let beta_offset = beta_consumer.fetch_offset("shared-group").await.unwrap();
         assert!(alpha_offset.is_some(), "alpha should have committed offset");
-        assert!(beta_offset.is_none(), "beta should NOT have committed offset");
+        assert!(
+            beta_offset.is_none(),
+            "beta should NOT have committed offset"
+        );
 
         // Now commit beta and verify both exist independently.
         beta_consumer.commit("shared-group").await.unwrap();
@@ -864,7 +850,11 @@ mod keyed_consumer_tests {
             .unwrap();
 
         let events = consumer.poll().await.unwrap();
-        assert_eq!(events.len(), 3, "should get 3 shared-key events across 2 publishers");
+        assert_eq!(
+            events.len(),
+            3,
+            "should get 3 shared-key events across 2 publishers"
+        );
 
         // Verify HLC ordering: physical_ns should be monotonically non-decreasing.
         let hlcs: Vec<u64> = events
@@ -878,7 +868,12 @@ mod keyed_consumer_tests {
         // Verify payload ordering matches publish order.
         let values: Vec<u64> = events
             .iter()
-            .map(|e| CodecFormat::default().decode::<TestPayload>(&e.payload).unwrap().value)
+            .map(|e| {
+                CodecFormat::default()
+                    .decode::<TestPayload>(&e.payload)
+                    .unwrap()
+                    .value
+            })
             .collect();
         assert_eq!(values, vec![10, 20, 30]);
 
@@ -936,7 +931,12 @@ mod keyed_consumer_tests {
             .iter()
             .chain(second.iter())
             .chain(third.iter())
-            .map(|e| CodecFormat::default().decode::<TestPayload>(&e.payload).unwrap().value)
+            .map(|e| {
+                CodecFormat::default()
+                    .decode::<TestPayload>(&e.payload)
+                    .unwrap()
+                    .value
+            })
             .collect();
         assert_eq!(all_values, vec![0, 1, 2, 3, 4, 5, 6]);
 
@@ -951,11 +951,8 @@ mod keyed_consumer_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn keyed_consumer_resume_from_committed_offset() {
         let (session, publisher, store, _backend, _tmp, config) =
-            setup_store_with_keyed_events(
-                "kc_resume",
-                &[("order", 1), ("order", 2), ("order", 3)],
-            )
-            .await;
+            setup_store_with_keyed_events("kc_resume", &[("order", 1), ("order", 2), ("order", 3)])
+                .await;
 
         // First consumer polls all events and commits.
         let mut consumer1 = KeyedConsumer::builder(&session, config.clone())
@@ -1103,7 +1100,12 @@ mod keyed_consumer_tests {
         let all: Vec<u64> = first
             .iter()
             .chain(second.iter())
-            .map(|e| CodecFormat::default().decode::<TestPayload>(&e.payload).unwrap().value)
+            .map(|e| {
+                CodecFormat::default()
+                    .decode::<TestPayload>(&e.payload)
+                    .unwrap()
+                    .value
+            })
             .collect();
         assert_eq!(all, vec![1, 3, 4, 6]);
 
@@ -1152,10 +1154,19 @@ mod keyed_consumer_tests {
             .unwrap();
 
         let events = consumer.poll().await.unwrap();
-        assert_eq!(events.len(), 3, "should get exactly 3 events for entity-025");
+        assert_eq!(
+            events.len(),
+            3,
+            "should get exactly 3 events for entity-025"
+        );
         let values: Vec<u64> = events
             .iter()
-            .map(|e| CodecFormat::default().decode::<TestPayload>(&e.payload).unwrap().value)
+            .map(|e| {
+                CodecFormat::default()
+                    .decode::<TestPayload>(&e.payload)
+                    .unwrap()
+                    .value
+            })
             .collect();
         // 2500+0, 2500+1, 2500+2
         assert_eq!(values, vec![2500, 2501, 2502]);

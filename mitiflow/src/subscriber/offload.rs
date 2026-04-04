@@ -219,13 +219,8 @@ impl CatchUpReader {
             let cursor_snapshot: Vec<((PublisherId, u32), u64)> =
                 self.cursors.iter().map(|(k, v)| (*k, *v)).collect();
             for ((pub_id, partition), after_seq) in &cursor_snapshot {
-                self.query_partition(
-                    *partition,
-                    Some(*pub_id),
-                    *after_seq,
-                    &mut all_events,
-                )
-                .await;
+                self.query_partition(*partition, Some(*pub_id), *after_seq, &mut all_events)
+                    .await;
             }
         }
 
@@ -273,10 +268,7 @@ impl CatchUpReader {
         while let Ok(reply) = replies.recv_async().await {
             match reply.result() {
                 Ok(sample) => {
-                    let meta = match sample
-                        .attachment()
-                        .and_then(|a| decode_metadata(a).ok())
-                    {
+                    let meta = match sample.attachment().and_then(|a| decode_metadata(a).ok()) {
                         Some(m) => m,
                         None => continue,
                     };
@@ -316,17 +308,17 @@ impl CatchUpReader {
 
     /// Adjust batch size based on how long the previous query took.
     pub fn adjust_batch_size(&mut self, batch_duration: Duration) {
-        adjust_batch_size_adaptive(
-            &mut self.batch_size,
-            batch_duration,
-            &self.config,
-        );
+        adjust_batch_size_adaptive(&mut self.batch_size, batch_duration, &self.config);
     }
 
     /// Check whether the consumer is close enough to the watermark to
     /// re-subscribe to live pub/sub.
     pub fn is_caught_up(&self, watermark_seqs: &HashMap<(PublisherId, u32), u64>) -> bool {
-        is_caught_up_check(&self.cursors, watermark_seqs, self.config.re_subscribe_threshold)
+        is_caught_up_check(
+            &self.cursors,
+            watermark_seqs,
+            self.config.re_subscribe_threshold,
+        )
     }
 
     /// Current batch size (for testing / metrics).
@@ -378,7 +370,7 @@ fn is_caught_up_check(
 
 /// Manages the LIVE → DRAINING → CATCHING_UP → LIVE lifecycle.
 ///
-/// During catch-up, forwarder tasks **drop** their Zenoh subscribers via 
+/// During catch-up, forwarder tasks **drop** their Zenoh subscribers via
 /// [`ForwarderHandle::pause()`], releasing transport resources so the
 /// publisher is never back-pressured.  When nearly caught up, forwarders
 /// are resumed (re-declaring subscribers) with an overlap window where
@@ -436,10 +428,15 @@ impl OffloadManager {
     }
 
     /// Update lag detector with current channel length and heartbeat info.
-    pub fn update_lag(&mut self, channel_len: usize, heartbeat_lag: Option<(PublisherId, u32, u64)>) {
+    pub fn update_lag(
+        &mut self,
+        channel_len: usize,
+        heartbeat_lag: Option<(PublisherId, u32, u64)>,
+    ) {
         self.lag_detector.update_channel_len(channel_len);
         if let Some((pub_id, partition, lag)) = heartbeat_lag {
-            self.lag_detector.update_heartbeat_lag(pub_id, partition, lag);
+            self.lag_detector
+                .update_heartbeat_lag(pub_id, partition, lag);
         }
     }
 

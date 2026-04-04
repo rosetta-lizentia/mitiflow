@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use mitiflow_orchestrator::orchestrator::{Orchestrator, OrchestratorConfig};
 
@@ -32,12 +32,7 @@ async fn free_port() -> u16 {
 /// Start an orchestrator with HTTP enabled on a random port. Returns (orchestrator, base_url).
 async fn start_orch_with_http(
     test_name: &str,
-) -> (
-    Orchestrator,
-    zenoh::Session,
-    String,
-    tempfile::TempDir,
-) {
+) -> (Orchestrator, zenoh::Session, String, tempfile::TempDir) {
     let port = free_port().await;
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -89,7 +84,11 @@ async fn e2e_http_topic_crud() {
         let client = reqwest::Client::new();
 
         // List topics: empty
-        let resp = client.get(format!("{url}/api/v1/topics")).send().await.unwrap();
+        let resp = client
+            .get(format!("{url}/api/v1/topics"))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200);
         let topics: Vec<Value> = resp.json().await.unwrap();
         assert!(topics.is_empty());
@@ -123,7 +122,11 @@ async fn e2e_http_topic_crud() {
         assert_eq!(topic["name"], "test-topic");
 
         // List topics: one
-        let resp = client.get(format!("{url}/api/v1/topics")).send().await.unwrap();
+        let resp = client
+            .get(format!("{url}/api/v1/topics"))
+            .send()
+            .await
+            .unwrap();
         let topics: Vec<Value> = resp.json().await.unwrap();
         assert_eq!(topics.len(), 1);
 
@@ -148,7 +151,11 @@ async fn e2e_http_topic_crud() {
         assert_eq!(resp.status(), 204);
 
         // List topics: empty again
-        let resp = client.get(format!("{url}/api/v1/topics")).send().await.unwrap();
+        let resp = client
+            .get(format!("{url}/api/v1/topics"))
+            .send()
+            .await
+            .unwrap();
         let topics: Vec<Value> = resp.json().await.unwrap();
         assert!(topics.is_empty());
 
@@ -310,7 +317,12 @@ async fn e2e_http_sse_cluster_stream() {
             .await
             .unwrap();
         assert_eq!(resp.status(), 200);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(ct.contains("text/event-stream"));
 
         // Drop SSE response/client before shutdown to close the connection,
@@ -335,7 +347,12 @@ async fn e2e_http_sse_events_stream() {
             .await
             .unwrap();
         assert_eq!(resp.status(), 200);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(ct.contains("text/event-stream"));
 
         drop(resp);

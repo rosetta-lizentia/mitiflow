@@ -61,7 +61,7 @@ async fn body_json(body: Body) -> Value {
 #[tokio::test]
 async fn http_health_returns_ok() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(Request::get("/api/v1/health").body(Body::empty()).unwrap())
@@ -78,7 +78,7 @@ async fn http_health_returns_ok() {
 #[tokio::test]
 async fn http_list_topics_empty() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(Request::get("/api/v1/topics").body(Body::empty()).unwrap())
@@ -127,7 +127,7 @@ async fn http_create_topic() {
 #[tokio::test]
 async fn http_create_topic_with_labels() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store.clone()),  None);
+    let app = build_router(make_state(store.clone()), None);
 
     let payload = json!({
         "name": "labeled",
@@ -162,7 +162,7 @@ async fn http_get_topic() {
     let (_dir, store) = test_store();
     store.put_topic(&sample_topic("sensors")).unwrap();
 
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
     let resp = app
         .oneshot(
             Request::get("/api/v1/topics/sensors")
@@ -181,7 +181,7 @@ async fn http_get_topic() {
 #[tokio::test]
 async fn http_get_topic_not_found() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(
@@ -223,7 +223,7 @@ async fn http_delete_topic() {
 #[tokio::test]
 async fn http_delete_topic_not_found() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(
@@ -244,7 +244,7 @@ async fn http_list_topics_returns_all() {
     store.put_topic(&sample_topic("beta")).unwrap();
     store.put_topic(&sample_topic("gamma")).unwrap();
 
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
     let resp = app
         .oneshot(Request::get("/api/v1/topics").body(Body::empty()).unwrap())
         .await
@@ -268,7 +268,7 @@ async fn http_list_topics_returns_all() {
 #[tokio::test]
 async fn http_cluster_nodes_empty() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(
@@ -287,7 +287,7 @@ async fn http_cluster_nodes_empty() {
 #[tokio::test]
 async fn http_cluster_status_no_nodes() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(
@@ -437,7 +437,7 @@ async fn http_cluster_nodes_with_data() {
 #[tokio::test]
 async fn http_create_topic_defaults() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store.clone()),  None);
+    let app = build_router(make_state(store.clone()), None);
 
     // Minimal payload — only name required
     let payload = json!({ "name": "minimal" });
@@ -462,7 +462,7 @@ async fn http_create_topic_defaults() {
 #[tokio::test]
 async fn http_create_topic_invalid_json() {
     let (_dir, store) = test_store();
-    let app = build_router(make_state(store),  None);
+    let app = build_router(make_state(store), None);
 
     let resp = app
         .oneshot(
@@ -690,11 +690,7 @@ async fn http_events_query_requires_topic() {
     let app = build_router(make_state(store), None);
 
     let resp = app
-        .oneshot(
-            Request::get("/api/v1/events")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/events").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -855,7 +851,12 @@ async fn http_sse_cluster_returns_event_stream() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("text/event-stream"));
 }
 
@@ -874,7 +875,12 @@ async fn http_sse_lag_returns_event_stream() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("text/event-stream"));
 }
 
@@ -893,7 +899,12 @@ async fn http_sse_events_returns_event_stream() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("text/event-stream"));
 }
 
@@ -904,7 +915,7 @@ async fn http_sse_events_returns_event_stream() {
 #[tokio::test]
 async fn http_sse_events_receives_broadcast() {
     use mitiflow_orchestrator::http::EventSummary;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     let (_dir, store) = test_store();
     let (cluster_tx, _) = tokio::sync::broadcast::channel(16);
@@ -955,8 +966,11 @@ async fn http_sse_events_receives_broadcast() {
         Ok(Ok(collected)) => {
             let bytes = collected.to_bytes();
             let text = String::from_utf8_lossy(&bytes);
-            assert!(text.contains("order-123") || text.contains("42"),
-                "SSE body should contain event data, got: {}", text);
+            assert!(
+                text.contains("order-123") || text.contains("42"),
+                "SSE body should contain event data, got: {}",
+                text
+            );
         }
         _ => {
             // Timeout is acceptable for SSE (it's a long-lived stream)
@@ -968,7 +982,7 @@ async fn http_sse_events_receives_broadcast() {
 #[tokio::test]
 async fn http_sse_cluster_receives_broadcast() {
     use mitiflow_orchestrator::http::ClusterEvent;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     let (_dir, store) = test_store();
     let (cluster_tx, _) = tokio::sync::broadcast::channel(16);
@@ -1013,8 +1027,11 @@ async fn http_sse_cluster_receives_broadcast() {
         Ok(Ok(collected)) => {
             let bytes = collected.to_bytes();
             let text = String::from_utf8_lossy(&bytes);
-            assert!(text.contains("node-x") || text.contains("node_online"),
-                "SSE body should contain cluster event data, got: {}", text);
+            assert!(
+                text.contains("node-x") || text.contains("node_online"),
+                "SSE body should contain cluster event data, got: {}",
+                text
+            );
         }
         _ => {
             // Timeout acceptable for SSE

@@ -179,11 +179,12 @@ fn expand_pattern(pattern: &str, rng: &mut dyn rand::Rng) -> String {
             }
             if found_close
                 && let Some((min_s, max_s)) = range_str.split_once('-')
-                    && let (Ok(min), Ok(max)) = (min_s.parse::<i64>(), max_s.parse::<i64>()) {
-                        let val = rng.random_range(min..=max);
-                        result.push_str(&val.to_string());
-                        continue;
-                    }
+                && let (Ok(min), Ok(max)) = (min_s.parse::<i64>(), max_s.parse::<i64>())
+            {
+                let val = rng.random_range(min..=max);
+                result.push_str(&val.to_string());
+                continue;
+            }
             // Fallback: not a valid range.
             result.push('{');
             result.push_str(&range_str);

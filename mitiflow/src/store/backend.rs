@@ -143,10 +143,7 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Persist a keyed offset commit (HLC cursor for a key filter).
-    fn commit_keyed_offset(
-        &self,
-        _commit: &crate::store::offset::KeyedOffsetCommit,
-    ) -> Result<()> {
+    fn commit_keyed_offset(&self, _commit: &crate::store::offset::KeyedOffsetCommit) -> Result<()> {
         Err(crate::error::Error::StoreError(
             "keyed offsets not supported by this backend".into(),
         ))
@@ -218,10 +215,7 @@ impl StorageBackend for std::sync::Arc<dyn StorageBackend> {
         (**self).fetch_offsets(group_id)
     }
 
-    fn commit_keyed_offset(
-        &self,
-        commit: &crate::store::offset::KeyedOffsetCommit,
-    ) -> Result<()> {
+    fn commit_keyed_offset(&self, commit: &crate::store::offset::KeyedOffsetCommit) -> Result<()> {
         (**self).commit_keyed_offset(commit)
     }
 
@@ -498,13 +492,14 @@ mod fjall_impl {
                     .get(key)
                     .map_err(|e| Error::StoreError(format!("offset read failed: {e}")))?
                     && let Some((_, stored_gen)) = Self::decode_offset_value(existing.as_ref())
-                        && commit.generation < stored_gen {
-                            return Err(Error::StaleFencedCommit {
-                                group: commit.group_id.clone(),
-                                commit_gen: commit.generation,
-                                stored_gen,
-                            });
-                        }
+                    && commit.generation < stored_gen
+                {
+                    return Err(Error::StaleFencedCommit {
+                        group: commit.group_id.clone(),
+                        commit_gen: commit.generation,
+                        stored_gen,
+                    });
+                }
 
                 let value = Self::encode_offset_value(*seq, commit.generation, commit.timestamp);
                 batch.insert(&self.offsets, key, value);
@@ -569,7 +564,13 @@ mod fjall_impl {
             let physical_ns = u64::from_be_bytes(value[..8].try_into().ok()?);
             let logical = u32::from_be_bytes(value[8..12].try_into().ok()?);
             let generation = u64::from_be_bytes(value[12..20].try_into().ok()?);
-            Some((HlcTimestamp { physical_ns, logical }, generation))
+            Some((
+                HlcTimestamp {
+                    physical_ns,
+                    logical,
+                },
+                generation,
+            ))
         }
 
         /// Persist an HLC-based keyed offset commit. Only accepts if generation >= stored generation.
@@ -585,7 +586,7 @@ mod fjall_impl {
                 .get(key)
                 .map_err(|e| Error::StoreError(format!("keyed offset read failed: {e}")))?
                 && let Some((_, stored_gen)) = Self::decode_keyed_offset_value(existing.as_ref())
-                    && commit.generation < stored_gen
+                && commit.generation < stored_gen
             {
                 return Err(Error::StaleFencedCommit {
                     group: commit.group_id.clone(),
@@ -594,8 +595,11 @@ mod fjall_impl {
                 });
             }
 
-            let value =
-                Self::encode_keyed_offset_value(&commit.last_hlc, commit.generation, commit.timestamp);
+            let value = Self::encode_keyed_offset_value(
+                &commit.last_hlc,
+                commit.generation,
+                commit.timestamp,
+            );
             self.offsets
                 .insert(key, value)
                 .map_err(|e| Error::StoreError(format!("keyed offset commit failed: {e}")))?;
@@ -801,13 +805,15 @@ mod fjall_impl {
                 // apply publisher_id and sequence filters manually.
                 if filters.publisher_id.is_none() {
                     if let Some(after) = filters.after_seq
-                        && seq <= after {
-                            continue;
-                        }
+                        && seq <= after
+                    {
+                        continue;
+                    }
                     if let Some(before) = filters.before_seq
-                        && seq >= before {
-                            continue;
-                        }
+                        && seq >= before
+                    {
+                        continue;
+                    }
                 }
                 let _ = pub_id; // used above in filter
 
@@ -815,13 +821,15 @@ mod fjall_impl {
 
                 // Apply time filters.
                 if let Some(after_time) = filters.after_time
-                    && meta.timestamp <= after_time {
-                        continue;
-                    }
+                    && meta.timestamp <= after_time
+                {
+                    continue;
+                }
                 if let Some(before_time) = filters.before_time
-                    && meta.timestamp >= before_time {
-                        continue;
-                    }
+                    && meta.timestamp >= before_time
+                {
+                    continue;
+                }
 
                 results.push(StoredEvent {
                     key: meta.key_expr.clone(),
@@ -830,9 +838,10 @@ mod fjall_impl {
                 });
 
                 if let Some(limit) = filters.limit
-                    && results.len() >= limit {
-                        break;
-                    }
+                    && results.len() >= limit
+                {
+                    break;
+                }
             }
 
             Ok(results)
@@ -852,13 +861,15 @@ mod fjall_impl {
 
                 // Apply HLC range filters.
                 if let Some(ref after) = filters.after_hlc
-                    && hlc <= *after {
-                        continue;
-                    }
+                    && hlc <= *after
+                {
+                    continue;
+                }
                 if let Some(ref before) = filters.before_hlc
-                    && hlc >= *before {
-                        break; // replay keys are sorted, no more matches
-                    }
+                    && hlc >= *before
+                {
+                    break; // replay keys are sorted, no more matches
+                }
 
                 // Look up full event from primary index.
                 let event_key_bytes = kv.1.to_vec();
@@ -874,9 +885,7 @@ mod fjall_impl {
                 let (meta, payload) = decode_event_value(&event_value)?;
 
                 // Apply key filter if present.
-                if filters.has_key_filter()
-                    && !filters.matches_key(meta.key.as_deref())
-                {
+                if filters.has_key_filter() && !filters.matches_key(meta.key.as_deref()) {
                     continue;
                 }
 
@@ -887,9 +896,10 @@ mod fjall_impl {
                 });
 
                 if let Some(limit) = filters.limit
-                    && results.len() >= limit {
-                        break;
-                    }
+                    && results.len() >= limit
+                {
+                    break;
+                }
             }
 
             Ok(results)
@@ -1001,9 +1011,10 @@ mod fjall_impl {
                     });
 
                     if let Some(limit) = limit
-                        && results.len() >= limit {
-                            break;
-                        }
+                        && results.len() >= limit
+                    {
+                        break;
+                    }
                 }
             }
 
@@ -1084,28 +1095,29 @@ mod fjall_impl {
                 let (meta, payload) = decode_event_value(&kv.1)?;
 
                 if let Some(ref app_key) = meta.key
-                    && key_set.contains(app_key.as_str()) {
-                        let seq = meta.seq;
-                        let entry = latest.entry(app_key.clone());
-                        match entry {
-                            std::collections::hash_map::Entry::Vacant(v) => {
-                                v.insert(StoredEvent {
+                    && key_set.contains(app_key.as_str())
+                {
+                    let seq = meta.seq;
+                    let entry = latest.entry(app_key.clone());
+                    match entry {
+                        std::collections::hash_map::Entry::Vacant(v) => {
+                            v.insert(StoredEvent {
+                                key: meta.key_expr.clone(),
+                                payload,
+                                metadata: meta,
+                            });
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut o) => {
+                            if seq > o.get().metadata.seq {
+                                *o.get_mut() = StoredEvent {
                                     key: meta.key_expr.clone(),
                                     payload,
                                     metadata: meta,
-                                });
-                            }
-                            std::collections::hash_map::Entry::Occupied(mut o) => {
-                                if seq > o.get().metadata.seq {
-                                    *o.get_mut() = StoredEvent {
-                                        key: meta.key_expr.clone(),
-                                        payload,
-                                        metadata: meta,
-                                    };
-                                }
+                                };
                             }
                         }
                     }
+                }
             }
 
             Ok(latest.into_values().collect())

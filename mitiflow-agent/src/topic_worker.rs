@@ -253,9 +253,10 @@ impl TopicWorker {
                     hash_ring::assign_replicas(p, replication_factor, nodes)
                 };
                 if let Some(assigned_node) = replicas.get(r as usize)
-                    && assigned_node == self_node_id {
-                        desired.push((p, r));
-                    }
+                    && assigned_node == self_node_id
+                {
+                    desired.push((p, r));
+                }
             }
         }
         desired

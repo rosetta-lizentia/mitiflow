@@ -186,7 +186,6 @@ pub enum IsolationMode {
     Container,
 }
 
-
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
@@ -256,7 +255,6 @@ pub enum LogFormat {
     Json,
 }
 
-
 /// Log level filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -269,7 +267,6 @@ pub enum LogLevel {
     Warn,
     Error,
 }
-
 
 // ---------------------------------------------------------------------------
 // Topics
@@ -697,8 +694,7 @@ pub enum OutputMode {
 // ---------------------------------------------------------------------------
 
 /// Chaos engineering configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChaosConfig {
     /// Whether chaos is enabled.
     #[serde(default)]
@@ -708,7 +704,6 @@ pub struct ChaosConfig {
     #[serde(default)]
     pub schedule: Vec<ChaosEventDef>,
 }
-
 
 /// A single chaos event definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -787,7 +782,10 @@ mod tests {
     fn component_kind_tier_ordering() {
         assert!(ComponentKind::Orchestrator.tier() < ComponentKind::StorageAgent.tier());
         assert!(ComponentKind::Orchestrator.tier() < ComponentKind::Agent.tier());
-        assert_eq!(ComponentKind::StorageAgent.tier(), ComponentKind::Agent.tier());
+        assert_eq!(
+            ComponentKind::StorageAgent.tier(),
+            ComponentKind::Agent.tier()
+        );
         assert!(ComponentKind::StorageAgent.tier() < ComponentKind::Producer.tier());
         assert!(ComponentKind::Producer.tier() < ComponentKind::Processor.tier());
         assert!(ComponentKind::Processor.tier() < ComponentKind::Consumer.tier());

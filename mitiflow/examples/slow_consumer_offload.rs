@@ -88,11 +88,8 @@ async fn main() -> mitiflow::Result<()> {
     // Consume events with artificial slowness to trigger offload.
     println!("Consuming events (slowly at first)...");
     let mut count = 0u64;
-    while let Ok(Ok(event)) = tokio::time::timeout(
-        Duration::from_secs(5),
-        subscriber.recv::<SensorReading>(),
-    )
-    .await
+    while let Ok(Ok(event)) =
+        tokio::time::timeout(Duration::from_secs(5), subscriber.recv::<SensorReading>()).await
     {
         count += 1;
         // Slow consumer for first 32 reads.

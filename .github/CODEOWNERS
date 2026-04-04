@@ -1,0 +1,23 @@
+# Default reviewers for everything
+* @pawis
+
+# Core library — highest scrutiny
+/mitiflow/src/ @pawis
+
+# Storage agent
+/mitiflow-agent/ @pawis
+
+# Control plane
+/mitiflow-orchestrator/ @pawis
+
+# CLI
+/mitiflow-cli/ @pawis
+
+# UI dashboard
+/mitiflow-ui/ @pawis
+
+# CI and project config
+/.github/ @pawis
+/justfile @pawis
+/Cargo.toml @pawis
+/deny.toml @pawis

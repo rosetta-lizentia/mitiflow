@@ -389,16 +389,17 @@ async fn run_diagnose(
     let mut checked_prefixes = std::collections::HashSet::new();
     for t in &topics {
         if let Some(kp) = t["key_prefix"].as_str()
-            && checked_prefixes.insert(kp.to_string()) {
-                let token_key = format!("{kp}/_agents/*");
-                if let Ok(sub) = session.liveliness().get(&token_key).timeout(timeout).await {
-                    while let Ok(reply) = sub.recv_async().await {
-                        if reply.result().is_ok() {
-                            agent_count += 1;
-                        }
+            && checked_prefixes.insert(kp.to_string())
+        {
+            let token_key = format!("{kp}/_agents/*");
+            if let Ok(sub) = session.liveliness().get(&token_key).timeout(timeout).await {
+                while let Ok(reply) = sub.recv_async().await {
+                    if reply.result().is_ok() {
+                        agent_count += 1;
                     }
                 }
             }
+        }
     }
 
     if agent_count == 0 {

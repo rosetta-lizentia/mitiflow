@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                             ProcessingMode::Filter => {
                                 let drop_prob = config.drop_probability.unwrap_or(0.0);
-                                
+
                                 if !rng.random_bool(drop_prob.min(1.0)) {
                                     let _ = publisher.publish_bytes(event.payload.clone()).await;
                                 }

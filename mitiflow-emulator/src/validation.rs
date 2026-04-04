@@ -62,9 +62,7 @@ pub fn validate(config: &TopologyConfig) -> crate::error::Result<ValidationResul
 }
 
 /// Build a topic registry from the topic definitions.
-fn build_topic_registry(
-    topics: &[TopicDef],
-) -> crate::error::Result<HashMap<&str, &TopicDef>> {
+fn build_topic_registry(topics: &[TopicDef]) -> crate::error::Result<HashMap<&str, &TopicDef>> {
     let mut registry = HashMap::new();
     for topic in topics {
         if registry.insert(topic.name.as_str(), topic).is_some() {
@@ -153,9 +151,7 @@ fn validate_topic_references(
                 }
             }
             ComponentKind::Agent => {
-                if comp.managed_topics.is_empty()
-                    && !comp.auto_discover_topics.unwrap_or(false)
-                {
+                if comp.managed_topics.is_empty() && !comp.auto_discover_topics.unwrap_or(false) {
                     return Err(EmulatorError::Validation(format!(
                         "agent \"{}\" must have at least one topic in \"topics\" or enable \"auto_discover_topics\"",
                         comp.name
@@ -195,11 +191,11 @@ fn validate_no_cycles(
         if comp.kind == ComponentKind::Processor
             && let (Some(input), Some(output)) =
                 (comp.input_topic.as_deref(), comp.output_topic.as_deref())
-            {
-                edges.entry(input).or_default().push(output);
-                all_nodes.insert(input);
-                all_nodes.insert(output);
-            }
+        {
+            edges.entry(input).or_default().push(output);
+            all_nodes.insert(input);
+            all_nodes.insert(output);
+        }
     }
 
     if all_nodes.is_empty() {
@@ -281,21 +277,23 @@ fn validate_source_coverage(
         match comp.kind {
             ComponentKind::Consumer => {
                 if let Some(t) = comp.topic.as_deref()
-                    && !produced.contains(t) {
-                        return Err(EmulatorError::Validation(format!(
-                            "consumer \"{}\" subscribes to topic \"{}\" which has no producer or processor writing to it",
-                            comp.name, t
-                        )));
-                    }
+                    && !produced.contains(t)
+                {
+                    return Err(EmulatorError::Validation(format!(
+                        "consumer \"{}\" subscribes to topic \"{}\" which has no producer or processor writing to it",
+                        comp.name, t
+                    )));
+                }
             }
             ComponentKind::Processor => {
                 if let Some(t) = comp.input_topic.as_deref()
-                    && !produced.contains(t) {
-                        return Err(EmulatorError::Validation(format!(
-                            "processor \"{}\" subscribes to topic \"{}\" which has no producer or processor writing to it",
-                            comp.name, t
-                        )));
-                    }
+                    && !produced.contains(t)
+                {
+                    return Err(EmulatorError::Validation(format!(
+                        "processor \"{}\" subscribes to topic \"{}\" which has no producer or processor writing to it",
+                        comp.name, t
+                    )));
+                }
             }
             _ => {}
         }
@@ -344,12 +342,13 @@ fn validate_chaos_targets(
 
     for event in schedule {
         if let Some(target) = &event.target
-            && !names.contains(target.as_str()) {
-                return Err(EmulatorError::Validation(format!(
-                    "chaos event targets unknown component: \"{}\"",
-                    target
-                )));
-            }
+            && !names.contains(target.as_str())
+        {
+            return Err(EmulatorError::Validation(format!(
+                "chaos event targets unknown component: \"{}\"",
+                target
+            )));
+        }
         for pool_target in &event.pool {
             if !names.contains(pool_target.as_str()) {
                 return Err(EmulatorError::Validation(format!(

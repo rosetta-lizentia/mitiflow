@@ -38,17 +38,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::{RwLock, broadcast};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use zenoh::Session;
@@ -289,8 +289,7 @@ pub enum ResetStrategy {
 /// `Authorization: Bearer <token>`. Pass `None` to disable auth (local dev).
 pub fn build_router(state: HttpState, auth_token: Option<&str>) -> Router {
     // Public routes (always accessible)
-    let public = Router::new()
-        .route("/api/v1/health", get(health));
+    let public = Router::new().route("/api/v1/health", get(health));
 
     // Protected API routes
     let api = Router::new()
@@ -318,10 +317,7 @@ pub fn build_router(state: HttpState, auth_token: Option<&str>) -> Router {
         .route("/api/v1/cluster/nodes/{id}/undrain", post(undrain_node))
         // Consumer groups
         .route("/api/v1/consumer-groups", get(list_consumer_groups))
-        .route(
-            "/api/v1/consumer-groups/{id}",
-            get(get_consumer_group),
-        )
+        .route("/api/v1/consumer-groups/{id}", get(get_consumer_group))
         .route(
             "/api/v1/consumer-groups/{id}/reset",
             post(reset_consumer_group),
@@ -336,17 +332,17 @@ pub fn build_router(state: HttpState, auth_token: Option<&str>) -> Router {
     // Apply bearer auth if configured
     let api = if let Some(token) = auth_token {
         let expected = format!("Bearer {token}");
-        api.layer(middleware::from_fn(move |req: axum::http::Request<axum::body::Body>, next: Next| {
-            let expected = expected.clone();
-            async move {
-                match req.headers().get(header::AUTHORIZATION) {
-                    Some(v) if v.as_bytes() == expected.as_bytes() => {
-                        next.run(req).await
+        api.layer(middleware::from_fn(
+            move |req: axum::http::Request<axum::body::Body>, next: Next| {
+                let expected = expected.clone();
+                async move {
+                    match req.headers().get(header::AUTHORIZATION) {
+                        Some(v) if v.as_bytes() == expected.as_bytes() => next.run(req).await,
+                        _ => StatusCode::UNAUTHORIZED.into_response(),
                     }
-                    _ => StatusCode::UNAUTHORIZED.into_response(),
                 }
-            }
-        }))
+            },
+        ))
     } else {
         api
     };
@@ -411,10 +407,7 @@ async fn serve_ui(uri: axum::http::Uri) -> impl IntoResponse {
     match ui_assets::Assets::get("index.html") {
         Some(file) => (
             StatusCode::OK,
-            [(
-                axum::http::header::CONTENT_TYPE,
-                "text/html".to_string(),
-            )],
+            [(axum::http::header::CONTENT_TYPE, "text/html".to_string())],
             file.data.to_vec(),
         )
             .into_response(),
@@ -455,10 +448,8 @@ async fn sse_lag(
     let rx = state.lag_events_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
         Ok(report) => {
-            if let Some(ref group) = params.group {
-                if &report.group_id != group {
-                    return None;
-                }
+            if let Some(ref group) = params.group && &report.group_id != group {
+                return None;
             }
             serde_json::to_string(&report)
                 .ok()
@@ -477,10 +468,8 @@ async fn sse_events(
     let rx = state.event_tail_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
         Ok(summary) => {
-            if let Some(p) = params.partition {
-                if summary.partition != p {
-                    return None;
-                }
+            if let Some(p) = params.partition && summary.partition != p {
+                return None;
             }
             serde_json::to_string(&summary)
                 .ok()
@@ -698,20 +687,16 @@ async fn create_topic(
     // Publish config via Zenoh so agents discover it
     if let Some(ref session) = state.session {
         let key = format!("{}/_config/{}", state.key_prefix, cfg.name);
-        if let Ok(bytes) = serde_json::to_vec(&cfg) {
-            if let Err(e) = session.put(&key, bytes).await {
-                warn!(topic = %cfg.name, "failed to publish topic config: {e}");
-            }
+        if let Ok(bytes) = serde_json::to_vec(&cfg) && let Err(e) = session.put(&key, bytes).await {
+            warn!(topic = %cfg.name, "failed to publish topic config: {e}");
         }
     }
 
     // Create per-topic cluster view
-    if let Some(ref tm) = state.topic_manager {
-        if !cfg.key_prefix.is_empty() {
-            let mut tm = tm.write().await;
-            if let Err(e) = tm.add_topic(&cfg.name, &cfg.key_prefix).await {
-                warn!(topic = %cfg.name, "failed to create per-topic cluster view: {e}");
-            }
+    if let Some(ref tm) = state.topic_manager && !cfg.key_prefix.is_empty() {
+        let mut tm = tm.write().await;
+        if let Err(e) = tm.add_topic(&cfg.name, &cfg.key_prefix).await {
+            warn!(topic = %cfg.name, "failed to create per-topic cluster view: {e}");
         }
     }
 
@@ -1000,10 +985,8 @@ async fn query_events(
                 let key = mitiflow::attachment::extract_key(&key_expr_str).map(String::from);
 
                 // Optionally filter by application key
-                if let Some(ref filter_key) = params.key {
-                    if key.as_deref() != Some(filter_key.as_str()) {
-                        continue;
-                    }
+                if let Some(ref filter_key) = params.key && key.as_deref() != Some(filter_key.as_str()) {
+                    continue;
                 }
 
                 // Encode payload as base64 and attempt UTF-8 text
@@ -1081,10 +1064,7 @@ async fn reset_consumer_group(
     };
 
     let key_prefix = &topic_config.key_prefix;
-    let offset_key = format!(
-        "{key_prefix}/_offsets/{}/{id}",
-        body.partition
-    );
+    let offset_key = format!("{key_prefix}/_offsets/{}/{id}", body.partition);
 
     // Publish a simple offset commit (seq as big-endian bytes)
     let payload = target_seq.to_be_bytes().to_vec();

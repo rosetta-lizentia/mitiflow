@@ -50,9 +50,7 @@ pub enum Error {
             "The event store may be down or slow. Check store health and increase the durability timeout if needed."
         )
     )]
-    DurabilityTimeout {
-        seq: u64,
-    },
+    DurabilityTimeout { seq: u64 },
 
     /// A sequence checkpoint read/write operation failed.
     #[error("checkpoint error: {0}")]

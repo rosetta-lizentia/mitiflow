@@ -52,9 +52,10 @@ impl SequenceCheckpoint {
         let current = self.last_checkpoint(pub_id, partition)?;
 
         if let Some(current_seq) = current
-            && seq <= current_seq {
-                return Ok(());
-            }
+            && seq <= current_seq
+        {
+            return Ok(());
+        }
 
         self.keyspace
             .insert(key, seq.to_be_bytes())

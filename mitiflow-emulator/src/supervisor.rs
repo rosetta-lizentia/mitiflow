@@ -152,7 +152,10 @@ impl Supervisor {
                 }
 
                 // Readiness gate for storage agents and agents.
-                if matches!(comp.kind, ComponentKind::StorageAgent | ComponentKind::Agent) {
+                if matches!(
+                    comp.kind,
+                    ComponentKind::StorageAgent | ComponentKind::Agent
+                ) {
                     // Small delay to let storage agents start.
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }

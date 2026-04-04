@@ -178,21 +178,23 @@ impl LifecycleManager {
                 }
                 PublisherState::Suspected => {
                     if let Some(deadline) = entry.suspicion_deadline
-                        && now >= deadline {
-                            entry.state = PublisherState::Draining;
-                            entry.drain_deadline = Some(now + self.config.drain_grace_period);
-                            entry.suspicion_deadline = None;
-                            self.epoch += 1;
-                        }
+                        && now >= deadline
+                    {
+                        entry.state = PublisherState::Draining;
+                        entry.drain_deadline = Some(now + self.config.drain_grace_period);
+                        entry.suspicion_deadline = None;
+                        self.epoch += 1;
+                    }
                 }
                 PublisherState::Draining => {
                     if let Some(deadline) = entry.drain_deadline
-                        && now >= deadline {
-                            entry.state = PublisherState::Archived;
-                            entry.drain_deadline = None;
-                            self.epoch += 1;
-                            newly_archived.push(*pub_id);
-                        }
+                        && now >= deadline
+                    {
+                        entry.state = PublisherState::Archived;
+                        entry.drain_deadline = None;
+                        self.epoch += 1;
+                        newly_archived.push(*pub_id);
+                    }
                 }
                 PublisherState::Archived => {}
             }

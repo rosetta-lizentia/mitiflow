@@ -116,7 +116,10 @@ pub(crate) fn deliver_event(
     match tx.try_send(raw) {
         Ok(()) => {}
         Err(flume::TrySendError::Full(_)) => {
-            trace!(seq, "event channel full, dropping event (will be recovered)");
+            trace!(
+                seq,
+                "event channel full, dropping event (will be recovered)"
+            );
         }
         Err(flume::TrySendError::Disconnected(_)) => {
             trace!(seq, "event channel closed, dropping event");

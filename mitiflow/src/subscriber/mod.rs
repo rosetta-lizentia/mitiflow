@@ -11,8 +11,8 @@
 //! - [`consumer_group`] — Consumer group with offset management (store feature)
 
 pub mod event_id_dedup;
-pub mod gap_detector;
 pub(crate) mod forwarder;
+pub mod gap_detector;
 pub(crate) mod pipeline;
 pub(crate) mod recovery;
 
@@ -133,12 +133,14 @@ impl EventSubscriber {
         let (event_tx, event_rx) = flume::bounded::<RawEvent>(ch_cap);
 
         // Spawn forwarder tasks (one per key expression).
-        let fwd_handle = forwarder::spawn_forwarders(
-            session, key_exprs, sample_tx, cancel.clone(),
-        ).await?;
+        let fwd_handle =
+            forwarder::spawn_forwarders(session, key_exprs, sample_tx, cancel.clone()).await?;
 
         // Destructure: keep control alive, extract tasks.
-        let forwarder::ForwarderHandle { control: fwd_control, tasks: fwd_tasks } = fwd_handle;
+        let forwarder::ForwarderHandle {
+            control: fwd_control,
+            tasks: fwd_tasks,
+        } = fwd_handle;
         let mut tasks = fwd_tasks;
 
         #[cfg(feature = "store")]
@@ -153,20 +155,34 @@ impl EventSubscriber {
                 cancel.clone(),
                 key_filtered,
                 #[cfg(feature = "store")]
-                if config.offload.enabled { Some(fwd_control.clone()) } else { None },
+                if config.offload.enabled {
+                    Some(fwd_control.clone())
+                } else {
+                    None
+                },
                 #[cfg(feature = "store")]
                 &mut offload_event_rx_slot,
-            ).await?;
+            )
+            .await?;
             tasks.push(worker);
         } else {
             let mut worker_tasks = pipeline::spawn_multi_shard_workers(
-                session, &config, sample_rx, event_tx, cancel.clone(),
+                session,
+                &config,
+                sample_rx,
+                event_tx,
+                cancel.clone(),
                 key_filtered,
                 #[cfg(feature = "store")]
-                if config.offload.enabled { Some(fwd_control.clone()) } else { None },
+                if config.offload.enabled {
+                    Some(fwd_control.clone())
+                } else {
+                    None
+                },
                 #[cfg(feature = "store")]
                 &mut offload_event_rx_slot,
-            ).await?;
+            )
+            .await?;
             tasks.append(&mut worker_tasks);
         }
 

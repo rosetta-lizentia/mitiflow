@@ -136,8 +136,7 @@ impl KeyedConsumer {
                         }
                     } else {
                         HlcTimestamp {
-                            physical_ns: meta.timestamp.timestamp_nanos_opt().unwrap_or(0)
-                                as u64,
+                            physical_ns: meta.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64,
                             logical: 0,
                         }
                     };
@@ -171,9 +170,7 @@ impl KeyedConsumer {
         events.sort_by(|a, b| {
             let hlc_a = a.metadata.hlc_timestamp.unwrap_or_default();
             let hlc_b = b.metadata.hlc_timestamp.unwrap_or_default();
-            hlc_a
-                .cmp(&hlc_b)
-                .then(a.metadata.seq.cmp(&b.metadata.seq))
+            hlc_a.cmp(&hlc_b).then(a.metadata.seq.cmp(&b.metadata.seq))
         });
 
         // Advance cursor past the last returned event.
@@ -229,8 +226,8 @@ impl KeyedConsumer {
             group_id,
             self.key_filter.hash(),
         );
-        let payload = serde_json::to_vec(&commit)
-            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let payload =
+            serde_json::to_vec(&commit).map_err(|e| Error::Serialization(e.to_string()))?;
         self.session
             .put(&key, payload)
             .await
@@ -314,9 +311,9 @@ impl KeyedConsumerBuilder {
 
     /// Build the consumer. Requires exactly one of `key()` or `key_prefix()`.
     pub fn build(self) -> Result<KeyedConsumer> {
-        let key_filter = self
-            .key_filter
-            .ok_or_else(|| Error::InvalidConfig("KeyedConsumer requires key() or key_prefix()".into()))?;
+        let key_filter = self.key_filter.ok_or_else(|| {
+            Error::InvalidConfig("KeyedConsumer requires key() or key_prefix()".into())
+        })?;
 
         let store_prefix = self.config.resolved_store_key_prefix();
         let selector_base = match self.partition {

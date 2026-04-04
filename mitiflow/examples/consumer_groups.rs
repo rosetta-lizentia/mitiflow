@@ -73,8 +73,7 @@ mod inner {
             offset_reset: OffsetReset::Earliest,
         };
         let consumer_config = base_config(NUM_PARTITIONS)?;
-        let consumer =
-            ConsumerGroupSubscriber::new(session, consumer_config, group_config).await?;
+        let consumer = ConsumerGroupSubscriber::new(session, consumer_config, group_config).await?;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let partitions = consumer.assigned_partitions().await;
@@ -157,8 +156,7 @@ mod inner {
         let consumer_config = EventBusConfig::builder("demo/consumer_group_auto")
             .num_partitions(NUM_PARTITIONS)
             .build()?;
-        let consumer =
-            ConsumerGroupSubscriber::new(session, consumer_config, group_config).await?;
+        let consumer = ConsumerGroupSubscriber::new(session, consumer_config, group_config).await?;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         println!(

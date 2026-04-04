@@ -389,9 +389,10 @@ async fn agent_rack_aware_placement() {
         let r0_owner = assignment_map.get(&(partition, 0));
         let r1_owner = assignment_map.get(&(partition, 1));
         if let (Some(o0), Some(o1)) = (r0_owner, r1_owner)
-            && node_rack(o0) != node_rack(o1) {
-                cross_rack_count += 1;
-            }
+            && node_rack(o0) != node_rack(o1)
+        {
+            cross_rack_count += 1;
+        }
     }
 
     // With 2 racks and RF=2, rack-aware placement should put replicas

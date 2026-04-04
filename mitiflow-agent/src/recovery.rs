@@ -62,9 +62,10 @@ impl RecoveryManager {
                 Ok(replies) => {
                     while let Ok(reply) = replies.recv_async().await {
                         if let Ok(sample) = reply.result()
-                            && let Some(count) = self.ingest_sample(sample, backend) {
-                                total_recovered += count;
-                            }
+                            && let Some(count) = self.ingest_sample(sample, backend)
+                        {
+                            total_recovered += count;
+                        }
                     }
                 }
                 Err(e) => {
@@ -114,9 +115,10 @@ impl RecoveryManager {
             Ok(replies) => {
                 while let Ok(reply) = replies.recv_async().await {
                     if let Ok(sample) = reply.result()
-                        && let Some(count) = self.ingest_sample(sample, backend) {
-                            recovered += count;
-                        }
+                        && let Some(count) = self.ingest_sample(sample, backend)
+                    {
+                        recovered += count;
+                    }
                 }
             }
             Err(e) => {

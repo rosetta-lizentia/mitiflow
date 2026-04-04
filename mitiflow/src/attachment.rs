@@ -116,7 +116,8 @@ pub fn decode_metadata(attachment: &ZBytes) -> Result<EventMeta> {
     if bytes.len() != ATTACHMENT_SIZE && bytes.len() != EXTENDED_ATTACHMENT_SIZE {
         return Err(Error::InvalidAttachment(format!(
             "expected {} or {} bytes, got {}",
-            ATTACHMENT_SIZE, EXTENDED_ATTACHMENT_SIZE,
+            ATTACHMENT_SIZE,
+            EXTENDED_ATTACHMENT_SIZE,
             bytes.len()
         )));
     }

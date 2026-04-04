@@ -32,8 +32,7 @@ pub struct TopicConfig {
 }
 
 /// Retention policy for events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RetentionPolicy {
     /// Max age of events before GC.
     pub max_age: Option<Duration>,
@@ -43,16 +42,13 @@ pub struct RetentionPolicy {
     pub max_events: Option<u64>,
 }
 
-
 /// Compaction policy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CompactionPolicy {
     pub enabled: bool,
     /// Compaction interval.
     pub interval: Option<Duration>,
 }
-
 
 /// Persistent config store backed by fjall.
 pub struct ConfigStore {
@@ -100,9 +96,7 @@ impl ConfigStore {
                 guard
                     .into_inner()
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(
-                            format!("iter error: {e:?}"),
-                        ))
+                        Box::new(std::io::Error::other(format!("iter error: {e:?}")))
                     })?;
             let config: TopicConfig = serde_json::from_slice(&kv.1)?;
             topics.push(config);

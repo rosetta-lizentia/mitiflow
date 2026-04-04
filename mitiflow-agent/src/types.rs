@@ -59,8 +59,7 @@ pub struct PartitionStatus {
 }
 
 /// Override table published by the orchestrator, consumed by agents.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OverrideTable {
     pub entries: Vec<OverrideEntry>,
     pub epoch: u64,
@@ -75,4 +74,3 @@ pub struct OverrideEntry {
     pub node_id: String,
     pub reason: String,
 }
-

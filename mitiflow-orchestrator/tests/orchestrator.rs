@@ -1297,12 +1297,33 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
     .await
     .unwrap();
 
-    assert!(orch.topic_manager().unwrap().read().await.get_view("metrics").is_some());
+    assert!(
+        orch.topic_manager()
+            .unwrap()
+            .read()
+            .await
+            .get_view("metrics")
+            .is_some()
+    );
 
     // Delete topic → view should be removed
     orch.delete_topic("metrics").await.unwrap();
-    assert!(orch.topic_manager().unwrap().read().await.get_view("metrics").is_none());
-    assert!(orch.topic_manager().unwrap().read().await.tracked_topics().is_empty());
+    assert!(
+        orch.topic_manager()
+            .unwrap()
+            .read()
+            .await
+            .get_view("metrics")
+            .is_none()
+    );
+    assert!(
+        orch.topic_manager()
+            .unwrap()
+            .read()
+            .await
+            .tracked_topics()
+            .is_empty()
+    );
 
     orch.shutdown().await;
 }

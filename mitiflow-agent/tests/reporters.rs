@@ -124,13 +124,14 @@ async fn status_reporter_publishes_on_change() {
     let binding = sample.unwrap();
     let payload = binding.payload().to_bytes();
     if let Ok(status) = serde_json::from_slice::<NodeStatus>(&payload)
-        && !status.partitions.is_empty() {
-            assert_eq!(status.node_id, node_id);
-            assert_eq!(status.partitions.len(), 2);
-            assert_eq!(status.partitions[0].partition, 0);
-            assert_eq!(status.partitions[0].state, StoreState::Active);
-            found = true;
-        }
+        && !status.partitions.is_empty()
+    {
+        assert_eq!(status.node_id, node_id);
+        assert_eq!(status.partitions.len(), 2);
+        assert_eq!(status.partitions[0].partition, 0);
+        assert_eq!(status.partitions[0].state, StoreState::Active);
+        found = true;
+    }
 
     if !found {
         // Try once more in case we got a heartbeat first.

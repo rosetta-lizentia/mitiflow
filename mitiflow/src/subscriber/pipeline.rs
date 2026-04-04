@@ -55,8 +55,13 @@ pub(crate) fn handle_sample_result(
     match result {
         SampleResult::Deliver => {
             deliver_event(
-                tx, meta.pub_id, meta.seq, key, payload,
-                meta.event_id, meta.timestamp,
+                tx,
+                meta.pub_id,
+                meta.seq,
+                key,
+                payload,
+                meta.event_id,
+                meta.timestamp,
             );
         }
         SampleResult::Duplicate => {
@@ -64,8 +69,13 @@ pub(crate) fn handle_sample_result(
         }
         SampleResult::Gap(miss) => {
             deliver_event(
-                tx, meta.pub_id, meta.seq, key, payload,
-                meta.event_id, meta.timestamp,
+                tx,
+                meta.pub_id,
+                meta.seq,
+                key,
+                payload,
+                meta.event_id,
+                meta.timestamp,
             );
             spawn_recovery(
                 session.clone(),
@@ -127,7 +137,9 @@ pub(crate) async fn spawn_single_shard_worker(
     cancel: tokio_util::sync::CancellationToken,
     key_filtered: bool,
     #[cfg(feature = "store")] forwarder_control: Option<ForwarderControl>,
-    #[cfg(feature = "store")] offload_event_rx_slot: &mut Option<flume::Receiver<super::offload::OffloadEvent>>,
+    #[cfg(feature = "store")] offload_event_rx_slot: &mut Option<
+        flume::Receiver<super::offload::OffloadEvent>,
+    >,
 ) -> crate::error::Result<tokio::task::JoinHandle<()>> {
     let key_prefix = &config.key_prefix;
     let publisher_ttl = config.publisher_ttl;
@@ -278,7 +290,9 @@ pub(crate) async fn spawn_multi_shard_workers(
     cancel: tokio_util::sync::CancellationToken,
     key_filtered: bool,
     #[cfg(feature = "store")] forwarder_control: Option<ForwarderControl>,
-    #[cfg(feature = "store")] offload_event_rx_slot: &mut Option<flume::Receiver<super::offload::OffloadEvent>>,
+    #[cfg(feature = "store")] offload_event_rx_slot: &mut Option<
+        flume::Receiver<super::offload::OffloadEvent>,
+    >,
 ) -> crate::error::Result<Vec<tokio::task::JoinHandle<()>>> {
     let num_shards = config.num_processing_shards;
     let key_prefix = &config.key_prefix;

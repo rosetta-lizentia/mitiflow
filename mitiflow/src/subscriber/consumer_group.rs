@@ -573,8 +573,9 @@ async fn do_commit_async(
             config.key_prefix, partition, group_config.group_id
         );
         if let Ok(payload) = serde_json::to_vec(&commit)
-            && let Err(e) = session.put(&key, payload).await {
-                warn!("auto-commit failed: {e}");
-            }
+            && let Err(e) = session.put(&key, payload).await
+        {
+            warn!("auto-commit failed: {e}");
+        }
     }
 }

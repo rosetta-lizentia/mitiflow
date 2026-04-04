@@ -7,7 +7,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use mitiflow_agent::{NodeHealth, NodeMetadata, NodeStatus, StoreState};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use zenoh::Session;

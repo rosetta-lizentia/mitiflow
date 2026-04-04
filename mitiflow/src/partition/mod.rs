@@ -87,9 +87,10 @@ impl PartitionManager {
             if let Ok(sample) = reply.result() {
                 let key = sample.key_expr().as_str();
                 if let Some(wid) = key.strip_prefix(&format!("{liveliness_prefix}/"))
-                    && !initial_workers.contains(&wid.to_string()) {
-                        initial_workers.push(wid.to_string());
-                    }
+                    && !initial_workers.contains(&wid.to_string())
+                {
+                    initial_workers.push(wid.to_string());
+                }
             }
         }
         initial_workers.sort();

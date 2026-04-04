@@ -69,7 +69,9 @@ async fn offload_disabled_no_transition() {
         .build()
         .unwrap();
 
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
 
     // offload_events() should return None when offload is disabled.
     assert!(
@@ -88,11 +90,10 @@ async fn offload_disabled_no_transition() {
             .unwrap();
     }
     for _ in 0..5 {
-        let _: Event<TestPayload> =
-            tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
-                .await
-                .expect("timed out")
-                .expect("recv failed");
+        let _: Event<TestPayload> = tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
+            .await
+            .expect("timed out")
+            .expect("recv failed");
     }
 
     drop(publisher);
@@ -109,7 +110,9 @@ async fn fast_consumer_never_offloads() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let config = offload_config("fast_consumer", 1024);
 
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let offload_rx = subscriber
         .offload_events()
         .expect("offload channel should be Some when enabled")
@@ -124,11 +127,10 @@ async fn fast_consumer_never_offloads() {
             .publish(&Event::new(TestPayload { value: i }))
             .await
             .unwrap();
-        let _: Event<TestPayload> =
-            tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
-                .await
-                .expect("timed out")
-                .expect("recv failed");
+        let _: Event<TestPayload> = tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
+            .await
+            .expect("timed out")
+            .expect("recv failed");
     }
 
     // No offload events should have been emitted.
@@ -186,7 +188,9 @@ async fn slow_consumer_triggers_offload_lifecycle() {
     store.run().await.unwrap();
 
     // Create subscriber first, then publisher.
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let offload_rx = subscriber.offload_events().unwrap().clone();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -264,7 +268,9 @@ async fn offload_preserves_ordering() {
     let mut store = EventStore::new(&session, backend, config.clone());
     store.run().await.unwrap();
 
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -338,7 +344,9 @@ async fn debounce_prevents_flapping() {
         .build()
         .unwrap();
 
-    let subscriber = EventSubscriber::new(&session, config.clone()).await.unwrap();
+    let subscriber = EventSubscriber::new(&session, config.clone())
+        .await
+        .unwrap();
     let offload_rx = subscriber.offload_events().unwrap().clone();
     let publisher = EventPublisher::new(&session, config).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -353,11 +361,10 @@ async fn debounce_prevents_flapping() {
 
     // Consume all quickly — channel clears before debounce expires.
     for _ in 0..20 {
-        let _: Event<TestPayload> =
-            tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
-                .await
-                .expect("timed out")
-                .expect("recv failed");
+        let _: Event<TestPayload> = tokio::time::timeout(Duration::from_secs(2), subscriber.recv())
+            .await
+            .expect("timed out")
+            .expect("recv failed");
     }
 
     // No offload should have triggered.

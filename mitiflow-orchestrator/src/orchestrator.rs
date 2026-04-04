@@ -113,9 +113,9 @@ impl Orchestrator {
                     && let Err(e) = topic_manager
                         .add_topic(&topic.name, &topic.key_prefix)
                         .await
-                    {
-                        warn!(topic = %topic.name, "failed to create per-topic cluster view: {e}");
-                    }
+                {
+                    warn!(topic = %topic.name, "failed to create per-topic cluster view: {e}");
+                }
             }
         }
         self.topic_manager = Some(Arc::new(RwLock::new(topic_manager)));
@@ -179,23 +179,21 @@ impl Orchestrator {
                         _ = cancel.cancelled() => break,
                         sample = subscriber.recv_async() => {
                             let Ok(sample) = sample else { break };
-                            if let Some(attachment) = sample.attachment() {
-                                if let Ok(meta) = mitiflow::attachment::decode_metadata(attachment) {
-                                    let key_expr_str = sample.key_expr().as_keyexpr().as_str().to_string();
-                                    let key = mitiflow::attachment::extract_key(&key_expr_str).map(String::from);
-                                    let partition = mitiflow::attachment::extract_partition(&key_expr_str);
-                                    let payload_size = sample.payload().len();
-                                    let summary = EventSummary {
-                                        seq: meta.seq,
-                                        partition,
-                                        publisher_id: meta.pub_id.to_string(),
-                                        timestamp: meta.timestamp.to_rfc3339(),
-                                        key,
-                                        key_expr: key_expr_str,
-                                        payload_size,
-                                    };
-                                    let _ = event_tx.send(summary);
-                                }
+                            if let Some(attachment) = sample.attachment() && let Ok(meta) = mitiflow::attachment::decode_metadata(attachment) {
+                                let key_expr_str = sample.key_expr().as_keyexpr().as_str().to_string();
+                                let key = mitiflow::attachment::extract_key(&key_expr_str).map(String::from);
+                                let partition = mitiflow::attachment::extract_partition(&key_expr_str);
+                                let payload_size = sample.payload().len();
+                                let summary = EventSummary {
+                                    seq: meta.seq,
+                                    partition,
+                                    publisher_id: meta.pub_id.to_string(),
+                                    timestamp: meta.timestamp.to_rfc3339(),
+                                    key,
+                                    key_expr: key_expr_str,
+                                    payload_size,
+                                };
+                                let _ = event_tx.send(summary);
                             }
                         }
                     }
@@ -226,13 +224,9 @@ impl Orchestrator {
                 .auth_token
                 .clone()
                 .or_else(|| std::env::var("MITIFLOW_UI_TOKEN").ok());
-            let http_handle = crate::http::start_http(
-                http_state,
-                bind_addr,
-                self.cancel.clone(),
-                auth_token,
-            )
-            .await;
+            let http_handle =
+                crate::http::start_http(http_state, bind_addr, self.cancel.clone(), auth_token)
+                    .await;
             self.tasks.push(http_handle);
         }
 
@@ -257,9 +251,13 @@ impl Orchestrator {
 
         // Create per-topic cluster view if applicable
         if let Some(ref tm) = self.topic_manager
-            && !config.key_prefix.is_empty() {
-                tm.write().await.add_topic(&config.name, &config.key_prefix).await?;
-            }
+            && !config.key_prefix.is_empty()
+        {
+            tm.write()
+                .await
+                .add_topic(&config.name, &config.key_prefix)
+                .await?;
+        }
 
         info!(topic = %config.name, "topic created");
         Ok(())
@@ -365,9 +363,10 @@ impl Orchestrator {
             for topic in topics {
                 let key = format!("{}/_config/{}", self.config.key_prefix, topic.name);
                 if let Ok(bytes) = serde_json::to_vec(&topic)
-                    && let Err(e) = self.session.put(&key, bytes).await {
-                        warn!("failed to publish config for {}: {e}", topic.name);
-                    }
+                    && let Err(e) = self.session.put(&key, bytes).await
+                {
+                    warn!("failed to publish config for {}: {e}", topic.name);
+                }
             }
         }
     }
@@ -378,23 +377,17 @@ impl Orchestrator {
         for handle in self.tasks.drain(..) {
             let _ = handle.await;
         }
-        if let Some(lag) = self.lag_monitor.take() {
-            if let Ok(lag) = Arc::try_unwrap(lag) {
-                lag.shutdown().await;
-            }
+        if let Some(lag) = self.lag_monitor.take() && let Ok(lag) = Arc::try_unwrap(lag) {
+            lag.shutdown().await;
         }
         if let Some(tracker) = self.store_tracker.take() {
             tracker.shutdown().await;
         }
-        if let Some(cv) = self.cluster_view.take() {
-            if let Ok(cv) = Arc::try_unwrap(cv) {
-                cv.shutdown().await;
-            }
+        if let Some(cv) = self.cluster_view.take() && let Ok(cv) = Arc::try_unwrap(cv) {
+            cv.shutdown().await;
         }
-        if let Some(tm) = self.topic_manager.take() {
-            if let Ok(tm) = Arc::try_unwrap(tm) {
-                tm.into_inner().shutdown().await;
-            }
+        if let Some(tm) = self.topic_manager.take() && let Ok(tm) = Arc::try_unwrap(tm) {
+            tm.into_inner().shutdown().await;
         }
         info!("orchestrator shut down");
     }

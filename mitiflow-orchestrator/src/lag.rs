@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use zenoh::Session;
@@ -80,8 +80,7 @@ impl LagMonitor {
         let cancel = CancellationToken::new();
         let watermarks: Arc<RwLock<HashMap<(u32, PublisherId), u64>>> =
             Arc::new(RwLock::new(HashMap::new()));
-        let offsets: OffsetMap =
-            Arc::new(RwLock::new(HashMap::new()));
+        let offsets: OffsetMap = Arc::new(RwLock::new(HashMap::new()));
 
         let mut tasks = Vec::new();
 
