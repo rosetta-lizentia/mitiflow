@@ -1,0 +1,28 @@
+# Version control
+.git/
+.gitignore
+
+# Rust build artifacts
+target/
+
+# UI development artifacts
+mitiflow-ui/node_modules/
+mitiflow-ui/.svelte-kit/
+
+# Benchmark results (large, not needed in container)
+mitiflow-bench/results/
+
+# Documentation
+docs/
+*.md
+!mitiflow/README.md
+
+# CI/CD
+.github/
+
+# IDE
+.vscode/
+.idea/
+
+# Emulator topologies (not needed in production)
+mitiflow-emulator/topologies/

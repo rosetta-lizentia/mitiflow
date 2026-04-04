@@ -45,3 +45,16 @@ ui-build:
 # Build the orchestrator with embedded UI
 build-with-ui: ui-build
     cargo build -p mitiflow-orchestrator --features ui
+
+# --- Container builds (podman) ---
+
+# Build the agent container image
+container-agent:
+    podman build --build-arg PACKAGE=mitiflow-agent -t mitiflow-agent .
+
+# Build the orchestrator container image (with embedded UI)
+container-orchestrator:
+    podman build --build-arg PACKAGE=mitiflow-orchestrator --build-arg BUILD_UI=true -t mitiflow-orchestrator .
+
+# Build both container images
+container-all: container-agent container-orchestrator

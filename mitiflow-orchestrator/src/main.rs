@@ -7,6 +7,20 @@ use tracing_subscriber::EnvFilter;
 
 use mitiflow_orchestrator::{Orchestrator, orchestrator::OrchestratorConfig};
 
+#[cfg(unix)]
+async fn wait_for_sigterm() {
+    use tokio::signal::unix::{SignalKind, signal};
+    signal(SignalKind::terminate())
+        .expect("failed to install SIGTERM handler")
+        .recv()
+        .await;
+}
+
+#[cfg(not(unix))]
+async fn wait_for_sigterm() {
+    std::future::pending::<()>().await;
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
@@ -43,11 +57,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     tracing::info!("mitiflow-orchestrator running, press Ctrl+C to stop");
 
-    // Wait forever (or until process is killed)
+    // Wait for SIGINT (Ctrl+C) or SIGTERM (container stop)
     tokio::select! {
-        _ = std::future::pending::<()>() => {},
+        _ = tokio::signal::ctrl_c() => {},
+        _ = wait_for_sigterm() => {},
     }
+    tracing::info!("shutting down orchestrator...");
     orchestrator.shutdown().await;
+    session.close().await?;
 
     Ok(())
 }

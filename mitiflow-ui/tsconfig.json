@@ -10,8 +10,7 @@
     "esModuleInterop": true,
     "paths": {
       "$lib/*": ["./src/lib/*"]
-    },
-    "baseUrl": "."
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"]
 }

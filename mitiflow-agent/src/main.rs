@@ -5,6 +5,20 @@ use mitiflow::EventBusConfig;
 use mitiflow_agent::{AgentYamlConfig, StorageAgent, StorageAgentConfig};
 use tracing_subscriber::EnvFilter;
 
+#[cfg(unix)]
+async fn wait_for_sigterm() {
+    use tokio::signal::unix::{SignalKind, signal};
+    signal(SignalKind::terminate())
+        .expect("failed to install SIGTERM handler")
+        .recv()
+        .await;
+}
+
+#[cfg(not(unix))]
+async fn wait_for_sigterm() {
+    std::future::pending::<()>().await;
+}
+
 /// Mitiflow storage agent — manages EventStore partitions via distributed assignment.
 #[derive(Parser)]
 #[command(name = "mitiflow-agent")]
@@ -65,9 +79,13 @@ async fn main() -> anyhow::Result<()> {
         StorageAgent::start(&session, config).await?
     };
 
-    // Wait for Ctrl+C.
-    tokio::signal::ctrl_c().await?;
+    // Wait for SIGINT (Ctrl+C) or SIGTERM (container stop)
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = wait_for_sigterm() => {},
+    }
 
+    tracing::info!("shutting down agent...");
     agent.shutdown().await?;
     session.close().await.map_err(|e| anyhow::anyhow!("{e}"))?;
 
