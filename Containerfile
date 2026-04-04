@@ -66,7 +66,8 @@ RUN if [ "$BUILD_UI" = "true" ]; then \
 
 COPY mitiflow-ui ./mitiflow-ui
 
-RUN if [ "$BUILD_UI" = "true" ]; then \
+RUN mkdir -p /app/mitiflow-ui/build && \
+    if [ "$BUILD_UI" = "true" ]; then \
       cd mitiflow-ui && pnpm build; \
     fi
 
