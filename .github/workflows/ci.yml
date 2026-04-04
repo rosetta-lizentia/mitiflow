@@ -29,6 +29,7 @@ jobs:
       - uses: actions/checkout@v6
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
+      - run: mkdir -p mitiflow-ui/build
       - run: cargo clippy --workspace --all-targets --features full --exclude mitiflow-bench -- -D warnings
 
   test:
@@ -39,6 +40,7 @@ jobs:
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      - run: mkdir -p mitiflow-ui/build
       - run: cargo nextest run --workspace --features full --exclude mitiflow-bench --no-fail-fast
 
   doc:
@@ -48,6 +50,7 @@ jobs:
       - uses: actions/checkout@v6
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
+      - run: mkdir -p mitiflow-ui/build
       - run: cargo doc --workspace --no-deps --features full --exclude mitiflow-cli --exclude mitiflow-bench
         env:
           RUSTDOCFLAGS: -Dwarnings
