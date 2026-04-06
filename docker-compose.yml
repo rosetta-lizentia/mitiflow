@@ -44,12 +44,6 @@ services:
       - ZENOH_CONNECT=tcp/zenoh-router:7447
     volumes:
       - orchestrator_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     depends_on:
       zenoh-router:
         condition: service_healthy
@@ -71,12 +65,6 @@ services:
       - ZENOH_CONNECT=tcp/zenoh-router:7447
     volumes:
       - storage_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -x app || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     depends_on:
       zenoh-router:
         condition: service_healthy

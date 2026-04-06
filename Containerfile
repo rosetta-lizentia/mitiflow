@@ -158,9 +158,6 @@ USER appuser
 # Expose port (orchestrator HTTP API)
 EXPOSE 8080
 
-# Health check (orchestrator has HTTP endpoint, agent checks process)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -sf http://localhost:8080/health 2>/dev/null || pgrep -x app || exit 1
 
 # Use tini as PID 1 to properly forward signals (SIGTERM) to the app.
 # This is essential for graceful shutdown in containers where the app
