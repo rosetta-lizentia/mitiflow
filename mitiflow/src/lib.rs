@@ -8,6 +8,7 @@ pub mod dlq;
 pub mod error;
 pub mod event;
 pub mod publisher;
+pub mod schema;
 pub mod subscriber;
 pub mod types;
 
@@ -27,6 +28,7 @@ pub use dlq::{BackoffStrategy, DeadLetterQueue, DlqConfig, RetryOutcome};
 pub use error::{Error, Result};
 pub use event::{Event, RawEvent};
 pub use publisher::EventPublisher;
+pub use schema::{KeyFormat, TopicSchema, TopicSchemaMode};
 pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};
 

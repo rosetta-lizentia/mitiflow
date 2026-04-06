@@ -48,7 +48,7 @@ primary API.
 
 - Exactly-once / transactions (needs 2PC coordinator)
 - Kafka Streams API (client library, not a protocol feature)
-- Schema Registry (separate service, can proxy to Confluent)
+- Schema Registry (separate service, can proxy to Confluent or use mitiflow's built-in [Topic Schema Registry](18_topic_schema_registry.md))
 
 **Full design:** archived in `docs/archive/07_kafka_compatibility.md` (removed during docs cleanup; see git history for the original)
 
@@ -141,3 +141,4 @@ replicas serve reads.
 | Topic data deletion | Orchestrator triggers on-disk cleanup on agents |
 | Emulator phases 4-5 | Docker/container backend, advanced chaos with netem |
 | GUI E2E tests | Playwright browser tests for the Svelte dashboard |
+| UI schema management | Topic detail page showing schema fields, version history, and validation status ([18_topic_schema_registry.md](18_topic_schema_registry.md)) |

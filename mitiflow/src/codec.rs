@@ -3,7 +3,7 @@
 //! Provides a [`CodecFormat`] enum for selecting the wire format of events.
 //! The default format is JSON via `serde_json`.
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
 use crate::error::Result;
 
@@ -23,7 +23,7 @@ use crate::error::Result;
 /// let decoded: Vec<u32> = codec.decode(&bytes).unwrap();
 /// assert_eq!(data, decoded);
 /// ```
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CodecFormat {
     /// JSON encoding via `serde_json`.
     Json,

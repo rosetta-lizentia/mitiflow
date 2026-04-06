@@ -28,6 +28,7 @@ Create via `EventBusConfig::builder("key/prefix")`. All settings have sensible d
 | `.codec(CodecFormat)` | `Json` | Serialization format: `Json`, `MessagePack`, `Postcard` |
 | `.num_partitions(u32)` | `1` | Number of partitions for key-based routing |
 | `.worker_id(str)` | `None` | This node's identity for partition assignment |
+| `.schema_mode(TopicSchemaMode)` | `Disabled` | Schema validation mode: `Disabled`, `Validate`, `AutoConfig`, `RegisterOrValidate`. See [Topic Schema Registry](18_topic_schema_registry.md) |
 
 ### Publisher
 
@@ -134,6 +135,40 @@ Choose based on your needs:
 - **Development/debugging:** `Json` (inspect payloads easily)
 - **High throughput:** `Postcard` or `MessagePack`
 - **Interop with non-Rust:** `Json` or `MessagePack`
+
+---
+
+## Schema Validation
+
+Controls whether publishers and subscribers validate their configuration against a registered topic schema. See [Topic Schema Registry](18_topic_schema_registry.md) for the full design.
+
+### TopicSchemaMode
+
+| Mode | Description |
+|------|-------------|
+| `Disabled` | No schema validation (default, backward-compatible) |
+| `Validate` | Query `{key_prefix}/_schema`, fail on mismatch or if no schema found |
+| `AutoConfig` | Load full config from the schema registry (auto-configuration) |
+| `RegisterOrValidate` | Validate if a schema exists; register from local config if absent (dev/test) |
+
+### Auto-Configuration
+
+Skip the builder entirely and load config from the registry:
+
+```rust
+let config = EventBusConfig::from_topic(&session, "myapp/events", "orders").await?;
+let publisher = EventPublisher::new(&session, config).await?;
+```
+
+### Validated Fields
+
+| Field | Mismatch severity |
+|-------|-------------------|
+| `codec` | Fatal — data corruption |
+| `num_partitions` | Fatal — routing divergence |
+| `key_format` | Warning (fatal in strict mode) |
+
+Other fields (cache size, heartbeat, recovery mode, offload config) are local tuning and are **not** validated against the schema.
 
 ---
 

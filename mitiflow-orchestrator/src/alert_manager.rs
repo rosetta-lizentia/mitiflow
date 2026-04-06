@@ -301,6 +301,9 @@ mod tests {
             compaction: CompactionPolicy::default(),
             required_labels: HashMap::new(),
             excluded_labels: HashMap::new(),
+            codec: Default::default(),
+            key_format: Default::default(),
+            schema_version: 0,
         }
     }
 

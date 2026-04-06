@@ -84,6 +84,9 @@ async fn main() -> anyhow::Result<()> {
             compaction: CompactionPolicy::default(),
             required_labels: std::collections::HashMap::new(),
             excluded_labels: std::collections::HashMap::new(),
+            codec: Default::default(),
+            key_format: Default::default(),
+            schema_version: 0,
         };
         if let Err(e) = orchestrator.create_topic(topic_config).await {
             tracing::warn!("Failed to create topic {}: {}", topic.name, e);

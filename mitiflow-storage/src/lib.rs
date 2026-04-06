@@ -8,6 +8,7 @@ pub mod health;
 pub mod membership;
 pub mod reconciler;
 pub mod recovery;
+pub mod schema_store;
 pub mod status;
 pub mod topic_supervisor;
 pub mod topic_watcher;
@@ -20,6 +21,7 @@ pub use config::{
     StorageAgentConfigBuilder, TopicEntry, TopicWorkerConfig,
 };
 pub use error::{AgentError, AgentResult};
+pub use schema_store::SchemaStore;
 pub use topic_supervisor::TopicSupervisor;
 pub use topic_watcher::{RemoteTopicConfig, TopicWatcher, should_serve_topic};
 pub use topic_worker::TopicWorker;

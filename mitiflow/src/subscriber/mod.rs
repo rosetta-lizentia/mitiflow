@@ -120,10 +120,15 @@ impl EventSubscriber {
     /// Shared initialization: spawn forwarders and processing pipeline.
     async fn init(
         session: &Session,
-        config: EventBusConfig,
+        mut config: EventBusConfig,
         key_exprs: &[String],
         key_filtered: bool,
     ) -> Result<Self> {
+        // Resolve schema mode (validate / auto-config) before subscribing.
+        // Subscribers never register schemas (only publishers do in
+        // RegisterOrValidate mode), so we ignore the returned schema.
+        let _registered = crate::schema::resolve_schema(session, &mut config).await?;
+
         let ch_cap = config.event_channel_capacity;
         let num_shards = config.num_processing_shards;
 

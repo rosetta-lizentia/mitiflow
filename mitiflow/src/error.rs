@@ -115,6 +115,40 @@ pub enum Error {
         )
     )]
     OffloadFailed(String),
+
+    /// No storage agent or orchestrator responded to a topic schema query.
+    #[error("topic schema not found for '{key_prefix}' (no storage agents or orchestrator responded)")]
+    #[diagnostic(
+        code(mitiflow::schema_not_found),
+        help(
+            "Ensure at least one storage agent or orchestrator is running for this topic, \
+             or use TopicSchemaMode::RegisterOrValidate for dev/test deployments."
+        )
+    )]
+    TopicSchemaNotFound { key_prefix: String },
+
+    /// A local config field does not match the registered topic schema.
+    #[error("topic schema mismatch on field '{field}': local={local}, registered={registered}")]
+    #[diagnostic(
+        code(mitiflow::schema_mismatch),
+        help(
+            "The publisher/subscriber config does not match the registered topic schema. \
+             Update your EventBusConfig to match, or use AutoConfig mode."
+        )
+    )]
+    TopicSchemaMismatch {
+        field: String,
+        local: String,
+        registered: String,
+    },
+
+    /// A schema version conflict was detected (attempted downgrade).
+    #[error("topic schema version conflict: local={local}, registered={registered}")]
+    #[diagnostic(
+        code(mitiflow::schema_version_conflict),
+        help("Schema versions must be monotonically increasing. Bump the version number.")
+    )]
+    TopicSchemaVersionConflict { local: u32, registered: u32 },
 }
 
 impl From<serde_json::Error> for Error {

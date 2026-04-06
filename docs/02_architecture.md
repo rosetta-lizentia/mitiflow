@@ -16,6 +16,7 @@ mitiflow/                     # Core library crate
 │   ├── types.rs              # PublisherId, EventId (UUID v7 newtypes)
 │   ├── codec.rs              # CodecFormat: JSON, MessagePack, Postcard
 │   ├── attachment.rs         # 50-byte binary metadata for Zenoh attachments
+│   ├── schema.rs             # TopicSchema, KeyFormat, TopicSchemaMode, validation
 │   ├── dlq.rs                # DeadLetterQueue
 │   ├── publisher/mod.rs      # EventPublisher (sequencing + cache + heartbeat)
 │   ├── subscriber/
@@ -187,6 +188,7 @@ placement via `NodeDescriptor`. Exposes `partition_for()`, `my_partitions()`, `o
 | `{prefix}/_watermark` | Durability watermark |
 | `{prefix}/_workers/{group_id}/{member_id}` | Consumer group member |
 | `{prefix}/_agents/{node_id}` | Storage agent liveliness |
+| `{prefix}/_schema` | Topic schema registry (queryable + put) |
 
 **Convention:** `$` in key expressions is reserved for `$*` only. Internal channels use `_` prefix.
 
@@ -200,3 +202,4 @@ placement via `NodeDescriptor`. Exposes `partition_for()`, `my_partitions()`, `o
 | **L4: Key-Based** | Partition affinity, Zenoh-native filtering, compaction | ✅ |
 | **L5: DLQ** | Poison message isolation, backoff retries | ✅ |
 | **L6: Offload** | Automatic pub/sub → store-query for slow consumers | ✅ |
+| **L7: Schema** | Topic schema registry, pre-flight validation, auto-config | ✅ |

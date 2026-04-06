@@ -6,6 +6,7 @@ use zenoh::qos::CongestionControl;
 
 use crate::codec::CodecFormat;
 use crate::error::{Error, Result};
+use crate::schema::TopicSchemaMode;
 
 /// Configuration for automatic slow-consumer offload.
 ///
@@ -228,6 +229,11 @@ pub struct EventBusConfig {
     pub worker_id: Option<String>,
     /// Liveliness key prefix for worker presence. Defaults to `"{key_prefix}/_workers"`.
     pub worker_liveliness_prefix: Option<String>,
+
+    // -- Schema --
+    /// Controls how this publisher/subscriber interacts with the topic schema
+    /// registry. Defaults to [`TopicSchemaMode::Disabled`].
+    pub schema_mode: TopicSchemaMode,
 }
 
 impl EventBusConfig {
@@ -275,6 +281,21 @@ impl EventBusConfig {
     pub fn key_expr_for_key_prefix(&self, key_prefix: &str) -> String {
         format!("{}/p/*/k/{}/**", self.key_prefix, key_prefix)
     }
+
+    /// Build a configuration by fetching a topic's schema from the registry.
+    ///
+    /// Creates a default config for the given `key_prefix`, then applies the
+    /// wire-level fields (codec, num_partitions, key_prefix) from the
+    /// registered schema. Local tuning fields use builder defaults.
+    ///
+    /// Returns `Error::TopicSchemaNotFound` if no storage agent or
+    /// orchestrator responds within the timeout.
+    pub async fn from_topic(session: &zenoh::Session, key_prefix: &str) -> Result<Self> {
+        let schema = crate::schema::fetch_schema(session, key_prefix).await?;
+        let mut config = Self::builder(key_prefix).build()?;
+        schema.apply_to_config(&mut config);
+        Ok(config)
+    }
 }
 
 /// Builder for [`EventBusConfig`] with sensible defaults.
@@ -315,6 +336,7 @@ pub struct EventBusConfigBuilder {
     num_partitions: u32,
     worker_id: Option<String>,
     worker_liveliness_prefix: Option<String>,
+    schema_mode: TopicSchemaMode,
 }
 
 impl EventBusConfigBuilder {
@@ -356,6 +378,7 @@ impl EventBusConfigBuilder {
             num_partitions: 64,
             worker_id: None,
             worker_liveliness_prefix: None,
+            schema_mode: TopicSchemaMode::default(),
         }
     }
 
@@ -525,6 +548,14 @@ impl EventBusConfigBuilder {
         self
     }
 
+    /// Set the topic schema mode for registry validation/auto-configuration.
+    ///
+    /// Defaults to [`TopicSchemaMode::Disabled`].
+    pub fn schema_mode(mut self, mode: TopicSchemaMode) -> Self {
+        self.schema_mode = mode;
+        self
+    }
+
     /// Build the configuration, validating all fields.
     pub fn build(self) -> Result<EventBusConfig> {
         if self.key_prefix.is_empty() {
@@ -575,6 +606,7 @@ impl EventBusConfigBuilder {
             num_partitions: self.num_partitions,
             worker_id: self.worker_id,
             worker_liveliness_prefix: self.worker_liveliness_prefix,
+            schema_mode: self.schema_mode,
         })
     }
 }

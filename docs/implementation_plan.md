@@ -2,7 +2,7 @@
 
 Detailed implementation plan for the `mitiflow` crate, with test validation and benchmark strategies.
 
-> **Status (2025-06):** Phases 1–4 and 3.5 are fully implemented. Phase 5 (Kafka Gateway) remains a stub. Benchmarks are in `mitiflow-bench/`.
+> **Status (2025-06):** Phases 1–4 and 3.5 are fully implemented. Phase 5 (Kafka Gateway) remains a stub. Benchmarks are in `mitiflow-bench/`. Topic Schema Registry is implemented across all crates.
 
 > **Prerequisites:** This plan builds on the design in [00_proposal.md](00_proposal.md). Refer to [02_architecture.md](02_architecture.md) for crate structure and core types, [03_durability.md](03_durability.md) for durability protocol details, [04_sequencing_and_replay.md](04_sequencing_and_replay.md) for sequence design and HLC replay, [09_cache_recovery_design.md](09_cache_recovery_design.md) for tiered recovery, [10_graceful_termination.md](10_graceful_termination.md) for shutdown protocol, [11_consumer_group_commits.md](11_consumer_group_commits.md) for consumer group offset commits, and [ROADMAP.md](ROADMAP.md) for the Kafka gateway and other planned features.
 
@@ -711,6 +711,7 @@ Features beyond the core library phases, tracked across the codebase.
 | GUI (phases 1–7) | `mitiflow-ui`, `mitiflow-orchestrator` | HTTP API + Vitest | `mitiflow-ui/DESIGN.md` |
 | Alert Manager | `mitiflow-orchestrator` | 8 unit tests | — |
 | Replication (multi-store + recovery) | `mitiflow-storage` | recovery.rs (5 tests) | [05_replication.md](05_replication.md) |
+| Topic Schema Registry | `mitiflow`, `mitiflow-storage`, `mitiflow-orchestrator`, `mitiflow-cli` | 10 unit + 7 integration + 6 store tests | [18_topic_schema_registry.md](18_topic_schema_registry.md) |
 
 ### Open / Deferred
 

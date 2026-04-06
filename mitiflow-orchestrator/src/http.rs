@@ -58,6 +58,8 @@ use crate::config::{CompactionPolicy, ConfigStore, RetentionPolicy, TopicConfig}
 use crate::lag::LagReport;
 use crate::override_manager::OverrideManager;
 use crate::topic_manager::TopicManager;
+use mitiflow::codec::CodecFormat;
+use mitiflow::schema::KeyFormat;
 
 // =========================================================================
 // Event types for SSE broadcasts
@@ -139,6 +141,12 @@ pub struct CreateTopicRequest {
     pub required_labels: HashMap<String, String>,
     #[serde(default)]
     pub excluded_labels: HashMap<String, String>,
+    #[serde(default)]
+    pub codec: CodecFormat,
+    #[serde(default)]
+    pub key_format: KeyFormat,
+    #[serde(default)]
+    pub schema_version: u32,
 }
 
 fn default_partitions() -> u32 {
@@ -156,6 +164,9 @@ pub struct UpdateTopicRequest {
     pub compaction: Option<CompactionPolicy>,
     pub required_labels: Option<HashMap<String, String>>,
     pub excluded_labels: Option<HashMap<String, String>>,
+    pub codec: Option<CodecFormat>,
+    pub key_format: Option<KeyFormat>,
+    pub schema_version: Option<u32>,
 }
 
 /// Cluster status summary.
@@ -683,6 +694,9 @@ async fn create_topic(
         compaction: CompactionPolicy::default(),
         required_labels: req.required_labels,
         excluded_labels: req.excluded_labels,
+        codec: req.codec,
+        key_format: req.key_format,
+        schema_version: req.schema_version,
     };
 
     // Persist
@@ -736,6 +750,15 @@ async fn update_topic(
     }
     if let Some(labels) = req.excluded_labels {
         cfg.excluded_labels = labels;
+    }
+    if let Some(codec) = req.codec {
+        cfg.codec = codec;
+    }
+    if let Some(key_format) = req.key_format {
+        cfg.key_format = key_format;
+    }
+    if let Some(schema_version) = req.schema_version {
+        cfg.schema_version = schema_version;
     }
 
     state.config_store.put_topic(&cfg)?;

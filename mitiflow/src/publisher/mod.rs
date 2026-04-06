@@ -167,6 +167,36 @@ async fn run_cache_queryable_task(
     debug!("cache queryable task stopped");
 }
 
+/// Serve a registered schema to peers via an ephemeral queryable until cancelled.
+///
+/// This is spawned only when the publisher registered a new schema
+/// (`RegisterOrValidate` mode, first publisher). Peers (or other
+/// publishers/subscribers) can `session.get("{prefix}/_schema")` and
+/// this task will reply with the schema bytes.
+async fn run_schema_queryable_task(
+    queryable: zenoh::query::Queryable<FifoChannelHandler<zenoh::query::Query>>,
+    schema_bytes: Vec<u8>,
+    cancel: CancellationToken,
+) {
+    let key = queryable.key_expr().to_string();
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            query_result = queryable.recv_async() => {
+                match query_result {
+                    Ok(query) => {
+                        if let Err(e) = query.reply(&key, schema_bytes.clone()).await {
+                            trace!("schema query reply failed: {e}");
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    debug!("schema queryable task stopped");
+}
+
 /// Forward watermark updates from Zenoh to a broadcast channel until cancelled.
 #[cfg(feature = "store")]
 async fn run_watermark_listener_task(
@@ -195,7 +225,11 @@ async fn run_watermark_listener_task(
 
 impl EventPublisher {
     /// Create a new publisher, spawning heartbeat and cache-queryable tasks.
-    pub async fn new(session: &Session, config: EventBusConfig) -> Result<Self> {
+    pub async fn new(session: &Session, mut config: EventBusConfig) -> Result<Self> {
+        // Resolve schema mode (validate / auto-config / register) before
+        // any Zenoh declarations so mismatches fail fast.
+        let registered_schema = crate::schema::resolve_schema(session, &mut config).await?;
+
         let publisher_id = PublisherId::new();
         let key_prefix = &config.key_prefix;
 
@@ -233,6 +267,20 @@ impl EventPublisher {
             tasks.push(tokio::spawn(run_cache_queryable_task(
                 Arc::clone(&cache),
                 queryable,
+                cancel.clone(),
+            )));
+        }
+
+        // If this publisher registered a new schema (RegisterOrValidate, first
+        // publisher), serve it via an ephemeral queryable so peers can fetch it
+        // before storage agents persist the schema.
+        if let Some(schema) = registered_schema {
+            let schema_key = crate::schema::TopicSchema::schema_key(key_prefix);
+            let schema_queryable = session.declare_queryable(&schema_key).await?;
+            let schema_bytes = schema.to_bytes()?;
+            tasks.push(tokio::spawn(run_schema_queryable_task(
+                schema_queryable,
+                schema_bytes,
                 cancel.clone(),
             )));
         }

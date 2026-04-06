@@ -90,6 +90,11 @@ enum CtlCommands {
         #[arg(long, default_value = "5")]
         timeout: u64,
     },
+    /// Schema registry operations.
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCtlCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -111,6 +116,43 @@ enum ClusterCtlCommands {
     Drain {
         /// Node ID to drain.
         node_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SchemaCtlCommands {
+    /// Inspect the schema registered for a key prefix.
+    Inspect {
+        /// Key prefix to query (e.g. "myapp/events").
+        key_prefix: String,
+    },
+    /// Register a schema for a key prefix.
+    Register {
+        /// Key prefix.
+        key_prefix: String,
+        /// Topic name.
+        #[arg(long)]
+        name: String,
+        /// Number of partitions.
+        #[arg(long)]
+        partitions: u32,
+        /// Wire codec (json, msgpack, postcard).
+        #[arg(long, default_value = "postcard")]
+        codec: String,
+        /// Key format (unkeyed, keyed).
+        #[arg(long, default_value = "unkeyed")]
+        key_format: String,
+    },
+    /// Validate local settings against the registered schema.
+    Validate {
+        /// Key prefix to query.
+        key_prefix: String,
+        /// Expected codec.
+        #[arg(long)]
+        codec: String,
+        /// Expected partition count.
+        #[arg(long)]
+        partitions: u32,
     },
 }
 
@@ -321,6 +363,9 @@ async fn run_ctl(command: CtlCommands) -> anyhow::Result<()> {
         CtlCommands::Diagnose { prefix, timeout } => {
             run_diagnose(&session, &prefix, timeout).await?;
         }
+        CtlCommands::Schema { command } => {
+            run_schema_ctl(&session, &key_prefix, command).await?;
+        }
     }
 
     session.close().await.map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -453,6 +498,86 @@ async fn run_diagnose(
     Ok(())
 }
 
+async fn run_schema_ctl(
+    session: &zenoh::Session,
+    _global_prefix: &str,
+    command: SchemaCtlCommands,
+) -> anyhow::Result<()> {
+    match command {
+        SchemaCtlCommands::Inspect { key_prefix } => {
+            match mitiflow::schema::fetch_schema(session, &key_prefix).await {
+                Ok(schema) => {
+                    println!("{}", serde_json::to_string_pretty(&schema)?);
+                }
+                Err(e) => {
+                    eprintln!("No schema found for '{key_prefix}': {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        SchemaCtlCommands::Register {
+            key_prefix,
+            name,
+            partitions,
+            codec,
+            key_format,
+        } => {
+            let codec: mitiflow::codec::CodecFormat = match codec.to_lowercase().as_str() {
+                "json" => mitiflow::codec::CodecFormat::Json,
+                "msgpack" | "messagepack" => mitiflow::codec::CodecFormat::MsgPack,
+                "postcard" => mitiflow::codec::CodecFormat::Postcard,
+                other => anyhow::bail!("unknown codec: {other}"),
+            };
+            let key_format: mitiflow::schema::KeyFormat = match key_format.to_lowercase().as_str()
+            {
+                "unkeyed" => mitiflow::schema::KeyFormat::Unkeyed,
+                "keyed" => mitiflow::schema::KeyFormat::Keyed,
+                other => anyhow::bail!("unknown key_format: {other}"),
+            };
+            let schema =
+                mitiflow::schema::TopicSchema::new(&key_prefix, name, partitions, codec, key_format, 1);
+            mitiflow::schema::register_schema(session, &schema).await?;
+            println!("Schema registered for '{key_prefix}'");
+        }
+        SchemaCtlCommands::Validate {
+            key_prefix,
+            codec,
+            partitions,
+        } => {
+            let schema = mitiflow::schema::fetch_schema(session, &key_prefix).await?;
+            let mut mismatches = Vec::new();
+            let expected_codec = match codec.to_lowercase().as_str() {
+                "json" => mitiflow::codec::CodecFormat::Json,
+                "msgpack" | "messagepack" => mitiflow::codec::CodecFormat::MsgPack,
+                "postcard" => mitiflow::codec::CodecFormat::Postcard,
+                other => anyhow::bail!("unknown codec: {other}"),
+            };
+            if schema.codec != expected_codec {
+                mismatches.push(format!(
+                    "codec: registry={:?}, local={:?}",
+                    schema.codec, expected_codec
+                ));
+            }
+            if schema.num_partitions != partitions {
+                mismatches.push(format!(
+                    "partitions: registry={}, local={}",
+                    schema.num_partitions, partitions
+                ));
+            }
+            if mismatches.is_empty() {
+                println!("OK — local settings match registered schema");
+            } else {
+                eprintln!("Schema validation failed:");
+                for m in &mismatches {
+                    eprintln!("  - {m}");
+                }
+                std::process::exit(1);
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_dev(
     topics_arg: Option<String>,
     _config_path: Option<PathBuf>,
@@ -500,6 +625,9 @@ async fn run_dev(
             compaction: mitiflow_orchestrator::config::CompactionPolicy::default(),
             required_labels: Default::default(),
             excluded_labels: Default::default(),
+            codec: Default::default(),
+            key_format: Default::default(),
+            schema_version: 0,
         };
         orchestrator
             .create_topic(tc)

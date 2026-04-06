@@ -166,6 +166,28 @@ impl Orchestrator {
             .await;
         }));
 
+        // Start _schema queryable so publishers/subscribers can fetch topic schemas.
+        {
+            let schema_key = format!("{}/_schema", self.config.key_prefix);
+            let schema_queryable = self
+                .session
+                .declare_queryable(&schema_key)
+                .await?;
+            let config_store_for_schema = Arc::clone(&self.config_store);
+            let cancel_for_schema = self.cancel.clone();
+            let key_prefix = self.config.key_prefix.clone();
+
+            self.tasks.push(tokio::spawn(async move {
+                run_schema_queryable(
+                    schema_queryable,
+                    config_store_for_schema,
+                    &key_prefix,
+                    cancel_for_schema,
+                )
+                .await;
+            }));
+        }
+
         // Start event tail subscriber — subscribes to {prefix}/p/** and pushes
         // EventSummary into the broadcast channel for SSE consumers.
         {
@@ -203,6 +225,7 @@ impl Orchestrator {
 
         // Distribute existing configs on startup
         self.publish_all_configs().await;
+        self.publish_all_schemas().await;
 
         // Optionally start HTTP API
         if let Some(bind_addr) = self.config.http_bind {
@@ -248,6 +271,24 @@ impl Orchestrator {
         let key = format!("{}/_config/{}", self.config.key_prefix, config.name);
         let bytes = serde_json::to_vec(&config)?;
         self.session.put(&key, bytes).await?;
+
+        // Publish schema so publishers/subscribers/agents can discover it
+        let key_prefix = if config.key_prefix.is_empty() {
+            self.config.key_prefix.clone()
+        } else {
+            config.key_prefix.clone()
+        };
+        let schema = mitiflow::schema::TopicSchema::new(
+            &key_prefix,
+            &config.name,
+            config.num_partitions,
+            config.codec,
+            config.key_format,
+            config.schema_version,
+        );
+        let schema_key = format!("{key_prefix}/_schema");
+        let schema_bytes = serde_json::to_vec(&schema)?;
+        self.session.put(&schema_key, schema_bytes).await?;
 
         // Create per-topic cluster view if applicable
         if let Some(ref tm) = self.topic_manager
@@ -367,6 +408,33 @@ impl Orchestrator {
                     && let Err(e) = self.session.put(&key, bytes).await
                 {
                     warn!("failed to publish config for {}: {e}", topic.name);
+                }
+            }
+        }
+    }
+
+    /// Publish schemas for all stored topics via Zenoh.
+    async fn publish_all_schemas(&self) {
+        if let Ok(topics) = self.config_store.list_topics() {
+            for topic in &topics {
+                let key_prefix = if topic.key_prefix.is_empty() {
+                    self.config.key_prefix.clone()
+                } else {
+                    topic.key_prefix.clone()
+                };
+                let schema = mitiflow::schema::TopicSchema::new(
+                    &key_prefix,
+                    &topic.name,
+                    topic.num_partitions,
+                    topic.codec,
+                    topic.key_format,
+                    topic.schema_version,
+                );
+                let schema_key = format!("{key_prefix}/_schema");
+                if let Ok(bytes) = serde_json::to_vec(&schema)
+                    && let Err(e) = self.session.put(&schema_key, bytes).await
+                {
+                    warn!("failed to publish schema for {}: {e}", topic.name);
                 }
             }
         }
@@ -582,4 +650,52 @@ async fn run_config_queryable(
         }
     }
     debug!("config queryable stopped");
+}
+
+/// Handle `_schema` queries so publishers/subscribers can fetch topic schemas.
+///
+/// Looks up the topic config from the store, constructs a `TopicSchema`, and replies.
+async fn run_schema_queryable(
+    queryable: zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>,
+    config_store: Arc<ConfigStore>,
+    key_prefix: &str,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            result = queryable.recv_async() => {
+                match result {
+                    Ok(query) => {
+                        // Find topics whose key_prefix matches (or use the orchestrator prefix).
+                        if let Ok(topics) = config_store.list_topics() {
+                            for topic in &topics {
+                                let topic_prefix = if topic.key_prefix.is_empty() {
+                                    key_prefix.to_string()
+                                } else {
+                                    topic.key_prefix.clone()
+                                };
+                                let expected_key = format!("{topic_prefix}/_schema");
+                                if expected_key == query.key_expr().as_str() {
+                                    let schema = mitiflow::schema::TopicSchema::new(
+                                        &topic_prefix,
+                                        &topic.name,
+                                        topic.num_partitions,
+                                        topic.codec,
+                                        topic.key_format,
+                                        topic.schema_version,
+                                    );
+                                    if let Ok(bytes) = serde_json::to_vec(&schema) {
+                                        let _ = query.reply(query.key_expr(), bytes).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    debug!("schema queryable stopped");
 }

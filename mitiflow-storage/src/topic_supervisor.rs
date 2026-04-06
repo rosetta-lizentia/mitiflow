@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tracing::{info, warn};
 use zenoh::Session;
@@ -7,6 +8,7 @@ use zenoh::Session;
 use crate::config::{AgentConfig, TopicEntry, TopicWorkerConfig};
 use crate::error::{AgentError, AgentResult};
 use crate::health::HealthReporter;
+use crate::schema_store::SchemaStore;
 use crate::topic_worker::TopicWorker;
 
 /// Manages multiple [`TopicWorker`] instances in a single agent process.
@@ -23,11 +25,22 @@ pub struct TopicSupervisor {
     drain_grace_period: std::time::Duration,
     workers: HashMap<String, TopicWorker>,
     health: HealthReporter,
+    schema_store: Arc<SchemaStore>,
 }
 
 impl TopicSupervisor {
     /// Create and start a supervisor, spawning workers for all configured topics.
     pub async fn start(session: &Session, config: &AgentConfig) -> AgentResult<Self> {
+        // Open the SchemaStore BEFORE the health reporter so that its startup
+        // cost does not delay liveliness-token declaration relative to health
+        // heartbeats (which fire immediately and can cause observers to query
+        // liveliness before workers have declared their tokens).
+        let schema_dir = config.data_dir.join("_schemas");
+        let schema_store = Arc::new(
+            SchemaStore::open(&schema_dir)
+                .map_err(|e| AgentError::Store(format!("failed to open schema store: {e}")))?,
+        );
+
         // Start node-level health reporter using the global prefix.
         let health_key_prefix = &config.global_prefix;
         let health = HealthReporter::new(
@@ -47,6 +60,7 @@ impl TopicSupervisor {
             drain_grace_period: config.drain_grace_period,
             workers: HashMap::new(),
             health,
+            schema_store,
         };
 
         // Start workers for static topics.
@@ -91,7 +105,7 @@ impl TopicSupervisor {
             )));
         }
 
-        let worker = TopicWorker::start(&self.session, &self.node_id, config).await?;
+        let worker = TopicWorker::start(&self.session, &self.node_id, config, Arc::clone(&self.schema_store)).await?;
         self.workers.insert(name.to_string(), worker);
 
         // Update health with total partitions across all topics.

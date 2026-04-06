@@ -49,6 +49,9 @@ fn config_store_put_get_delete() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     };
     store.put_topic(&cfg).unwrap();
 
@@ -84,6 +87,9 @@ fn config_store_multiple_topics() {
                 compaction: CompactionPolicy::default(),
                 required_labels: HashMap::new(),
                 excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
             })
             .unwrap();
     }
@@ -102,6 +108,9 @@ fn config_store_multiple_topics() {
             compaction: CompactionPolicy::default(),
             required_labels: HashMap::new(),
             excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
         })
         .unwrap();
 
@@ -128,6 +137,9 @@ fn config_store_persistence() {
                 compaction: CompactionPolicy::default(),
                 required_labels: HashMap::new(),
                 excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
             })
             .unwrap();
     }
@@ -280,6 +292,9 @@ async fn orchestrator_create_list_delete_topic() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -293,6 +308,9 @@ async fn orchestrator_create_list_delete_topic() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -342,6 +360,9 @@ async fn orchestrator_admin_queryable_topics() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1231,6 +1252,9 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1250,6 +1274,9 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1293,6 +1320,9 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1359,6 +1389,9 @@ async fn multi_topic_views_pick_up_independent_agents() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1372,6 +1405,9 @@ async fn multi_topic_views_pick_up_independent_agents() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1432,6 +1468,9 @@ async fn orchestrator_config_queryable_returns_all_topics() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1445,6 +1484,9 @@ async fn orchestrator_config_queryable_returns_all_topics() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1502,6 +1544,9 @@ async fn orchestrator_config_queryable_returns_single_topic() {
         compaction: CompactionPolicy::default(),
         required_labels: HashMap::new(),
         excluded_labels: HashMap::new(),
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     })
     .await
     .unwrap();
@@ -1550,6 +1595,9 @@ fn topic_config_serializes_labels_roundtrip() {
         compaction: CompactionPolicy::default(),
         required_labels: required,
         excluded_labels: excluded,
+        codec: Default::default(),
+        key_format: Default::default(),
+        schema_version: 0,
     };
 
     let bytes = serde_json::to_vec(&cfg).unwrap();

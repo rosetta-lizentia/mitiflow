@@ -22,8 +22,9 @@ This guide walks you through setting up Mitiflow — from a minimal "hello world
 6. [Event Store Queries](#6-event-store-queries)
 7. [Dead Letter Queue](#7-dead-letter-queue)
 8. [Slow Consumer Offload](#8-slow-consumer-offload)
-9. [Running the CLI](#9-running-the-cli)
-10. [Next Steps](#10-next-steps)
+9. [Topic Schema Validation](#9-topic-schema-validation)
+10. [Running the CLI](#10-running-the-cli)
+11. [Next Steps](#11-next-steps)
 
 ---
 
@@ -309,7 +310,70 @@ The subscriber monitors its lag via heartbeats and channel fullness. When both e
 
 ---
 
-## 9. Running the CLI
+## 9. Topic Schema Validation
+
+Mitiflow includes a distributed topic schema registry that ensures publishers and subscribers agree on wire-level configuration (codec, partition count, key format) before exchanging events.
+
+### Validate against a registered schema
+
+```rust
+use mitiflow::TopicSchemaMode;
+
+let config = EventBusConfig::builder("myapp/events/orders")
+    .codec(CodecFormat::Postcard)
+    .num_partitions(16)
+    .schema_mode(TopicSchemaMode::Validate)
+    .build()?;
+
+// Fails with TopicSchemaMismatch if local config doesn't match the registry.
+let subscriber = EventSubscriber::new(&session, config).await?;
+```
+
+### Auto-configure from the registry
+
+```rust
+// Load everything from the schema registry — no manual config needed.
+let config = EventBusConfig::from_topic(&session, "myapp/events", "orders").await?;
+let publisher = EventPublisher::new(&session, config).await?;
+```
+
+### Dev mode: register or validate
+
+```rust
+let config = EventBusConfig::builder("myapp/events/orders")
+    .codec(CodecFormat::Postcard)
+    .num_partitions(16)
+    .schema_mode(TopicSchemaMode::RegisterOrValidate)
+    .build()?;
+
+// First publisher registers the schema; subsequent participants validate against it.
+let publisher = EventPublisher::new(&session, config).await?;
+```
+
+**Schema modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `Disabled` | No validation (default, backward-compatible) |
+| `Validate` | Fail on mismatch with registered schema |
+| `AutoConfig` | Load full config from registry |
+| `RegisterOrValidate` | Register if absent, validate if present |
+
+Schemas are persisted by storage agents and/or the orchestrator. The CLI can also register and inspect schemas directly:
+
+```bash
+mitiflow ctl schema inspect --key-prefix myapp/events
+mitiflow ctl schema register --key-prefix myapp/events --topic orders \
+    --codec postcard --partitions 16 --key-format keyed
+mitiflow ctl schema validate --key-prefix myapp/events \
+    --codec postcard --partitions 16
+```
+
+> **See also:** [Topic Schema Registry](18_topic_schema_registry.md) for the full design, deployment modes, and schema evolution rules. [Configuration Reference](configuration.md#schema-validation) for `TopicSchemaMode` details.
+
+---
+
+## 10. Running the CLI
 
 Install the unified CLI:
 
@@ -345,7 +409,7 @@ mitiflow ctl diagnose --timeout 10
 
 ---
 
-## 10. Next Steps
+## 11. Next Steps
 
 | What you want to do | Where to go |
 |---------------------|-------------|

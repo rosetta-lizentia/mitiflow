@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use mitiflow::partition::hash_ring::{self, NodeDescriptor};
+use mitiflow::TopicSchema;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -11,6 +12,7 @@ use crate::error::AgentResult;
 use crate::membership::MembershipTracker;
 use crate::reconciler::Reconciler;
 use crate::recovery::RecoveryManager;
+use crate::schema_store::SchemaStore;
 use crate::status::StatusReporter;
 use crate::types::OverrideTable;
 
@@ -29,6 +31,7 @@ pub struct TopicWorker {
     overrides: Arc<RwLock<OverrideTable>>,
     cancel: CancellationToken,
     _override_task: Option<tokio::task::JoinHandle<()>>,
+    _schema_tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl TopicWorker {
@@ -37,6 +40,7 @@ impl TopicWorker {
         session: &Session,
         node_id: &str,
         config: TopicWorkerConfig,
+        schema_store: Arc<SchemaStore>,
     ) -> AgentResult<Self> {
         let key_prefix = config.key_prefix.clone();
         let cancel = CancellationToken::new();
@@ -99,7 +103,29 @@ impl TopicWorker {
             }))
         };
 
-        // 6. Build worker.
+        // 6a. Schema subscriber + queryable for this topic.
+        let mut schema_tasks = Vec::new();
+        {
+            let schema_sub_key = format!("{key_prefix}/_schema");
+            let schema_subscriber = session.declare_subscriber(&schema_sub_key).await?;
+            let store = Arc::clone(&schema_store);
+            let cancel_clone = cancel.clone();
+            schema_tasks.push(tokio::spawn(async move {
+                Self::schema_subscriber_task(&schema_subscriber, &store, &cancel_clone).await;
+            }));
+        }
+        {
+            let schema_q_key = format!("{key_prefix}/_schema");
+            let schema_queryable = session.declare_queryable(&schema_q_key).await?;
+            let store = Arc::clone(&schema_store);
+            let cancel_clone = cancel.clone();
+            let q_key = schema_q_key.clone();
+            schema_tasks.push(tokio::spawn(async move {
+                Self::schema_queryable_task(&schema_queryable, &q_key, &store, &cancel_clone).await;
+            }));
+        }
+
+        // 7. Build worker.
         let worker = Self {
             config: config.clone(),
             node_id: node_id.to_string(),
@@ -110,12 +136,13 @@ impl TopicWorker {
             overrides,
             cancel,
             _override_task: override_task,
+            _schema_tasks: schema_tasks,
         };
 
-        // 7. Initial reconciliation.
+        // 8. Initial reconciliation.
         worker.recompute_and_reconcile().await?;
 
-        // 8. Membership change callback.
+        // 9. Membership change callback.
         {
             let reconciler = Arc::clone(&worker.reconciler);
             let overrides = Arc::clone(&worker.overrides);
@@ -297,5 +324,96 @@ impl TopicWorker {
             }
         }
         Ok(())
+    }
+
+    /// Listen for schema puts and persist them with monotonic version guard.
+    async fn schema_subscriber_task(
+        subscriber: &zenoh::pubsub::Subscriber<zenoh::handlers::FifoChannelHandler<zenoh::sample::Sample>>,
+        store: &SchemaStore,
+        cancel: &CancellationToken,
+    ) {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                result = subscriber.recv_async() => {
+                    match result {
+                        Ok(sample) => {
+                            let bytes = sample.payload().to_bytes();
+                            match TopicSchema::from_bytes(&bytes) {
+                                Ok(schema) => {
+                                    match store.put_if_newer(&schema) {
+                                        Ok(true) => {
+                                            info!(
+                                                topic = %schema.name,
+                                                version = schema.schema_version,
+                                                "schema updated"
+                                            );
+                                        }
+                                        Ok(false) => {
+                                            debug!(
+                                                topic = %schema.name,
+                                                version = schema.schema_version,
+                                                "rejected stale schema"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            warn!("failed to persist schema: {e}");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("failed to parse incoming schema: {e}");
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Serve persisted schemas to peers via a Zenoh queryable.
+    async fn schema_queryable_task(
+        queryable: &zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>,
+        key: &str,
+        store: &SchemaStore,
+        cancel: &CancellationToken,
+    ) {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                result = queryable.recv_async() => {
+                    match result {
+                        Ok(query) => {
+                            match store.get(
+                                // Extract key_prefix from the query key by stripping /_schema
+                                key.strip_suffix("/_schema").unwrap_or(key)
+                            ) {
+                                Ok(Some(schema)) => {
+                                    match schema.to_bytes() {
+                                        Ok(bytes) => {
+                                            if let Err(e) = query.reply(key, bytes).await {
+                                                debug!("schema query reply failed: {e}");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("failed to serialize schema for reply: {e}");
+                                        }
+                                    }
+                                }
+                                Ok(None) => {
+                                    // No schema persisted — don't reply (let other respondents handle it)
+                                }
+                                Err(e) => {
+                                    warn!("failed to read schema from store: {e}");
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
     }
 }

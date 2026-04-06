@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
+use mitiflow::codec::CodecFormat;
+use mitiflow::schema::KeyFormat;
+
 use serde::{Deserialize, Serialize};
 
 /// Topic configuration managed by the orchestrator.
@@ -29,6 +32,15 @@ pub struct TopicConfig {
     /// will not serve this topic.
     #[serde(default)]
     pub excluded_labels: HashMap<String, String>,
+    /// Wire codec for events on this topic.
+    #[serde(default)]
+    pub codec: CodecFormat,
+    /// Key format: unkeyed or keyed events.
+    #[serde(default)]
+    pub key_format: KeyFormat,
+    /// Monotonically increasing schema version.
+    #[serde(default)]
+    pub schema_version: u32,
 }
 
 /// Retention policy for events.
