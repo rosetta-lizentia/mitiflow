@@ -212,7 +212,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions.
 
 ## Documentation
 
-Design documents are in [`docs/`](docs/):
+Full documentation is in [`docs/`](docs/index.md):
+
+### Tutorials & Guides
+
+| Document | Description |
+|----------|-------------|
+| [Getting Started](docs/getting_started.md) | Step-by-step tutorial: installation, pub/sub, keyed events, durable writes, consumer groups |
+| [Deployment Guide](docs/deployment.md) | Dev mode, containers, compose stack, Zenoh topology, monitoring, troubleshooting |
+| [Configuration Reference](docs/configuration.md) | Complete reference for all config options, codec selection, common patterns |
+
+### Design Documents
 
 | Document | Topic |
 |----------|-------|

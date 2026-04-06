@@ -27,13 +27,14 @@ services:
     restart: unless-stopped
 
   orchestrator:
-    image: ghcr.io/pawissanutt/mitiflow/orchestrator:dev
+    image: ghcr.io/pawissanutt/mitiflow/orchestrator:main
     container_name: mitiflow-orchestrator
     build:
       context: .
       dockerfile: Containerfile
       args:
         PACKAGE: mitiflow-orchestrator
+        BUILD_UI: true
     ports:
       - "127.0.0.1:8080:8080"
     environment:
@@ -50,7 +51,7 @@ services:
     restart: unless-stopped
 
   storage:
-    image: ghcr.io/pawissanutt/mitiflow/storage:dev
+    image: ghcr.io/pawissanutt/mitiflow/storage:main
     container_name: mitiflow-storage
     build:
       context: .
