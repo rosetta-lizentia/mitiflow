@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
-use mitiflow_agent::StoreState;
-use mitiflow_agent::reconciler::{ReconcileAction, Reconciler};
+use mitiflow_storage::StoreState;
+use mitiflow_storage::reconciler::{ReconcileAction, Reconciler};
 
 fn bus_config(test_name: &str) -> EventBusConfig {
     EventBusConfig::builder(format!("test/{test_name}"))
@@ -290,9 +290,9 @@ async fn reconciler_shutdown_all_stops_everything() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconciler_triggers_recovery_on_start() {
-    use mitiflow_agent::config::StorageAgentConfig;
-    use mitiflow_agent::membership::MembershipTracker;
-    use mitiflow_agent::recovery::RecoveryManager;
+    use mitiflow_storage::config::StorageAgentConfig;
+    use mitiflow_storage::membership::MembershipTracker;
+    use mitiflow_storage::recovery::RecoveryManager;
     use std::sync::Arc;
 
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();

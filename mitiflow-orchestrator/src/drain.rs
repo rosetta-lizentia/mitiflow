@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use mitiflow::partition::hash_ring::{NodeDescriptor, assign_replicas_rack_aware};
-use mitiflow_agent::OverrideEntry;
+use mitiflow_storage::OverrideEntry;
 
 use crate::cluster_view::ClusterView;
 use crate::override_manager::OverrideManager;

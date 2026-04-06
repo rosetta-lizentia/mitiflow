@@ -25,7 +25,7 @@ Initial release of mitiflow — a brokerless event streaming platform built on Z
 - **Metadata attachments** — 50-byte binary header in Zenoh attachments (zero-copy routing without payload deserialization)
 - **Durable publishing** — watermark-confirmed publishes with configurable timeout
 
-#### Storage Agent (`mitiflow-agent`)
+#### Storage Agent (`mitiflow-storage`)
 - **Distributed partition assignment** — weighted rendezvous hashing with rack-aware replica placement
 - **Multi-topic support** — `TopicSupervisor` + `TopicWatcher` + `TopicWorker` for dynamic topic discovery
 - **Reconciler** — desired vs actual state diffing with automatic store start/stop

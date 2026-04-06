@@ -5,7 +5,7 @@
 /mitiflow/src/ @pawis
 
 # Storage agent
-/mitiflow-agent/ @pawis
+/mitiflow-storage/ @pawis
 
 # Control plane
 /mitiflow-orchestrator/ @pawis

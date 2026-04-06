@@ -21,7 +21,7 @@ offset management:
 | Consumer group offset commit | ✅ Implemented | `commit_sync()` / `commit_async()` on `ConsumerGroupSubscriber` |
 | Generation fencing | ✅ Implemented | `PartitionManager::current_generation()` + fenced `commit_offsets()` on `FjallBackend` |
 | Rebalance offset handoff | ✅ Implemented | `fetch_offsets()` via store queryable on `_offsets/{partition}/**` |
-| Store/config automation | ✅ Implemented | Multi-topic agent (`mitiflow-agent`) + orchestrator topic provisioning |
+| Store/config automation | ✅ Implemented | Multi-topic agent (`mitiflow-storage`) + orchestrator topic provisioning |
 
 ### The Gap
 

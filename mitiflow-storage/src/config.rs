@@ -455,7 +455,7 @@ pub struct NodeYamlConfig {
     /// Node ID. `"auto"` or absent → UUID v7.
     #[serde(default = "default_auto")]
     pub id: String,
-    /// Base data directory (default: `/tmp/mitiflow-agent`).
+    /// Base data directory (default: `/tmp/mitiflow-storage`).
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     /// Capacity weight (default: 100).
@@ -476,7 +476,7 @@ impl Default for NodeYamlConfig {
     fn default() -> Self {
         Self {
             id: "auto".into(),
-            data_dir: PathBuf::from("/tmp/mitiflow-agent"),
+            data_dir: PathBuf::from("/tmp/mitiflow-storage"),
             capacity: 100,
             health_interval: Duration::from_secs(10),
             drain_grace_period: Duration::from_secs(30),
@@ -520,7 +520,7 @@ fn default_auto() -> String {
     "auto".into()
 }
 fn default_data_dir() -> PathBuf {
-    PathBuf::from("/tmp/mitiflow-agent")
+    PathBuf::from("/tmp/mitiflow-storage")
 }
 fn default_capacity() -> u32 {
     100

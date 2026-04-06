@@ -17,7 +17,7 @@ fn agent_binary() -> PathBuf {
         .parent() // debug/
         .unwrap()
         .to_path_buf();
-    path.push("mitiflow-agent");
+    path.push("mitiflow-storage");
     path
 }
 
@@ -53,7 +53,7 @@ impl AgentProcess {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .expect("failed to spawn mitiflow-agent binary");
+            .expect("failed to spawn mitiflow-storage binary");
 
         Self {
             child,

@@ -195,7 +195,7 @@ pub struct TopicRegistration {
 /// Multi-topic agent role configuration.
 ///
 /// Passed to the `mitiflow-emulator-agent` binary via `MITIFLOW_EMU_CONFIG`.
-/// Maps to `mitiflow_agent::AgentConfig` on the receiving side.
+/// Maps to `mitiflow_storage::AgentConfig` on the receiving side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRoleConfig {
     /// Node identifier (defaults to `"{component_name}-{instance}"`).

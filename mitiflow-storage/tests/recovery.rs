@@ -9,7 +9,7 @@ use std::time::Duration;
 use mitiflow::store::backend::StorageBackend;
 use mitiflow::store::query::QueryFilters;
 use mitiflow::{EventBusConfig, EventPublisher, EventStore, FjallBackend};
-use mitiflow_agent::recovery::RecoveryManager;
+use mitiflow_storage::recovery::RecoveryManager;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_from_peer_no_peers() {

@@ -54,7 +54,7 @@ mitiflow/                     # Core library crate
     └── slow_consumer_offload.rs
 ```
 
-Other crates: `mitiflow-agent` (storage daemon), `mitiflow-orchestrator`
+Other crates: `mitiflow-storage` (storage daemon), `mitiflow-orchestrator`
 (control plane), `mitiflow-emulator` (topology runner), `mitiflow-cli`
 (unified CLI), `mitiflow-gateway` (Kafka protocol stub), `mitiflow-bench`
 (benchmarks), `mitiflow-ui` (Svelte dashboard).

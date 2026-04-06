@@ -6,9 +6,9 @@ Two-tier architecture for partition placement and lifecycle across a cluster of 
 
 | Area | Key Files |
 |------|-----------|
-| Storage agent | `mitiflow-agent/src/agent.rs`, `reconciler.rs`, `recovery.rs`, `membership.rs`, `health.rs`, `status.rs` |
+| Storage agent | `mitiflow-storage/src/agent.rs`, `reconciler.rs`, `recovery.rs`, `membership.rs`, `health.rs`, `status.rs` |
 | Hash ring / HRW | `mitiflow/src/partition/hash_ring.rs` |
-| Topic management | `mitiflow-agent/src/topic_supervisor.rs`, `topic_watcher.rs`, `topic_worker.rs` |
+| Topic management | `mitiflow-storage/src/topic_supervisor.rs`, `topic_watcher.rs`, `topic_worker.rs` |
 | Orchestrator | `mitiflow-orchestrator/src/orchestrator.rs` |
 
 ---

@@ -1,13 +1,13 @@
 //! Storage agent role binary — spawned by the supervisor.
 //!
-//! Starts a mitiflow-agent StorageAgent that handles event persistence.
+//! Starts a mitiflow-storage StorageAgent that handles event persistence.
 
 use std::time::Duration;
 
 use mitiflow::codec::CodecFormat;
 use mitiflow::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
-use mitiflow_agent::StorageAgent;
-use mitiflow_agent::StorageAgentConfig;
+use mitiflow_storage::StorageAgent;
+use mitiflow_storage::StorageAgentConfig;
 use mitiflow_emulator::config::RecoveryModeConfig;
 use mitiflow_emulator::role_config::{StorageAgentRoleConfig, ZenohRoleConfig, decode_config};
 

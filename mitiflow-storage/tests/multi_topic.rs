@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use mitiflow_agent::{AgentConfig, AgentConfigBuilder, StorageAgent, TopicEntry};
+use mitiflow_storage::{AgentConfig, AgentConfigBuilder, StorageAgent, TopicEntry};
 
 fn multi_config(
     test_name: &str,
@@ -168,7 +168,7 @@ async fn agent_multi_topic_same_topic_two_nodes_splits() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_backward_compat_single_topic() {
     use mitiflow::EventBusConfig;
-    use mitiflow_agent::StorageAgentConfigBuilder;
+    use mitiflow_storage::StorageAgentConfigBuilder;
 
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();

@@ -94,7 +94,7 @@ async fn test_something() {
 |-------|---------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API |
-| `mitiflow-agent` | Storage agent — distributed partition management |
+| `mitiflow-storage` | Storage agent — distributed partition management |
 | `mitiflow-cli` | Unified CLI binary — agent, orchestrator, ctl, dev mode |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks (Kafka, NATS, Redis, Redpanda) |

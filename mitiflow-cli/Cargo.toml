@@ -1,6 +1,6 @@
 [package]
 name = "mitiflow-cli"
-description = "Unified CLI binary for mitiflow: agent, orchestrator, ctl, emulator, dev"
+description = "Unified CLI binary for mitiflow: storage, orchestrator, ctl, emulator, dev"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ full = ["ui"]
 
 [dependencies]
 mitiflow = { workspace = true, features = ["full"] }
-mitiflow-agent = { workspace = true }
+mitiflow-storage = { workspace = true }
 mitiflow-orchestrator = { workspace = true }
 zenoh = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }

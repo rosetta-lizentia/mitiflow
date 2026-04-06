@@ -2,5 +2,5 @@
 max-threads = 4
 
 [[profile.default.overrides]]
-filter = "package(mitiflow-agent)"
+filter = "package(mitiflow-storage)"
 test-group = "zenoh-integration"

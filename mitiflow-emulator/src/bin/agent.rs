@@ -1,8 +1,8 @@
 //! Multi-topic storage agent role binary — spawned by the supervisor.
 //!
-//! Starts a mitiflow-agent `StorageAgent` in multi-topic mode using `AgentConfig`.
+//! Starts a mitiflow-storage `StorageAgent` in multi-topic mode using `AgentConfig`.
 
-use mitiflow_agent::{AgentConfig, StorageAgent, TopicEntry};
+use mitiflow_storage::{AgentConfig, StorageAgent, TopicEntry};
 use mitiflow_emulator::role_config::{AgentRoleConfig, ZenohRoleConfig, decode_config};
 
 #[tokio::main]

@@ -279,7 +279,7 @@ async fn check_cluster_health(
 mod tests {
     use super::*;
     use crate::config::{CompactionPolicy, RetentionPolicy, TopicConfig};
-    use mitiflow_agent::{NodeStatus, PartitionStatus, StoreState};
+    use mitiflow_storage::{NodeStatus, PartitionStatus, StoreState};
 
     fn make_nodes() -> Arc<RwLock<HashMap<String, NodeInfo>>> {
         Arc::new(RwLock::new(HashMap::new()))

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow_agent::config::{AgentYamlConfig, ClusterYamlConfig, NodeYamlConfig};
+use mitiflow_storage::config::{AgentYamlConfig, ClusterYamlConfig, NodeYamlConfig};
 
 #[test]
 fn parse_agent_yaml_full() {
@@ -64,7 +64,7 @@ cluster:
     let cfg = AgentYamlConfig::from_yaml(yaml).unwrap();
     // Default values
     assert_eq!(cfg.node.id, "auto");
-    assert_eq!(cfg.node.data_dir.to_str().unwrap(), "/tmp/mitiflow-agent");
+    assert_eq!(cfg.node.data_dir.to_str().unwrap(), "/tmp/mitiflow-storage");
     assert_eq!(cfg.node.capacity, 100);
     assert_eq!(cfg.node.health_interval, Duration::from_secs(10));
     assert_eq!(cfg.node.drain_grace_period, Duration::from_secs(30));

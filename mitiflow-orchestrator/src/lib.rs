@@ -22,6 +22,6 @@ pub use override_manager::OverrideManager;
 pub use topic_manager::TopicManager;
 
 // Re-export agent types for consumers of this crate.
-pub use mitiflow_agent::{
+pub use mitiflow_storage::{
     NodeHealth, NodeMetadata, NodeStatus, OverrideEntry, OverrideTable, PartitionStatus, StoreState,
 };

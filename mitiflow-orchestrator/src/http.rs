@@ -215,7 +215,7 @@ pub struct DrainRequest {
 #[derive(Debug, Serialize)]
 pub struct DrainResponse {
     pub node_id: String,
-    pub overrides: Vec<mitiflow_agent::OverrideEntry>,
+    pub overrides: Vec<mitiflow_storage::OverrideEntry>,
 }
 
 /// Add overrides request.
@@ -827,10 +827,10 @@ async fn add_overrides(
         .as_ref()
         .ok_or_else(|| AppError::Internal("override manager not available".into()))?;
 
-    let entries: Vec<mitiflow_agent::OverrideEntry> = req
+    let entries: Vec<mitiflow_storage::OverrideEntry> = req
         .entries
         .into_iter()
-        .map(|e| mitiflow_agent::OverrideEntry {
+        .map(|e| mitiflow_storage::OverrideEntry {
             partition: e.partition,
             replica: e.replica,
             node_id: e.node_id,

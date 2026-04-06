@@ -10,7 +10,7 @@ Seven crates in a Cargo workspace (plus a standalone Svelte UI):
 |-------|--------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API |
-| `mitiflow-agent` | Storage agent — distributed partition management, multi-topic |
+| `mitiflow-storage` | Storage agent — distributed partition management, multi-topic |
 | `mitiflow-cli` | Unified CLI binary — `agent`, `orchestrator`, `ctl`, `dev` subcommands |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks vs Kafka, NATS, Redis, Redpanda |
@@ -99,7 +99,7 @@ async fn test_something() {
 | Partition assignment | `mitiflow/src/partition/mod.rs`, `partition/hash_ring.rs` |
 | Consumer group subscriber | `mitiflow/src/subscriber/consumer_group.rs` |
 | Test helpers | `mitiflow/tests/common/mod.rs` |
-| Storage agent | `mitiflow-agent/src/agent.rs`, `topic_supervisor.rs` |
+| Storage agent | `mitiflow-storage/src/agent.rs`, `topic_supervisor.rs` |
 | Orchestrator | `mitiflow-orchestrator/src/orchestrator.rs` |
 | Unified CLI | `mitiflow-cli/src/main.rs` |
 | Emulator | `mitiflow-emulator/src/` |

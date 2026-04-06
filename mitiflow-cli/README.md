@@ -7,12 +7,12 @@ administering a running cluster.
 
 ## Subcommands
 
-### `mitiflow agent`
+### `mitiflow storage`
 
 Run a storage agent (multi-topic capable).
 
 ```bash
-mitiflow agent --config agent.yaml
+mitiflow storage --config storage.yaml
 ```
 
 ### `mitiflow orchestrator`

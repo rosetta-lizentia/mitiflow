@@ -754,7 +754,7 @@ WORKDIR /app
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY mitiflow ./mitiflow
-COPY mitiflow-agent ./mitiflow-agent
+COPY mitiflow-storage ./mitiflow-storage
 COPY mitiflow-orchestrator ./mitiflow-orchestrator
 COPY mitiflow-emulator ./mitiflow-emulator
 RUN cargo chef prepare --recipe-path recipe.json
@@ -768,7 +768,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 FROM deps AS builder
 COPY Cargo.toml Cargo.lock ./
 COPY mitiflow ./mitiflow
-COPY mitiflow-agent ./mitiflow-agent
+COPY mitiflow-storage ./mitiflow-storage
 COPY mitiflow-orchestrator ./mitiflow-orchestrator
 COPY mitiflow-emulator ./mitiflow-emulator
 RUN cargo build --release -p mitiflow-emulator
@@ -920,7 +920,7 @@ Existing workspace dependencies reused:
 - `uuid`
 - `rand`
 - `mitiflow` (core library)
-- `mitiflow-agent` (StorageAgent)
+- `mitiflow-storage` (StorageAgent)
 - `mitiflow-orchestrator` (Orchestrator)
 
 ---

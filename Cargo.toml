@@ -5,7 +5,7 @@ members = [
     "mitiflow-gateway",
     "mitiflow-bench",
     "mitiflow-orchestrator",
-    "mitiflow-agent",
+    "mitiflow-storage",
     "mitiflow-emulator",
     "mitiflow-cli",
 ]
@@ -22,7 +22,7 @@ documentation = "https://docs.rs/mitiflow"
 
 [workspace.dependencies]
 mitiflow = { path = "mitiflow" }
-mitiflow-agent = { path = "mitiflow-agent" }
+mitiflow-storage = { path = "mitiflow-storage" }
 mitiflow-orchestrator = { path = "mitiflow-orchestrator" }
 
 

@@ -1,5 +1,5 @@
 [package]
-name = "mitiflow-agent"
+name = "mitiflow-storage"
 description = "Storage agent for distributed partition management in mitiflow"
 version.workspace = true
 edition.workspace = true

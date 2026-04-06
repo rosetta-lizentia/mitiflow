@@ -1,6 +1,6 @@
 //! Multi-process smoke tests.
 //!
-//! These tests spawn actual `mitiflow-agent` binaries as subprocesses.
+//! These tests spawn actual `mitiflow-storage` binaries as subprocesses.
 //! They verify that agents start, discover each other, and respond to
 //! process lifecycle events (SIGTERM, SIGKILL).
 

@@ -2252,32 +2252,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mitiflow-agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "humantime-serde",
- "miette",
- "mitiflow",
- "nix 0.31.2",
- "rand 0.10.0",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "zenoh",
-]
-
-[[package]]
 name = "mitiflow-bench"
 version = "0.1.0"
 dependencies = [
@@ -2308,8 +2282,8 @@ dependencies = [
  "humantime",
  "miette",
  "mitiflow",
- "mitiflow-agent",
  "mitiflow-orchestrator",
+ "mitiflow-storage",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2334,8 +2308,8 @@ dependencies = [
  "humantime-serde",
  "lightbench",
  "mitiflow",
- "mitiflow-agent",
  "mitiflow-orchestrator",
+ "mitiflow-storage",
  "nix 0.31.2",
  "rand 0.10.0",
  "serde",
@@ -2380,7 +2354,7 @@ dependencies = [
  "http-body-util",
  "mime_guess",
  "mitiflow",
- "mitiflow-agent",
+ "mitiflow-storage",
  "reqwest",
  "rust-embed",
  "serde",
@@ -2392,6 +2366,32 @@ dependencies = [
  "tokio-util",
  "tower",
  "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "zenoh",
+]
+
+[[package]]
+name = "mitiflow-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "humantime-serde",
+ "miette",
+ "mitiflow",
+ "nix 0.31.2",
+ "rand 0.10.0",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",

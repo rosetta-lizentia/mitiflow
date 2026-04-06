@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow_agent::TopicEntry;
-use mitiflow_agent::config::AgentConfig;
-use mitiflow_agent::topic_watcher::{RemoteTopicConfig, should_serve_topic};
+use mitiflow_storage::TopicEntry;
+use mitiflow_storage::config::AgentConfig;
+use mitiflow_storage::topic_watcher::{RemoteTopicConfig, should_serve_topic};
 
 // =========================================================================
 // should_serve_topic — label matching unit tests
@@ -234,7 +234,7 @@ async fn watcher_discovers_existing_topics_on_startup() {
 
     // Start agent with auto_discover=true, no static topics.
     let (_tmp, config) = agent_config(&prefix, "node-1", true, HashMap::new());
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
 
@@ -263,7 +263,7 @@ async fn watcher_reacts_to_new_topic() {
 
     // Start agent with auto_discover, no existing topics in orchestrator.
     let (_tmp, config) = agent_config(&prefix, "node-1", true, HashMap::new());
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -294,7 +294,7 @@ async fn watcher_reacts_to_deleted_topic() {
 
     // Start agent and add a topic manually.
     let (_tmp, config) = agent_config(&prefix, "node-1", true, HashMap::new());
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
 
@@ -331,7 +331,7 @@ async fn watcher_ignores_topic_missing_labels() {
     let mut agent_labels = HashMap::new();
     agent_labels.insert("tier".into(), "hdd".into());
     let (_tmp, config) = agent_config(&prefix, "node-1", true, agent_labels);
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -370,7 +370,7 @@ async fn watcher_serves_topic_matching_labels() {
     let mut agent_labels = HashMap::new();
     agent_labels.insert("rack".into(), "us-east".into());
     let (_tmp, config) = agent_config(&prefix, "node-1", true, agent_labels);
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -409,7 +409,7 @@ async fn watcher_excludes_by_label() {
     let mut agent_labels = HashMap::new();
     agent_labels.insert("env".into(), "staging".into());
     let (_tmp, config) = agent_config(&prefix, "node-1", true, agent_labels);
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -446,7 +446,7 @@ async fn watcher_idempotent_on_duplicate_config() {
     let session = zenoh::open(zenoh::Config::default()).await.unwrap();
 
     let (_tmp, config) = agent_config(&prefix, "node-1", true, HashMap::new());
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, config)
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, config)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;

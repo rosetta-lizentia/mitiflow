@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use mitiflow_agent::health::HealthReporter;
-use mitiflow_agent::status::StatusReporter;
-use mitiflow_agent::types::{NodeHealth, NodeStatus, PartitionStatus, StoreState};
+use mitiflow_storage::health::HealthReporter;
+use mitiflow_storage::status::StatusReporter;
+use mitiflow_storage::types::{NodeHealth, NodeStatus, PartitionStatus, StoreState};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn health_reporter_publishes_periodically() {

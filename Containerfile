@@ -3,10 +3,10 @@
 # Multi-stage build with cargo-chef for optimal layer caching
 #
 # Build with:
-#   podman build --build-arg PACKAGE=mitiflow-agent -t mitiflow-agent .
+#   podman build --build-arg PACKAGE=mitiflow-storage -t mitiflow-storage .
 #   podman build --build-arg PACKAGE=mitiflow-orchestrator --build-arg BUILD_UI=true -t mitiflow-orchestrator .
 
-ARG PACKAGE=mitiflow-agent
+ARG PACKAGE=mitiflow-storage
 
 # ============================================
 # Stage 1: Chef (install cargo-chef)
@@ -37,10 +37,10 @@ FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 
 # Rewrite workspace members to include only production crates
-RUN sed -i '/^members/,/^\]/c\members = [\n    "mitiflow",\n    "mitiflow-agent",\n    "mitiflow-orchestrator",\n]' Cargo.toml
+RUN sed -i '/^members/,/^\]/c\members = [\n    "mitiflow",\n    "mitiflow-storage",\n    "mitiflow-orchestrator",\n]' Cargo.toml
 
 COPY mitiflow ./mitiflow
-COPY mitiflow-agent ./mitiflow-agent
+COPY mitiflow-storage ./mitiflow-storage
 COPY mitiflow-orchestrator ./mitiflow-orchestrator
 
 RUN cargo chef prepare --recipe-path recipe.json
@@ -99,10 +99,10 @@ ARG BUILD_UI=false
 COPY Cargo.toml Cargo.lock ./
 
 # Rewrite workspace members to include only production crates
-RUN sed -i '/^members/,/^\]/c\members = [\n    "mitiflow",\n    "mitiflow-agent",\n    "mitiflow-orchestrator",\n]' Cargo.toml
+RUN sed -i '/^members/,/^\]/c\members = [\n    "mitiflow",\n    "mitiflow-storage",\n    "mitiflow-orchestrator",\n]' Cargo.toml
 
 COPY mitiflow ./mitiflow
-COPY mitiflow-agent ./mitiflow-agent
+COPY mitiflow-storage ./mitiflow-storage
 COPY mitiflow-orchestrator ./mitiflow-orchestrator
 
 # Copy pre-built UI assets for orchestrator build
@@ -120,7 +120,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     fi
 
 # Copy binary from cache mount to a persistent location in the image layer
+# Remove the source directory first to avoid cp placing the binary inside it
 RUN --mount=type=cache,target=/app/target,sharing=locked \
+    rm -rf /app/${PACKAGE} && \
     cp /app/target/release/${PACKAGE} /app/${PACKAGE}
 
 # ============================================
@@ -149,7 +151,7 @@ RUN mkdir -p /app/orchestrator_data && chown -R appuser:appuser /app
 
 # Copy built binary from builder stage
 COPY --from=builder /app/${PACKAGE} /usr/local/bin/app
-RUN chown appuser:appuser /usr/local/bin/app
+RUN chmod +x /usr/local/bin/app && chown appuser:appuser /usr/local/bin/app
 
 USER appuser
 

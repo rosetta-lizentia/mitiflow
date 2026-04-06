@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
-use mitiflow_agent::membership::{MembershipEvent, MembershipTracker};
-use mitiflow_agent::{StorageAgentConfig, StorageAgentConfigBuilder};
+use mitiflow_storage::membership::{MembershipEvent, MembershipTracker};
+use mitiflow_storage::{StorageAgentConfig, StorageAgentConfigBuilder};
 use tokio::sync::Notify;
 
 fn agent_config(test_name: &str, node_id: &str) -> StorageAgentConfig {

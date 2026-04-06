@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use mitiflow_agent::{NodeHealth, NodeMetadata, NodeStatus, StoreState};
+use mitiflow_storage::{NodeHealth, NodeMetadata, NodeStatus, StoreState};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;

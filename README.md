@@ -61,7 +61,7 @@ traditional message broker:
 | Crate | Purpose |
 |-------|---------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
-| `mitiflow-agent` | Storage agent — distributed partition management (not on the message path) |
+| `mitiflow-storage` | Storage agent — distributed partition management (not on the message path) |
 | `mitiflow-orchestrator` | Optional control plane — config CRUD, lag monitoring, HTTP API (not required for operation) |
 | `mitiflow-cli` | Unified CLI binary (`mitiflow agent`, `orchestrator`, `ctl`, `dev`) |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |

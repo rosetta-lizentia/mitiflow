@@ -50,7 +50,7 @@ build-with-ui: ui-build
 
 # Build the agent container image
 container-agent:
-    podman build --build-arg PACKAGE=mitiflow-agent -t mitiflow-agent .
+    podman build --build-arg PACKAGE=mitiflow-storage -t mitiflow-storage .
 
 # Build the orchestrator container image (with embedded UI)
 container-orchestrator:

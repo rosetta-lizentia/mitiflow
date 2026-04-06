@@ -1,4 +1,4 @@
-# mitiflow-agent
+# mitiflow-storage
 
 Distributed storage management for mitiflow.
 
@@ -23,10 +23,10 @@ assignment using weighted rendezvous hashing and Zenoh liveliness.
 
 ```bash
 # Via unified CLI
-mitiflow agent --config agent.yaml
+mitiflow agent --config storage.yaml
 
 # Directly
-cargo run -p mitiflow-agent -- --config agent.yaml
+cargo run -p mitiflow-storage -- --config storage.yaml
 ```
 
 ## Configuration

@@ -12,7 +12,7 @@ deployment model with dynamic topic discovery and a unified CLI.
 One agent process per node, serving any number of topics dynamically.
 
 ```
-┌─── mitiflow-agent process ──────────────────────────────────┐
+┌─── mitiflow-storage process ──────────────────────────────────┐
 │  AgentConfig { node_id, data_dir, capacity, labels }        │
 │                                                             │
 │  TopicSupervisor                                            │

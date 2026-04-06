@@ -7,7 +7,7 @@ Brokerless event streaming on Zenoh. Rust 2024 edition workspace + standalone Sv
 | Crate | Purpose |
 |-------|---------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
-| `mitiflow-agent` | Storage agent — distributed partition management |
+| `mitiflow-storage` | Storage agent — distributed partition management |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API (axum) |
 | `mitiflow-cli` | Unified CLI binary — `agent`, `orchestrator`, `ctl`, `dev` subcommands |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
@@ -169,7 +169,7 @@ let events = common::recv_n(&subscriber, 10).await;
 | Storage backend trait | `mitiflow/src/store/backend.rs` |
 | Partition management | `mitiflow/src/partition/mod.rs`, `partition/hash_ring.rs` |
 | Test helpers | `mitiflow/tests/common/mod.rs` |
-| Storage agent | `mitiflow-agent/src/agent.rs` |
+| Storage agent | `mitiflow-storage/src/agent.rs` |
 | Orchestrator HTTP API | `mitiflow-orchestrator/src/orchestrator.rs` |
 | CLI entry point | `mitiflow-cli/src/main.rs` |
 | Design documents | `docs/` |

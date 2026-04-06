@@ -16,7 +16,7 @@ The project is organized as a Cargo workspace with eight crates:
 mitiflow/
 ├── Cargo.toml                    # workspace root
 ├── mitiflow/                     # core library crate
-├── mitiflow-agent/               # multi-topic storage agent
+├── mitiflow-storage/               # multi-topic storage agent
 ├── mitiflow-orchestrator/        # control plane (config, lag, alerts)
 ├── mitiflow-cli/                 # unified CLI (agent, orchestrator, ctl)
 ├── mitiflow-emulator/            # topology simulation
@@ -703,14 +703,14 @@ Features beyond the core library phases, tracked across the codebase.
 | Orchestrator (config, lag, admin, HTTP API) | `mitiflow-orchestrator` | 28 + 15 + 7 tests | [11_consumer_group_commits.md](11_consumer_group_commits.md) |
 | Key-Based Publishing (phases 1–4) | `mitiflow` | `keyed_publish.rs`, `key_scoped.rs` | [15_key_based_publishing.md](15_key_based_publishing.md) |
 | Deterministic Replay (HLC + lifecycle) | `mitiflow` | Part of `store.rs` | [04_sequencing_and_replay.md](04_sequencing_and_replay.md) |
-| Distributed Storage (Tier 1 + Tier 2) | `mitiflow-agent` | 47+ tests across 10 test files | [13_distributed_storage.md](13_distributed_storage.md) |
-| Multi-Topic Agent & DX (phases A–F) | `mitiflow-agent`, `mitiflow-cli` | topic_supervisor, topic_watcher, yaml_config tests | [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) |
+| Distributed Storage (Tier 1 + Tier 2) | `mitiflow-storage` | 47+ tests across 10 test files | [13_distributed_storage.md](13_distributed_storage.md) |
+| Multi-Topic Agent & DX (phases A–F) | `mitiflow-storage`, `mitiflow-cli` | topic_supervisor, topic_watcher, yaml_config tests | [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) |
 | Slow Consumer Offload (core) | `mitiflow` | 14 unit + 6 E2E tests | [17_slow_consumer_offload.md](17_slow_consumer_offload.md) |
 | Graceful Termination | `mitiflow` | Integrated in existing tests | [10_graceful_termination.md](10_graceful_termination.md) |
 | Emulator (phases 1–3) | `mitiflow-emulator` | Topology runner tests | `mitiflow-emulator/DESIGN.md` |
 | GUI (phases 1–7) | `mitiflow-ui`, `mitiflow-orchestrator` | HTTP API + Vitest | `mitiflow-ui/DESIGN.md` |
 | Alert Manager | `mitiflow-orchestrator` | 8 unit tests | — |
-| Replication (multi-store + recovery) | `mitiflow-agent` | recovery.rs (5 tests) | [05_replication.md](05_replication.md) |
+| Replication (multi-store + recovery) | `mitiflow-storage` | recovery.rs (5 tests) | [05_replication.md](05_replication.md) |
 
 ### Open / Deferred
 

@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 mitiflow = { workspace = true, features = ["full"] }
-mitiflow-agent = { workspace = true }
+mitiflow-storage = { workspace = true }
 zenoh = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
-use mitiflow_agent::{StorageAgent, StorageAgentConfig, StorageAgentConfigBuilder};
+use mitiflow_storage::{StorageAgent, StorageAgentConfig, StorageAgentConfigBuilder};
 
 fn agent_config(
     test_name: &str,
@@ -196,8 +196,8 @@ async fn agent_respects_overrides() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Publish an override table pinning partition 0 to node-b.
-    let override_table = mitiflow_agent::OverrideTable {
-        entries: vec![mitiflow_agent::OverrideEntry {
+    let override_table = mitiflow_storage::OverrideTable {
+        entries: vec![mitiflow_storage::OverrideEntry {
             partition: 0,
             replica: 0,
             node_id: "node-b".to_string(),

@@ -333,7 +333,7 @@ impl Orchestrator {
         &self,
         node_id: &str,
         replication_factor: u32,
-    ) -> Result<Vec<mitiflow_agent::OverrideEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<mitiflow_storage::OverrideEntry>, Box<dyn std::error::Error + Send + Sync>> {
         let cv = self
             .cluster_view
             .as_ref()

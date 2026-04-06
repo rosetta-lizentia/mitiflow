@@ -142,7 +142,7 @@ while let Ok(event) = consumer.recv::<MyPayload>().await {
 | Crate | Purpose | Status |
 |-------|---------|--------|
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ, offload | ✅ Complete |
-| `mitiflow-agent` | Storage member daemon — per-topic workers, rebalancing, membership, recovery | ✅ Complete |
+| `mitiflow-storage` | Storage member daemon — per-topic workers, rebalancing, membership, recovery | ✅ Complete |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API, cluster view | ✅ Core done |
 | `mitiflow-emulator` | YAML-driven topology runner, chaos testing, process/container backends | ✅ Complete |
 | `mitiflow-cli` | Unified CLI — agent, orchestrator, ctl subcommands | ✅ Complete |

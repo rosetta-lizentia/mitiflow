@@ -43,7 +43,7 @@ full = ["ui"]
 
 [dependencies]
 mitiflow = { path = "../mitiflow", features = ["full"] }
-mitiflow-agent = { path = "../mitiflow-agent" }
+mitiflow-storage = { path = "../mitiflow-storage" }
 mitiflow-orchestrator = { path = "../mitiflow-orchestrator" }
 zenoh = { workspace = true }
 tokio = { workspace = true, features = ["signal", "process", "fs", "io-util"] }

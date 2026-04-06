@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use mitiflow_agent::{OverrideEntry, OverrideTable};
+use mitiflow_storage::{OverrideEntry, OverrideTable};
 use tokio::sync::RwLock;
 use tracing::info;
 use zenoh::Session;

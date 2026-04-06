@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use mitiflow::EventBusConfig;
-use mitiflow_agent::{AgentYamlConfig, StorageAgent, StorageAgentConfig};
+use mitiflow_storage::{AgentYamlConfig, StorageAgent, StorageAgentConfig};
 use tracing_subscriber::EnvFilter;
 
 #[cfg(unix)]
@@ -21,7 +21,7 @@ async fn wait_for_sigterm() {
 
 /// Mitiflow storage agent — manages EventStore partitions via distributed assignment.
 #[derive(Parser)]
-#[command(name = "mitiflow-agent")]
+#[command(name = "mitiflow-storage")]
 struct Cli {
     /// Path to YAML configuration file.
     #[arg(short, long)]
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         // Legacy env-var mode
         let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
         let data_dir =
-            std::env::var("MITIFLOW_DATA_DIR").unwrap_or_else(|_| "/tmp/mitiflow-agent".into());
+            std::env::var("MITIFLOW_DATA_DIR").unwrap_or_else(|_| "/tmp/mitiflow-storage".into());
         let node_id = std::env::var("MITIFLOW_NODE_ID").ok();
         let num_partitions: u32 = std::env::var("MITIFLOW_NUM_PARTITIONS")
             .ok()

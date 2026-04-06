@@ -1,7 +1,7 @@
 //! Unified `mitiflow` CLI binary.
 //!
 //! Subcommands:
-//!   agent         — Run a storage agent (multi-topic capable)
+//!   storage       — Run the storage service (multi-topic capable)
 //!   orchestrator  — Run the orchestrator control plane
 //!   ctl           — Admin CLI (topics, cluster, drain)
 //!   dev           — All-in-one dev mode (orchestrator + agent + embedded Zenoh)
@@ -25,8 +25,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a storage agent (multi-topic capable).
-    Agent {
+    /// Run the storage service (multi-topic capable).
+    Storage {
         /// Path to YAML configuration file.
         #[arg(short, long)]
         config: Option<PathBuf>,
@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Agent { config } => run_agent(config).await,
+        Commands::Storage { config } => run_storage(config).await,
         Commands::Orchestrator { config } => run_orchestrator(config).await,
         Commands::Ctl { command } => run_ctl(command).await,
         Commands::Dev {
@@ -135,20 +135,20 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn run_agent(config_path: Option<PathBuf>) -> anyhow::Result<()> {
+async fn run_storage(config_path: Option<PathBuf>) -> anyhow::Result<()> {
     let session = zenoh::open(zenoh::Config::default())
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let mut agent = if let Some(path) = config_path {
-        let yaml = mitiflow_agent::AgentYamlConfig::from_file(&path)?;
+        let yaml = mitiflow_storage::AgentYamlConfig::from_file(&path)?;
         let agent_config = yaml.into_agent_config()?;
-        mitiflow_agent::StorageAgent::start_multi(&session, agent_config).await?
+        mitiflow_storage::StorageAgent::start_multi(&session, agent_config).await?
     } else {
         // Env-var fallback
         let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
         let data_dir =
-            std::env::var("MITIFLOW_DATA_DIR").unwrap_or_else(|_| "/tmp/mitiflow-agent".into());
+            std::env::var("MITIFLOW_DATA_DIR").unwrap_or_else(|_| "/tmp/mitiflow-storage".into());
         let node_id = std::env::var("MITIFLOW_NODE_ID").ok();
         let num_partitions: u32 = std::env::var("MITIFLOW_NUM_PARTITIONS")
             .ok()
@@ -165,14 +165,14 @@ async fn run_agent(config_path: Option<PathBuf>) -> anyhow::Result<()> {
 
         let bus_config = mitiflow::EventBusConfig::builder(&key_prefix).build()?;
         let mut builder =
-            mitiflow_agent::StorageAgentConfig::builder(PathBuf::from(&data_dir), bus_config)
+            mitiflow_storage::StorageAgentConfig::builder(PathBuf::from(&data_dir), bus_config)
                 .capacity(capacity)
                 .num_partitions(num_partitions)
                 .replication_factor(replication_factor);
         if let Some(id) = node_id {
             builder = builder.node_id(id);
         }
-        mitiflow_agent::StorageAgent::start(&session, builder.build()?).await?
+        mitiflow_storage::StorageAgent::start(&session, builder.build()?).await?
     };
 
     tracing::info!("storage agent running, press Ctrl+C to stop");
@@ -510,12 +510,12 @@ async fn run_dev(
     // Start agent in auto-discover mode
     let agent_dir = data_dir.join("agent");
     std::fs::create_dir_all(&agent_dir)?;
-    let agent_config = mitiflow_agent::AgentConfig::builder(agent_dir)
+    let agent_config = mitiflow_storage::AgentConfig::builder(agent_dir)
         .global_prefix(&prefix)
         .auto_discover_topics(true)
         .build()?;
 
-    let mut agent = mitiflow_agent::StorageAgent::start_multi(&session, agent_config).await?;
+    let mut agent = mitiflow_storage::StorageAgent::start_multi(&session, agent_config).await?;
 
     tracing::info!(
         topics = ?topic_specs.iter().map(|(n,p,r)| format!("{n}:{p}:{r}")).collect::<Vec<_>>(),

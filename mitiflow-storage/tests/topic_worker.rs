@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mitiflow_agent::topic_worker::TopicWorker;
-use mitiflow_agent::{TopicEntry, TopicWorkerConfig};
+use mitiflow_storage::topic_worker::TopicWorker;
+use mitiflow_storage::{TopicEntry, TopicWorkerConfig};
 
 fn worker_config(
     test_name: &str,
@@ -133,8 +133,8 @@ async fn topic_worker_respects_overrides() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Publish override pinning partition 0 to node-b.
-    let override_table = mitiflow_agent::OverrideTable {
-        entries: vec![mitiflow_agent::OverrideEntry {
+    let override_table = mitiflow_storage::OverrideTable {
+        entries: vec![mitiflow_storage::OverrideEntry {
             partition: 0,
             replica: 0,
             node_id: "node-b".to_string(),

@@ -11,7 +11,7 @@ pub enum AgentError {
 
     #[error("store error: {0}")]
     #[diagnostic(
-        code(mitiflow::agent::store),
+        code(mitiflow::storage::store),
         help(
             "Check disk space and permissions for the data directory. Another process may be locking the store."
         )
@@ -26,7 +26,7 @@ pub enum AgentError {
 
     #[error("invalid configuration: {0}")]
     #[diagnostic(
-        code(mitiflow::agent::config),
+        code(mitiflow::storage::config),
         help("Check the agent configuration file or environment variables.")
     )]
     Config(String),
@@ -58,7 +58,7 @@ mod tests {
     fn store_error_has_code() {
         let err = AgentError::Store("locked".into());
         let code = err.code().map(|c| c.to_string());
-        assert_eq!(code.as_deref(), Some("mitiflow::agent::store"));
+        assert_eq!(code.as_deref(), Some("mitiflow::storage::store"));
     }
 
     #[test]

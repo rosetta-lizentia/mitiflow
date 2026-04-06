@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use mitiflow::attachment::decode_metadata;
 use mitiflow::{EventBusConfig, EventPublisher};
-use mitiflow_agent::{StorageAgent, StorageAgentConfigBuilder};
+use mitiflow_storage::{StorageAgent, StorageAgentConfigBuilder};
 
 /// A managed cluster of StorageAgent instances for testing.
 pub struct TestCluster {

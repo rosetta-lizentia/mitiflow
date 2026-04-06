@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use mitiflow_agent::{AgentConfig, AgentConfigBuilder, TopicEntry, TopicSupervisor};
+use mitiflow_storage::{AgentConfig, AgentConfigBuilder, TopicEntry, TopicSupervisor};
 
 fn make_config(test_name: &str, topics: Vec<(&str, u32, u32)>) -> (tempfile::TempDir, AgentConfig) {
     let tmp = tempfile::tempdir().unwrap();

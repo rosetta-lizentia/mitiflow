@@ -24,7 +24,7 @@ private vulnerability reporting feature:
 The following are in scope for security reports:
 
 - **mitiflow** core library (publisher, subscriber, store, partitions)
-- **mitiflow-agent** (storage agent, membership, reconciler)
+- **mitiflow-storage** (storage agent, membership, reconciler)
 - **mitiflow-orchestrator** (control plane, HTTP API)
 - **mitiflow-cli** (unified binary)
 

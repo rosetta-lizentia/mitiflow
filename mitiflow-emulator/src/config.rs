@@ -455,7 +455,7 @@ pub struct ComponentDef {
     /// HTTP port for the orchestrator GUI/API server.
     pub http_port: Option<u16>,
 
-    /// Override RUST_LOG for this component (e.g. "debug", "mitiflow_agent=trace").
+    /// Override RUST_LOG for this component (e.g. "debug", "mitiflow_storage=trace").
     pub log_level: Option<String>,
 
     // -- General --
@@ -482,7 +482,7 @@ pub enum ComponentKind {
     Consumer,
     Processor,
     StorageAgent,
-    /// Multi-topic storage agent backed by `mitiflow-agent` `AgentConfig`.
+    /// Multi-topic storage agent backed by `mitiflow-storage` `AgentConfig`.
     Agent,
     Orchestrator,
 }
