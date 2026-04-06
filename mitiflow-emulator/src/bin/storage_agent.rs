@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use mitiflow::codec::CodecFormat;
 use mitiflow::config::{EventBusConfig, HeartbeatMode, RecoveryMode};
-use mitiflow_storage::StorageAgent;
-use mitiflow_storage::StorageAgentConfig;
 use mitiflow_emulator::config::RecoveryModeConfig;
 use mitiflow_emulator::role_config::{StorageAgentRoleConfig, ZenohRoleConfig, decode_config};
+use mitiflow_storage::StorageAgent;
+use mitiflow_storage::StorageAgentConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

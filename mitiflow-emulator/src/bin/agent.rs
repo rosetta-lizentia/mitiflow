@@ -2,8 +2,8 @@
 //!
 //! Starts a mitiflow-storage `StorageAgent` in multi-topic mode using `AgentConfig`.
 
-use mitiflow_storage::{AgentConfig, StorageAgent, TopicEntry};
 use mitiflow_emulator::role_config::{AgentRoleConfig, ZenohRoleConfig, decode_config};
+use mitiflow_storage::{AgentConfig, StorageAgent, TopicEntry};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
