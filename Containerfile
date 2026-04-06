@@ -20,11 +20,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y \
     libssl-dev \
     pkg-config \
-    && cargo install cargo-chef --locked \
-    && cargo install sccache --locked
-
-ENV SCCACHE_DIR=/sccache \
-    RUSTC_WRAPPER=/usr/local/cargo/bin/sccache
+  && cargo install cargo-chef --locked
 
 WORKDIR /app
 
@@ -53,8 +49,7 @@ FROM chef AS deps
 COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,sharing=locked \
-    --mount=type=cache,target=/sccache,sharing=locked \
+  --mount=type=cache,target=/app/target,sharing=locked \
     cargo chef cook --release --recipe-path recipe.json
 
 # ============================================
@@ -112,7 +107,6 @@ COPY --from=ui-builder /app/mitiflow-ui/build ./mitiflow-ui/build
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,sharing=locked \
-    --mount=type=cache,target=/sccache,sharing=locked \
     if [ "$BUILD_UI" = "true" ]; then \
       cargo build --release --package ${PACKAGE} --features ui; \
     else \
