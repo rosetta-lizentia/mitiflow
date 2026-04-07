@@ -34,6 +34,10 @@ pub struct OrchestratorConfig {
     pub http_bind: Option<std::net::SocketAddr>,
     /// Auth token for HTTP API. Falls back to `MITIFLOW_UI_TOKEN` env var.
     pub auth_token: Option<String>,
+    /// Path to a YAML file containing topic definitions to bootstrap on startup.
+    /// The file must have a `topics` array (other top-level keys are ignored).
+    /// Topics already present in the config store are skipped (idempotent).
+    pub bootstrap_topics_from: Option<std::path::PathBuf>,
 }
 
 /// The orchestrator control-plane service.
@@ -220,6 +224,11 @@ impl Orchestrator {
             }));
         }
 
+        // Bootstrap topics from YAML file (idempotent — skips existing topics)
+        if let Some(path) = self.config.bootstrap_topics_from.clone() {
+            self.bootstrap_from_file(&path).await;
+        }
+
         // Distribute existing configs on startup
         self.publish_all_configs().await;
         self.publish_all_schemas().await;
@@ -394,6 +403,60 @@ impl Orchestrator {
             .as_ref()
             .ok_or("override manager not started")?;
         crate::drain::undrain_node(node_id, om).await
+    }
+
+    /// Bootstrap topics from a YAML file.
+    ///
+    /// Reads the `topics` array from the given file and creates any topics
+    /// that are not already present in the config store. This allows the
+    /// orchestrator to reuse the storage agent's YAML configuration directly.
+    async fn bootstrap_from_file(&mut self, path: &std::path::Path) {
+        let bootstrap = match crate::config::BootstrapConfig::from_file(path) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "failed to read bootstrap topics file");
+                return;
+            }
+        };
+
+        if bootstrap.topics.is_empty() {
+            debug!(path = %path.display(), "bootstrap file contains no topics");
+            return;
+        }
+
+        let mut created = 0u32;
+        let mut skipped = 0u32;
+        for entry in bootstrap.topics {
+            let name = entry.name.clone();
+            match self.config_store.get_topic(&name) {
+                Ok(Some(_)) => {
+                    debug!(topic = %name, "bootstrap: topic already exists, skipping");
+                    skipped += 1;
+                }
+                Ok(None) => {
+                    let topic_config = entry.into_topic_config();
+                    match self.create_topic(topic_config).await {
+                        Ok(()) => {
+                            info!(topic = %name, "bootstrap: topic created");
+                            created += 1;
+                        }
+                        Err(e) => {
+                            warn!(topic = %name, error = %e, "bootstrap: failed to create topic");
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(topic = %name, error = %e, "bootstrap: failed to check topic existence");
+                }
+            }
+        }
+
+        info!(
+            path = %path.display(),
+            created,
+            skipped,
+            "topic bootstrap complete"
+        );
     }
 
     /// Publish all stored configs via Zenoh.

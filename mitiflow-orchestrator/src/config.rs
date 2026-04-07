@@ -126,3 +126,69 @@ impl ConfigStore {
         }
     }
 }
+
+// ── Bootstrap from YAML ──────────────────────────────────────────────────
+
+/// Minimal type that parses the `topics` array from any YAML file,
+/// silently ignoring unknown top-level fields (`node`, `cluster`, etc.).
+/// This allows the orchestrator to reuse the storage agent's YAML directly.
+#[derive(Debug, Deserialize)]
+pub struct BootstrapConfig {
+    #[serde(default)]
+    pub topics: Vec<BootstrapTopicEntry>,
+}
+
+/// A topic entry in a bootstrap YAML file.
+/// All fields except `name` have sensible defaults.
+#[derive(Debug, Deserialize)]
+pub struct BootstrapTopicEntry {
+    pub name: String,
+    #[serde(default)]
+    pub key_prefix: String,
+    #[serde(default = "default_num_partitions")]
+    pub num_partitions: u32,
+    #[serde(default = "default_replication_factor")]
+    pub replication_factor: u32,
+    #[serde(default)]
+    pub codec: CodecFormat,
+    #[serde(default)]
+    pub key_format: KeyFormat,
+    #[serde(default)]
+    pub schema_version: u32,
+}
+
+fn default_num_partitions() -> u32 {
+    16
+}
+
+fn default_replication_factor() -> u32 {
+    1
+}
+
+impl BootstrapConfig {
+    /// Read and parse a bootstrap config from a YAML file.
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let content = std::fs::read_to_string(path)?;
+        let config: BootstrapConfig = serde_yaml::from_str(&content)?;
+        Ok(config)
+    }
+}
+
+impl BootstrapTopicEntry {
+    /// Convert into a full [`TopicConfig`] with default retention/compaction.
+    pub fn into_topic_config(self) -> TopicConfig {
+        TopicConfig {
+            name: self.name,
+            key_prefix: self.key_prefix,
+            num_partitions: self.num_partitions,
+            replication_factor: self.replication_factor,
+            retention: RetentionPolicy::default(),
+            compaction: CompactionPolicy::default(),
+            required_labels: HashMap::new(),
+            excluded_labels: HashMap::new(),
+            codec: self.codec,
+            key_format: self.key_format,
+            schema_version: self.schema_version,
+        }
+    }
+}

@@ -40,6 +40,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .or(Some(([0, 0, 0, 0], 8080).into()));
+    let bootstrap_topics_from: Option<PathBuf> = std::env::var("MITIFLOW_BOOTSTRAP_TOPICS_FROM")
+        .ok()
+        .map(PathBuf::from);
 
     let session = zenoh::open(zenoh::Config::default()).await?;
 
@@ -50,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         admin_prefix: None,
         http_bind,
         auth_token: None,
+        bootstrap_topics_from,
     };
 
     let mut orchestrator = Orchestrator::new(&session, config)?;

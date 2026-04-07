@@ -250,6 +250,9 @@ async fn run_orchestrator(config_path: Option<PathBuf>) -> anyhow::Result<()> {
             admin_prefix: None,
             http_bind: None,
             auth_token: None,
+            bootstrap_topics_from: std::env::var("MITIFLOW_BOOTSTRAP_TOPICS_FROM")
+                .ok()
+                .map(PathBuf::from),
         }
     };
 
@@ -610,6 +613,7 @@ async fn run_dev(
         admin_prefix: Some(format!("{prefix}/_admin")),
         http_bind: Some("0.0.0.0:8080".parse().unwrap()),
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orchestrator = mitiflow_orchestrator::Orchestrator::new(&session, orch_config)
@@ -702,6 +706,9 @@ struct OrchestratorYamlConfig {
     admin_prefix: Option<String>,
     /// HTTP API bind address (e.g. "0.0.0.0:8080"). Also settable via `MITIFLOW_HTTP_BIND`.
     http_bind: Option<String>,
+    /// Path to a YAML file with `topics` to bootstrap on startup.
+    /// Also settable via `MITIFLOW_BOOTSTRAP_TOPICS_FROM`.
+    bootstrap_topics_from: Option<PathBuf>,
 }
 
 fn default_key_prefix() -> String {
@@ -722,6 +729,11 @@ impl OrchestratorYamlConfig {
             .or(self.http_bind)
             .and_then(|s| s.parse().ok());
 
+        let bootstrap_topics_from = std::env::var("MITIFLOW_BOOTSTRAP_TOPICS_FROM")
+            .ok()
+            .map(PathBuf::from)
+            .or(self.bootstrap_topics_from);
+
         mitiflow_orchestrator::orchestrator::OrchestratorConfig {
             key_prefix: self.key_prefix,
             data_dir: self.data_dir,
@@ -729,6 +741,7 @@ impl OrchestratorYamlConfig {
             admin_prefix: self.admin_prefix,
             http_bind,
             auth_token: None,
+            bootstrap_topics_from,
         }
     }
 }

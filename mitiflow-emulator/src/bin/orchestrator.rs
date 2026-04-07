@@ -62,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
         admin_prefix: None, // Use default.
         http_bind,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     tracing::info!(
