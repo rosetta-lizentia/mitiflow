@@ -99,6 +99,7 @@ impl OrchestratorTestCluster {
             admin_prefix: Some(format!("{}/_admin", self.prefix)),
             http_bind: None,
             auth_token: None,
+            bootstrap_topics_from: None,
         };
         let mut orch = Orchestrator::new(&session, config).unwrap();
         orch.run().await.unwrap();

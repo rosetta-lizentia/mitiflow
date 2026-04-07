@@ -167,7 +167,9 @@ fn default_replication_factor() -> u32 {
 
 impl BootstrapConfig {
     /// Read and parse a bootstrap config from a YAML file.
-    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn from_file(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let content = std::fs::read_to_string(path)?;
         let config: BootstrapConfig = serde_yaml::from_str(&content)?;
         Ok(config)

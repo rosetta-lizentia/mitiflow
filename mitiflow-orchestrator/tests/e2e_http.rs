@@ -44,6 +44,7 @@ async fn start_orch_with_http(
         admin_prefix: None,
         http_bind: Some(([127, 0, 0, 1], port).into()),
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -253,6 +254,7 @@ async fn e2e_http_auth_required() {
             admin_prefix: None,
             http_bind: Some(([127, 0, 0, 1], port).into()),
             auth_token: Some("test-secret-42".to_string()),
+            bootstrap_topics_from: None,
         };
 
         let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -519,6 +521,7 @@ async fn e2e_http_publish_and_query_events() {
             admin_prefix: None,
             http_bind: Some(([127, 0, 0, 1], port).into()),
             auth_token: None,
+            bootstrap_topics_from: None,
         };
 
         let mut orch = Orchestrator::new(&session, config).unwrap();

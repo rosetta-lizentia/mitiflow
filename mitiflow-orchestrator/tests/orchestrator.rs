@@ -277,6 +277,7 @@ async fn orchestrator_create_list_delete_topic() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -345,6 +346,7 @@ async fn orchestrator_admin_queryable_topics() {
         admin_prefix: Some(admin.clone()),
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -419,6 +421,7 @@ async fn orchestrator_lag_integration() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1025,6 +1028,7 @@ async fn admin_cluster_nodes_endpoint() {
         admin_prefix: Some(admin.clone()),
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1087,6 +1091,7 @@ async fn admin_cluster_assignments_endpoint() {
         admin_prefix: Some(admin.clone()),
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1155,6 +1160,7 @@ async fn admin_cluster_status_summary() {
         admin_prefix: Some(admin.clone()),
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1232,6 +1238,7 @@ async fn multi_topic_cluster_view_created_on_topic_create() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1305,6 +1312,7 @@ async fn multi_topic_cluster_view_removed_on_topic_delete() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1371,6 +1379,7 @@ async fn multi_topic_views_pick_up_independent_agents() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1453,6 +1462,7 @@ async fn orchestrator_config_queryable_returns_all_topics() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
@@ -1530,6 +1540,7 @@ async fn orchestrator_config_queryable_returns_single_topic() {
         admin_prefix: None,
         http_bind: None,
         auth_token: None,
+        bootstrap_topics_from: None,
     };
 
     let mut orch = Orchestrator::new(&session, config).unwrap();
