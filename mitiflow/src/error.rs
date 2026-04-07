@@ -117,7 +117,9 @@ pub enum Error {
     OffloadFailed(String),
 
     /// No storage agent or orchestrator responded to a topic schema query.
-    #[error("topic schema not found for '{key_prefix}' (no storage agents or orchestrator responded)")]
+    #[error(
+        "topic schema not found for '{key_prefix}' (no storage agents or orchestrator responded)"
+    )]
     #[diagnostic(
         code(mitiflow::schema_not_found),
         help(

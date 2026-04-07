@@ -105,7 +105,13 @@ impl TopicSupervisor {
             )));
         }
 
-        let worker = TopicWorker::start(&self.session, &self.node_id, config, Arc::clone(&self.schema_store)).await?;
+        let worker = TopicWorker::start(
+            &self.session,
+            &self.node_id,
+            config,
+            Arc::clone(&self.schema_store),
+        )
+        .await?;
         self.workers.insert(name.to_string(), worker);
 
         // Update health with total partitions across all topics.

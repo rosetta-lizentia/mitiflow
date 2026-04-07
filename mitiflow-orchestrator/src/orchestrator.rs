@@ -169,10 +169,7 @@ impl Orchestrator {
         // Start _schema queryable so publishers/subscribers can fetch topic schemas.
         {
             let schema_key = format!("{}/_schema", self.config.key_prefix);
-            let schema_queryable = self
-                .session
-                .declare_queryable(&schema_key)
-                .await?;
+            let schema_queryable = self.session.declare_queryable(&schema_key).await?;
             let config_store_for_schema = Arc::clone(&self.config_store);
             let cancel_for_schema = self.cancel.clone();
             let key_prefix = self.config.key_prefix.clone();

@@ -87,9 +87,9 @@ fn config_store_multiple_topics() {
                 compaction: CompactionPolicy::default(),
                 required_labels: HashMap::new(),
                 excluded_labels: HashMap::new(),
-        codec: Default::default(),
-        key_format: Default::default(),
-        schema_version: 0,
+                codec: Default::default(),
+                key_format: Default::default(),
+                schema_version: 0,
             })
             .unwrap();
     }
@@ -108,9 +108,9 @@ fn config_store_multiple_topics() {
             compaction: CompactionPolicy::default(),
             required_labels: HashMap::new(),
             excluded_labels: HashMap::new(),
-        codec: Default::default(),
-        key_format: Default::default(),
-        schema_version: 0,
+            codec: Default::default(),
+            key_format: Default::default(),
+            schema_version: 0,
         })
         .unwrap();
 
@@ -137,9 +137,9 @@ fn config_store_persistence() {
                 compaction: CompactionPolicy::default(),
                 required_labels: HashMap::new(),
                 excluded_labels: HashMap::new(),
-        codec: Default::default(),
-        key_format: Default::default(),
-        schema_version: 0,
+                codec: Default::default(),
+                key_format: Default::default(),
+                schema_version: 0,
             })
             .unwrap();
     }

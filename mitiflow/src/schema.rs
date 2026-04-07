@@ -95,7 +95,11 @@ impl TopicSchema {
     /// Construct a `TopicSchema` from an [`EventBusConfig`], using the provided
     /// topic name and key format. Sets `schema_version` to 1 and timestamps
     /// to now.
-    pub fn from_config(config: &EventBusConfig, name: impl Into<String>, key_format: KeyFormat) -> Self {
+    pub fn from_config(
+        config: &EventBusConfig,
+        name: impl Into<String>,
+        key_format: KeyFormat,
+    ) -> Self {
         let now = Utc::now();
         Self {
             name: name.into(),
@@ -221,10 +225,7 @@ pub async fn fetch_schema_with_timeout(
 pub async fn register_schema(session: &Session, schema: &TopicSchema) -> Result<()> {
     let key = TopicSchema::schema_key(&schema.key_prefix);
     let bytes = schema.to_bytes()?;
-    session
-        .put(&key, bytes)
-        .await
-        .map_err(Error::Zenoh)?;
+    session.put(&key, bytes).await.map_err(Error::Zenoh)?;
     Ok(())
 }
 
@@ -264,11 +265,8 @@ pub async fn resolve_schema(
                     Ok(None)
                 }
                 Err(Error::TopicSchemaNotFound { .. }) => {
-                    let schema = TopicSchema::from_config(
-                        config,
-                        &config.key_prefix,
-                        KeyFormat::default(),
-                    );
+                    let schema =
+                        TopicSchema::from_config(config, &config.key_prefix, KeyFormat::default());
                     register_schema(session, &schema).await?;
                     tracing::info!(
                         key_prefix = %config.key_prefix,

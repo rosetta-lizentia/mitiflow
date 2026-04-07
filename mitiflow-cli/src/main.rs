@@ -528,14 +528,19 @@ async fn run_schema_ctl(
                 "postcard" => mitiflow::codec::CodecFormat::Postcard,
                 other => anyhow::bail!("unknown codec: {other}"),
             };
-            let key_format: mitiflow::schema::KeyFormat = match key_format.to_lowercase().as_str()
-            {
+            let key_format: mitiflow::schema::KeyFormat = match key_format.to_lowercase().as_str() {
                 "unkeyed" => mitiflow::schema::KeyFormat::Unkeyed,
                 "keyed" => mitiflow::schema::KeyFormat::Keyed,
                 other => anyhow::bail!("unknown key_format: {other}"),
             };
-            let schema =
-                mitiflow::schema::TopicSchema::new(&key_prefix, name, partitions, codec, key_format, 1);
+            let schema = mitiflow::schema::TopicSchema::new(
+                &key_prefix,
+                name,
+                partitions,
+                codec,
+                key_format,
+                1,
+            );
             mitiflow::schema::register_schema(session, &schema).await?;
             println!("Schema registered for '{key_prefix}'");
         }

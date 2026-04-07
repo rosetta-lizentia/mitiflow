@@ -152,9 +152,7 @@ async fn test_schema_disabled_no_query() {
         .heartbeat(mitiflow::HeartbeatMode::Disabled)
         .build()
         .unwrap();
-    let publisher = EventPublisher::new(&session, config.clone())
-        .await
-        .unwrap();
+    let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
     let subscriber = EventSubscriber::new(&session, config).await.unwrap();
 
     drop(publisher);

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use mitiflow::partition::hash_ring::{self, NodeDescriptor};
 use mitiflow::TopicSchema;
+use mitiflow::partition::hash_ring::{self, NodeDescriptor};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -328,7 +328,9 @@ impl TopicWorker {
 
     /// Listen for schema puts and persist them with monotonic version guard.
     async fn schema_subscriber_task(
-        subscriber: &zenoh::pubsub::Subscriber<zenoh::handlers::FifoChannelHandler<zenoh::sample::Sample>>,
+        subscriber: &zenoh::pubsub::Subscriber<
+            zenoh::handlers::FifoChannelHandler<zenoh::sample::Sample>,
+        >,
         store: &SchemaStore,
         cancel: &CancellationToken,
     ) {
@@ -375,7 +377,9 @@ impl TopicWorker {
 
     /// Serve persisted schemas to peers via a Zenoh queryable.
     async fn schema_queryable_task(
-        queryable: &zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>,
+        queryable: &zenoh::query::Queryable<
+            zenoh::handlers::FifoChannelHandler<zenoh::query::Query>,
+        >,
         key: &str,
         store: &SchemaStore,
         cancel: &CancellationToken,

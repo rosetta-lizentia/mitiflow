@@ -76,7 +76,9 @@ async fn topic_worker_two_nodes_split() {
     let (_t2, c2) = worker_config("tw_split", "events", 8, 1);
     let (_sd, ss) = test_schema_store();
 
-    let w1 = TopicWorker::start(&s1, "node-a", c1, ss.clone()).await.unwrap();
+    let w1 = TopicWorker::start(&s1, "node-a", c1, ss.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     let w2 = TopicWorker::start(&s2, "node-b", c2, ss).await.unwrap();
 
@@ -139,9 +141,13 @@ async fn topic_worker_respects_overrides() {
     let (_t2, c2) = worker_config("tw_override", "events", 4, 1);
     let (_sd, ss) = test_schema_store();
 
-    let w1 = TopicWorker::start(&session, "node-a", c1, ss.clone()).await.unwrap();
+    let w1 = TopicWorker::start(&session, "node-a", c1, ss.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let w2 = TopicWorker::start(&session, "node-b", c2, ss).await.unwrap();
+    let w2 = TopicWorker::start(&session, "node-b", c2, ss)
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Publish override pinning partition 0 to node-b.
@@ -185,7 +191,9 @@ async fn topic_worker_recompute_after_node_leave() {
     let (_t2, c2) = worker_config("tw_leave", "events", 6, 1);
     let (_sd, ss) = test_schema_store();
 
-    let w1 = TopicWorker::start(&s1, "node-a", c1, ss.clone()).await.unwrap();
+    let w1 = TopicWorker::start(&s1, "node-a", c1, ss.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     let w2 = TopicWorker::start(&s2, "node-b", c2, ss).await.unwrap();
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -220,9 +228,13 @@ async fn topic_worker_multi_replica_rf2() {
     let (_t3, c3) = worker_config("tw_rf2", "events", 4, 2);
     let (_sd, ss) = test_schema_store();
 
-    let w1 = TopicWorker::start(&s1, "node-a", c1, ss.clone()).await.unwrap();
+    let w1 = TopicWorker::start(&s1, "node-a", c1, ss.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let w2 = TopicWorker::start(&s2, "node-b", c2, ss.clone()).await.unwrap();
+    let w2 = TopicWorker::start(&s2, "node-b", c2, ss.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     let w3 = TopicWorker::start(&s3, "node-c", c3, ss).await.unwrap();
 

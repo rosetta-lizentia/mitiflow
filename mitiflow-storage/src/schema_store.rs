@@ -127,9 +127,7 @@ mod tests {
         let store = SchemaStore::open(dir.path()).unwrap();
 
         store.put(&sample_schema("app/events", 1)).unwrap();
-        let accepted = store
-            .put_if_newer(&sample_schema("app/events", 2))
-            .unwrap();
+        let accepted = store.put_if_newer(&sample_schema("app/events", 2)).unwrap();
         assert!(accepted);
 
         let got = store.get("app/events").unwrap().unwrap();
@@ -142,9 +140,7 @@ mod tests {
         let store = SchemaStore::open(dir.path()).unwrap();
 
         store.put(&sample_schema("app/events", 3)).unwrap();
-        let accepted = store
-            .put_if_newer(&sample_schema("app/events", 2))
-            .unwrap();
+        let accepted = store.put_if_newer(&sample_schema("app/events", 2)).unwrap();
         assert!(!accepted);
 
         let got = store.get("app/events").unwrap().unwrap();
@@ -157,9 +153,7 @@ mod tests {
         let store = SchemaStore::open(dir.path()).unwrap();
 
         store.put(&sample_schema("app/events", 1)).unwrap();
-        let accepted = store
-            .put_if_newer(&sample_schema("app/events", 1))
-            .unwrap();
+        let accepted = store.put_if_newer(&sample_schema("app/events", 1)).unwrap();
         assert!(!accepted);
     }
 
