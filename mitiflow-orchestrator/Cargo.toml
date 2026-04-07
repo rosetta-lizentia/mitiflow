@@ -20,10 +20,10 @@ fjall = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 tokio-util = { workspace = true }
-flume = { workspace = true }
+# flume = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 axum = { workspace = true }
-tower-http = { workspace = true, features = ["cors"] }
+# tower-http = { workspace = true, features = ["cors"] }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
 rust-embed = { workspace = true, optional = true }

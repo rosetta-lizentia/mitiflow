@@ -16,14 +16,14 @@ full = ["kafka", "nats", "redis"]
 [dependencies]
 mitiflow = { path = "../mitiflow", features = ["full"] }
 zenoh = { workspace = true }
-zenoh-ext = { version = "1.8", features = ["unstable"] }
+zenoh-ext = { workspace = true, features = ["unstable"] }
 futures = "0.3"
 tokio-stream = "0.1"
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+# serde = { workspace = true }
+# serde_json = { workspace = true }
 lightbench = { version = "0.3", features = ["clap"] }
 clap = { version = "4", features = ["derive"] }
 rand = "0.8"

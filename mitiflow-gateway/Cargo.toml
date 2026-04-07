@@ -8,7 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-mitiflow = { path = "../mitiflow", features = ["full"] }
+mitiflow = { workspace = true, features = ["full"] }
 zenoh = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

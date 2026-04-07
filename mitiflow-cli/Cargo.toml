@@ -21,7 +21,7 @@ mitiflow-storage = { workspace = true }
 mitiflow-orchestrator = { workspace = true }
 zenoh = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }
-tokio-util = { workspace = true }
+# tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
@@ -29,6 +29,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 anyhow = {workspace = true}
-miette = { workspace = true, features = ["fancy"] }
-uuid = { workspace = true }
-humantime = { workspace = true }
+# miette = { workspace = true, features = ["fancy"] }
+# uuid = { workspace = true }
+# humantime = { workspace = true }
