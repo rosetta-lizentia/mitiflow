@@ -3,13 +3,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use mitiflow_storage::{NodeHealth, NodeMetadata, NodeStatus, StoreState};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, info};
 use zenoh::Session;
 
 use crate::http::ClusterEvent;
@@ -43,6 +44,12 @@ pub struct NodeInfo {
     pub last_seen: DateTime<Utc>,
 }
 
+/// Default timeout after which offline nodes are automatically evicted.
+pub const DEFAULT_EVICTION_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+
+/// Callback invoked when a node is evicted from the cluster view.
+pub type EvictionCallback = Arc<dyn Fn(String) + Send + Sync>;
+
 /// Aggregated cluster-wide view built from agent status/health streams.
 pub struct ClusterView {
     nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
@@ -54,6 +61,8 @@ pub struct ClusterView {
     /// Held to keep the channel alive; subscribers receive from cloned senders in tasks.
     #[allow(dead_code)]
     cluster_tx: Option<broadcast::Sender<ClusterEvent>>,
+    /// Callback invoked when a node is evicted (used to clean up overrides, lag data, etc.)
+    eviction_callback: Arc<RwLock<Option<EvictionCallback>>>,
 }
 
 impl ClusterView {
@@ -67,7 +76,7 @@ impl ClusterView {
         session: &Session,
         key_prefix: &str,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_inner(session, key_prefix, None).await
+        Self::new_inner(session, key_prefix, None, DEFAULT_EVICTION_TIMEOUT).await
     }
 
     /// Create a new ClusterView with a broadcast sender for SSE streaming.
@@ -76,13 +85,24 @@ impl ClusterView {
         key_prefix: &str,
         tx: broadcast::Sender<ClusterEvent>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_inner(session, key_prefix, Some(tx)).await
+        Self::new_inner(session, key_prefix, Some(tx), DEFAULT_EVICTION_TIMEOUT).await
+    }
+
+    /// Create a new ClusterView with a custom eviction timeout.
+    pub async fn new_with_eviction(
+        session: &Session,
+        key_prefix: &str,
+        cluster_tx: Option<broadcast::Sender<ClusterEvent>>,
+        eviction_timeout: Duration,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_inner(session, key_prefix, cluster_tx, eviction_timeout).await
     }
 
     async fn new_inner(
         session: &Session,
         key_prefix: &str,
         cluster_tx: Option<broadcast::Sender<ClusterEvent>>,
+        eviction_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let nodes: Arc<RwLock<HashMap<String, NodeInfo>>> = Arc::new(RwLock::new(HashMap::new()));
         let cancel = CancellationToken::new();
@@ -252,6 +272,75 @@ impl ClusterView {
             }
         }));
 
+        // --- Periodic eviction of long-offline nodes ---
+        let eviction_callback: Arc<RwLock<Option<EvictionCallback>>> = Arc::new(RwLock::new(None));
+        if eviction_timeout > Duration::ZERO {
+            let evict_nodes = Arc::clone(&nodes);
+            let evict_cancel = cancel.clone();
+            let evict_tx = cluster_tx.clone();
+            let evict_cb = Arc::clone(&eviction_callback);
+            tasks.push(tokio::spawn(async move {
+                // Check every 1/10th of the eviction timeout, minimum 5s
+                let check_interval = (eviction_timeout / 10).max(Duration::from_secs(5));
+                let mut ticker = tokio::time::interval(check_interval);
+                loop {
+                    tokio::select! {
+                        _ = evict_cancel.cancelled() => break,
+                        _ = ticker.tick() => {
+                            let now = Utc::now();
+                            let threshold = chrono::TimeDelta::from_std(eviction_timeout)
+                                .unwrap_or(chrono::TimeDelta::seconds(300));
+
+                            // Phase 1: identify nodes to evict (under read lock would
+                            // work, but we need write lock to remove them anyway).
+                            let evicted_ids: Vec<String> = {
+                                let mut map = evict_nodes.write().await;
+                                let mut to_evict = Vec::new();
+                                for (node_id, info) in map.iter() {
+                                    if info.online {
+                                        continue;
+                                    }
+                                    let age = now.signed_duration_since(info.last_seen);
+                                    if age > threshold {
+                                        to_evict.push(node_id.clone());
+                                    }
+                                }
+                                for id in &to_evict {
+                                    if let Some(info) = map.remove(id) {
+                                        info!(
+                                            node_id = id,
+                                            last_seen = %info.last_seen,
+                                            offline_secs = now.signed_duration_since(info.last_seen).num_seconds(),
+                                            "evicting offline node from cluster view"
+                                        );
+                                    }
+                                }
+                                to_evict
+                            };
+
+                            // Phase 2: fire events and callbacks outside the lock.
+                            let cb = evict_cb.read().await;
+                            for node_id in &evicted_ids {
+                                if let Some(ref tx) = evict_tx {
+                                    let _ = tx.send(ClusterEvent::NodeOffline {
+                                        node_id: node_id.clone(),
+                                        timestamp: now.to_rfc3339(),
+                                    });
+                                }
+                                if let Some(ref f) = *cb {
+                                    f(node_id.clone());
+                                }
+                            }
+
+                            if !evicted_ids.is_empty() {
+                                debug!(evicted = evicted_ids.len(), "eviction sweep completed");
+                            }
+                        }
+                    }
+                }
+            }));
+        }
+
         Ok(Self {
             nodes,
             session: session.clone(),
@@ -259,6 +348,7 @@ impl ClusterView {
             cancel,
             tasks,
             cluster_tx,
+            eviction_callback,
         })
     }
 
@@ -337,6 +427,28 @@ impl ClusterView {
     /// Access the key prefix.
     pub fn key_prefix(&self) -> &str {
         &self.key_prefix
+    }
+
+    /// Register a callback invoked when a node is evicted.
+    pub async fn set_eviction_callback(&self, cb: EvictionCallback) {
+        *self.eviction_callback.write().await = Some(cb);
+    }
+
+    /// Manually evict a specific node from the cluster view.
+    ///
+    /// Returns `true` if the node was found and removed.
+    pub async fn evict_node(&self, node_id: &str) -> bool {
+        let removed = {
+            let mut map = self.nodes.write().await;
+            map.remove(node_id).is_some()
+        };
+        if removed {
+            info!(node_id, "node manually evicted from cluster view");
+            if let Some(ref cb) = *self.eviction_callback.read().await {
+                cb(node_id.to_string());
+            }
+        }
+        removed
     }
 
     /// Shut down all background tasks.

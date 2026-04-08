@@ -176,11 +176,41 @@ impl Orchestrator {
             cluster_tx.clone(),
         )
         .await?;
-        self.cluster_view = Some(Arc::new(cluster_view));
 
         // Start override manager
         let override_manager = OverrideManager::new(&self.session, &self.config.key_prefix);
-        self.override_manager = Some(Arc::new(override_manager));
+        let override_manager = Arc::new(override_manager);
+
+        // Wire eviction callback: when a node is evicted from the cluster view,
+        // automatically clean up its drain overrides and stale lag entries.
+        {
+            let om = Arc::clone(&override_manager);
+            let lm = self.lag_monitor.as_ref().map(Arc::clone);
+            cluster_view
+                .set_eviction_callback(Arc::new(move |node_id: String| {
+                    let om = Arc::clone(&om);
+                    let lm = lm.as_ref().map(Arc::clone);
+                    tokio::spawn(async move {
+                        // Remove drain overrides for the evicted node
+                        let _ = om.remove_entries_for_node(&node_id).await;
+                        info!(node_id, "cleaned up drain overrides for evicted node");
+
+                        // Clear stale lag entries
+                        if let Some(lm) = lm {
+                            let removed = lm
+                                .clear_stale_entries(crate::lag::DEFAULT_STALENESS_THRESHOLD)
+                                .await;
+                            if removed > 0 {
+                                info!(node_id, removed, "cleared stale lag entries after eviction");
+                            }
+                        }
+                    });
+                }))
+                .await;
+        }
+
+        self.cluster_view = Some(Arc::new(cluster_view));
+        self.override_manager = Some(override_manager);
 
         // Start topic manager and bootstrap per-topic cluster views
         let mut topic_manager = TopicManager::new(&self.session);
@@ -409,9 +439,10 @@ impl Orchestrator {
 
             // Remove per-topic schema queryable
             if let Some(sm) = &mut self.schema_manager
-                && let Some(kp) = &topic_key_prefix {
-                    sm.remove_topic(kp);
-                }
+                && let Some(kp) = &topic_key_prefix
+            {
+                sm.remove_topic(kp);
+            }
 
             // Remove per-topic cluster view
             if let Some(ref tm) = self.topic_manager {

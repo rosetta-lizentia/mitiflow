@@ -3,8 +3,55 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
+use tracing::info;
 
 use crate::error::AgentError;
+
+// ---------------------------------------------------------------------------
+// Node identity persistence
+// ---------------------------------------------------------------------------
+
+const NODE_ID_FILENAME: &str = ".node_id";
+
+/// Resolve a stable node ID using the following priority:
+///
+/// 1. `MITIFLOW_NODE_ID` environment variable (highest priority)
+/// 2. Existing `.node_id` file in `data_dir`
+/// 3. Generate a new UUID v7, persist it to `data_dir/.node_id`, and return it
+///
+/// This ensures a storage agent keeps the same identity across restarts as long
+/// as its data directory is preserved.
+fn resolve_or_persist_node_id(data_dir: &Path) -> String {
+    // 1. Environment variable takes precedence
+    if let Ok(id) = std::env::var("MITIFLOW_NODE_ID")
+        && !id.is_empty()
+    {
+        info!(node_id = %id, source = "env", "resolved node identity");
+        return id;
+    }
+
+    // 2. Read from persisted file
+    let id_path = data_dir.join(NODE_ID_FILENAME);
+    if let Ok(contents) = std::fs::read_to_string(&id_path) {
+        let id = contents.trim().to_string();
+        if !id.is_empty() {
+            info!(node_id = %id, source = "file", path = %id_path.display(), "resolved node identity");
+            return id;
+        }
+    }
+
+    // 3. Generate new UUID v7 and persist it
+    let id = uuid::Uuid::now_v7().to_string();
+    if let Err(e) = std::fs::create_dir_all(data_dir) {
+        tracing::warn!(error = %e, "failed to create data_dir for node_id persistence");
+    }
+    if let Err(e) = std::fs::write(&id_path, &id) {
+        tracing::warn!(error = %e, path = %id_path.display(), "failed to persist node_id (will regenerate on next restart)");
+    } else {
+        info!(node_id = %id, source = "generated", path = %id_path.display(), "persisted new node identity");
+    }
+    id
+}
 
 // ---------------------------------------------------------------------------
 // TopicEntry — static topic entry for multi-topic agent config
@@ -201,7 +248,7 @@ impl AgentConfigBuilder {
     pub fn build(self) -> Result<AgentConfig, AgentError> {
         let node_id = self
             .node_id
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+            .unwrap_or_else(|| resolve_or_persist_node_id(&self.data_dir));
 
         if self.topics.is_empty() && !self.auto_discover_topics {
             return Err(AgentError::Config(
@@ -348,7 +395,7 @@ impl StorageAgentConfigBuilder {
     pub fn build(self) -> Result<StorageAgentConfig, AgentError> {
         let node_id = self
             .node_id
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+            .unwrap_or_else(|| resolve_or_persist_node_id(&self.data_dir));
 
         if self.num_partitions == 0 {
             return Err(AgentError::Config("num_partitions must be > 0".into()));
@@ -557,15 +604,15 @@ impl AgentYamlConfig {
 
     /// Convert to [`AgentConfig`], applying env-var overrides.
     pub fn into_agent_config(self) -> Result<AgentConfig, AgentError> {
-        let node_id = if self.node.id == "auto" {
-            std::env::var("MITIFLOW_NODE_ID").unwrap_or_else(|_| uuid::Uuid::now_v7().to_string())
-        } else {
-            self.node.id
-        };
-
         let data_dir = std::env::var("MITIFLOW_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or(self.node.data_dir);
+
+        let node_id = if self.node.id == "auto" {
+            resolve_or_persist_node_id(&data_dir)
+        } else {
+            self.node.id
+        };
 
         let global_prefix =
             std::env::var("MITIFLOW_GLOBAL_PREFIX").unwrap_or(self.cluster.global_prefix);

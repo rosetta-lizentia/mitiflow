@@ -67,6 +67,7 @@ export interface LagReport {
   publishers: Record<string, number>;
   total: number;
   timestamp: string;
+  is_stale?: boolean;
 }
 
 export interface ClusterStatus {

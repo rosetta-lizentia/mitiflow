@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
@@ -27,12 +27,24 @@ pub struct LagReport {
     /// Sum of per-publisher lag.
     pub total: u64,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Whether this report is based on stale data (watermark not updated recently).
+    #[serde(default)]
+    pub is_stale: bool,
 }
 
-type OffsetMap = Arc<RwLock<HashMap<(String, u32, PublisherId), u64>>>;
+/// Watermark entry with last-update timestamp.
+struct TimestampedValue {
+    value: u64,
+    last_updated: Instant,
+}
 
-type WaterMarkMap = Arc<RwLock<HashMap<(u32, PublisherId), u64>>>;
+type OffsetMap = Arc<RwLock<HashMap<(String, u32, PublisherId), TimestampedValue>>>;
 
+type WaterMarkMap = Arc<RwLock<HashMap<(u32, PublisherId), TimestampedValue>>>;
+
+/// Default staleness threshold: entries not updated within this period are
+/// considered stale.
+pub const DEFAULT_STALENESS_THRESHOLD: Duration = Duration::from_secs(120); // 2 minutes
 /// Lag monitor that aggregates watermarks and committed offsets.
 pub struct LagMonitor {
     #[allow(dead_code)]
@@ -43,10 +55,11 @@ pub struct LagMonitor {
     watermarks: WaterMarkMap,
     /// Latest committed offset per (group_id, partition, publisher).
     offsets: OffsetMap,
+    /// How old entries can be before being marked stale.
+    staleness_threshold: Duration,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
     /// Optional broadcast sender for SSE lag streaming.
-    /// Held to keep the channel alive; subscribers receive from cloned senders in tasks.
     #[allow(dead_code)]
     lag_tx: Option<broadcast::Sender<LagReport>>,
 }
@@ -78,8 +91,7 @@ impl LagMonitor {
         lag_tx: Option<broadcast::Sender<LagReport>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let cancel = CancellationToken::new();
-        let watermarks: Arc<RwLock<HashMap<(u32, PublisherId), u64>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let watermarks: WaterMarkMap = Arc::new(RwLock::new(HashMap::new()));
         let offsets: OffsetMap = Arc::new(RwLock::new(HashMap::new()));
 
         let mut tasks = Vec::new();
@@ -100,11 +112,16 @@ impl LagMonitor {
                                 let payload = sample.payload().to_bytes();
                                 if let Ok(wm) = serde_json::from_slice::<CommitWatermark>(&payload) {
                                     let mut map = wm_map.write().await;
+                                    let now = Instant::now();
                                     for (pub_id, pw) in &wm.publishers {
-                                        let entry = map.entry((wm.partition, *pub_id)).or_insert(0);
-                                        if pw.committed_seq > *entry {
-                                            *entry = pw.committed_seq;
+                                        let entry = map.entry((wm.partition, *pub_id)).or_insert(TimestampedValue {
+                                            value: 0,
+                                            last_updated: now,
+                                        });
+                                        if pw.committed_seq > entry.value {
+                                            entry.value = pw.committed_seq;
                                         }
+                                        entry.last_updated = now;
                                     }
                                 }
                             }
@@ -132,12 +149,17 @@ impl LagMonitor {
                                 let payload = sample.payload().to_bytes();
                                 if let Ok(commit) = serde_json::from_slice::<OffsetCommit>(&payload) {
                                     let mut map = offset_map.write().await;
+                                    let now = Instant::now();
                                     for (pub_id, seq) in &commit.offsets {
                                         let key = (commit.group_id.clone(), commit.partition, *pub_id);
-                                        let entry = map.entry(key).or_insert(0);
-                                        if *seq > *entry {
-                                            *entry = *seq;
+                                        let entry = map.entry(key).or_insert(TimestampedValue {
+                                            value: 0,
+                                            last_updated: now,
+                                        });
+                                        if *seq > entry.value {
+                                            entry.value = *seq;
                                         }
+                                        entry.last_updated = now;
                                     }
                                 }
                             }
@@ -168,23 +190,29 @@ impl LagMonitor {
                         // Group offsets by (group_id, partition)
                         let mut groups: HashMap<(String, u32), HashMap<PublisherId, u64>> =
                             HashMap::new();
-                        for ((group_id, partition, pub_id), offset_seq) in offsets.iter() {
+                        for ((group_id, partition, pub_id), tsv) in offsets.iter() {
                             let entry = groups
                                 .entry((group_id.clone(), *partition))
                                 .or_default();
-                            let wm_seq = wm.get(&(*partition, *pub_id)).copied().unwrap_or(0);
-                            let lag = wm_seq.saturating_sub(*offset_seq);
+                            let wm_seq = wm.get(&(*partition, *pub_id)).map(|v| v.value).unwrap_or(0);
+                            let lag = wm_seq.saturating_sub(tsv.value);
                             entry.insert(*pub_id, lag);
                         }
 
+                        let now_instant = Instant::now();
                         for ((group_id, partition), publishers) in &groups {
                             let total: u64 = publishers.values().sum();
+                            // Check if any watermark for this partition is stale
+                            let is_stale = wm.iter().any(|((p, _), tsv)| {
+                                *p == *partition && now_instant.duration_since(tsv.last_updated) > DEFAULT_STALENESS_THRESHOLD
+                            });
                             let report = LagReport {
                                 group_id: group_id.clone(),
                                 partition: *partition,
                                 publishers: publishers.clone(),
                                 total,
                                 timestamp: chrono::Utc::now(),
+                                is_stale,
                             };
                             // Broadcast for SSE
                             if let Some(ref tx) = broadcast_tx {
@@ -210,6 +238,7 @@ impl LagMonitor {
             key_prefix: key_prefix.to_string(),
             watermarks,
             offsets,
+            staleness_threshold: DEFAULT_STALENESS_THRESHOLD,
             cancel,
             tasks,
             lag_tx,
@@ -220,15 +249,16 @@ impl LagMonitor {
     pub async fn get_group_lag(&self, group_id: &str) -> Vec<LagReport> {
         let wm = self.watermarks.read().await;
         let offsets = self.offsets.read().await;
+        let now = Instant::now();
 
         let mut by_partition: HashMap<u32, HashMap<PublisherId, u64>> = HashMap::new();
 
-        for ((gid, partition, pub_id), offset_seq) in offsets.iter() {
+        for ((gid, partition, pub_id), tsv) in offsets.iter() {
             if gid != group_id {
                 continue;
             }
-            let wm_seq = wm.get(&(*partition, *pub_id)).copied().unwrap_or(0);
-            let lag = wm_seq.saturating_sub(*offset_seq);
+            let wm_seq = wm.get(&(*partition, *pub_id)).map(|v| v.value).unwrap_or(0);
+            let lag = wm_seq.saturating_sub(tsv.value);
             by_partition
                 .entry(*partition)
                 .or_default()
@@ -239,12 +269,17 @@ impl LagMonitor {
             .into_iter()
             .map(|(partition, publishers)| {
                 let total: u64 = publishers.values().sum();
+                let is_stale = wm.iter().any(|((p, _), tsv)| {
+                    *p == partition
+                        && now.duration_since(tsv.last_updated) > self.staleness_threshold
+                });
                 LagReport {
                     group_id: group_id.to_string(),
                     partition,
                     publishers,
                     total,
                     timestamp: chrono::Utc::now(),
+                    is_stale,
                 }
             })
             .collect()
@@ -264,6 +299,31 @@ impl LagMonitor {
     }
 
     /// Return publisher info derived from watermarks.
+    /// Remove all watermark and offset entries that haven't been updated
+    /// within the given `max_age`. Returns the number of entries removed.
+    pub async fn clear_stale_entries(&self, max_age: Duration) -> usize {
+        let now = Instant::now();
+        let mut removed = 0;
+
+        {
+            let mut wm = self.watermarks.write().await;
+            let before = wm.len();
+            wm.retain(|_, tsv| now.duration_since(tsv.last_updated) <= max_age);
+            removed += before - wm.len();
+        }
+        {
+            let mut offsets = self.offsets.write().await;
+            let before = offsets.len();
+            offsets.retain(|_, tsv| now.duration_since(tsv.last_updated) <= max_age);
+            removed += before - offsets.len();
+        }
+
+        if removed > 0 {
+            debug!(removed, "cleared stale lag monitor entries");
+        }
+        removed
+    }
+
     pub async fn get_publishers(&self) -> Vec<(PublisherId, Vec<u32>)> {
         let wm = self.watermarks.read().await;
         let mut by_pub: HashMap<PublisherId, Vec<u32>> = HashMap::new();
