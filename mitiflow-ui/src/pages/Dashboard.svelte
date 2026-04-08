@@ -3,16 +3,17 @@
   import StatCard from "../components/StatCard.svelte";
   import StatusBadge from "../components/StatusBadge.svelte";
   import LagSparkline from "../components/LagSparkline.svelte";
-  import { getClusterStatus, getClusterNodes, listTopics, listConsumerGroups } from "$lib/api";
+  import { getClusterStatus, getClusterNodes, listTopics, listConsumerGroups, getAllClients } from "$lib/api";
   import { startClusterSSE, stopClusterSSE, getClusterNodes as getLiveNodes, setClusterNodes } from "../stores/cluster.svelte";
   import { startEventSSE, stopEventSSE, getEvents } from "../stores/events.svelte";
   import { startLagSSE, stopLagSSE, getLagReports } from "../stores/lag.svelte";
-  import type { ClusterStatus, TopicConfig, ConsumerGroupSummary } from "$lib/types";
+  import type { ClusterStatus, TopicConfig, ConsumerGroupSummary, TopicClients } from "$lib/types";
   import { shortId, formatBytes, timeAgo } from "$lib/format";
 
   let clusterStatus = $state<ClusterStatus | null>(null);
   let topics = $state<TopicConfig[]>([]);
   let groups = $state<ConsumerGroupSummary[]>([]);
+  let allClients = $state<TopicClients[]>([]);
   let error = $state("");
 
   // Per-group lag history for sparklines (keyed by group_id)
@@ -20,15 +21,17 @@
 
   onMount(async () => {
     try {
-      const [status, t, g, nodes] = await Promise.all([
+      const [status, t, g, nodes, clients] = await Promise.all([
         getClusterStatus(),
         listTopics(),
         listConsumerGroups(),
         getClusterNodes(),
+        getAllClients(),
       ]);
       clusterStatus = status;
       topics = t;
       groups = g;
+      allClients = clients;
       setClusterNodes(nodes);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -47,6 +50,8 @@
   const liveNodes = $derived(getLiveNodes());
   const recentEvents = $derived(getEvents().toReversed().slice(0, 10));
   const lagReports = $derived(getLagReports());
+  const totalPublishers = $derived(allClients.reduce((n, c) => n + c.publishers.length, 0));
+  const totalConsumers = $derived(allClients.reduce((n, c) => n + c.consumers.length, 0));
 
   // Build lag history per group from live reports
   $effect(() => {
@@ -66,7 +71,7 @@
   {/if}
 
   <!-- Summary cards -->
-  <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+  <div class="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
     <StatCard
       label="Topics"
       value={topics.length}
@@ -83,6 +88,14 @@
     <StatCard
       label="Consumer Groups"
       value={groups.length}
+    />
+    <StatCard
+      label="Publishers"
+      value={totalPublishers}
+    />
+    <StatCard
+      label="Consumers"
+      value={totalConsumers}
     />
   </div>
 

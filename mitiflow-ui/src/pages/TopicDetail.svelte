@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getTopic, getTopicPartitions, getTopicLag, getTopicPublishers, updateTopic, deleteTopic } from "$lib/api";
+  import { getTopic, getTopicPartitions, getTopicLag, getTopicPublishers, getTopicClients, updateTopic, deleteTopic } from "$lib/api";
   import { push } from "svelte-spa-router";
-  import type { TopicConfig, PartitionInfo, TopicLagSummary, PublisherInfo, UpdateTopicRequest } from "$lib/types";
+  import type { TopicConfig, PartitionInfo, TopicLagSummary, PublisherInfo, TopicClients, UpdateTopicRequest } from "$lib/types";
   import StatusBadge from "../components/StatusBadge.svelte";
   import PartitionGrid from "../components/PartitionGrid.svelte";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
@@ -14,6 +14,7 @@
   let partitions = $state<PartitionInfo[]>([]);
   let lag = $state<TopicLagSummary[]>([]);
   let publishers = $state<PublisherInfo[]>([]);
+  let clients = $state<TopicClients | null>(null);
   let error = $state("");
   let showDeleteConfirm = $state(false);
   let editingRF = $state(false);
@@ -31,11 +32,12 @@
   async function load() {
     try {
       const name = params.name;
-      [topic, partitions, lag, publishers] = await Promise.all([
+      [topic, partitions, lag, publishers, clients] = await Promise.all([
         getTopic(name),
         getTopicPartitions(name),
         getTopicLag(name),
         getTopicPublishers(name),
+        getTopicClients(name),
       ]);
       if (topic) {
         newRF = topic.replication_factor;
@@ -158,9 +160,59 @@
       </div>
       <div class="rounded-xl border border-gray-800 bg-gray-900 p-4">
         <p class="text-xs text-gray-500">Publishers</p>
-        <p class="text-xl font-semibold">{publishers.length}</p>
+        <p class="text-xl font-semibold">{clients?.publishers.length ?? publishers.length}</p>
       </div>
     </div>
+
+    <!-- Live clients -->
+    {#if clients && (clients.publishers.length > 0 || clients.consumers.length > 0)}
+      <section>
+        <h2 class="mb-2 text-lg font-semibold text-gray-300">Live Clients</h2>
+        <div class="grid gap-4 md:grid-cols-2">
+          <!-- Publishers -->
+          <div class="rounded-lg border border-gray-800 bg-gray-900 p-4">
+            <h3 class="mb-2 text-sm font-semibold text-gray-400">
+              Publishers
+              <span class="ml-1 text-xs font-normal text-gray-600">({clients.publishers.length})</span>
+            </h3>
+            {#if clients.publishers.length === 0}
+              <p class="text-sm text-gray-600">No live publishers</p>
+            {:else}
+              <ul class="space-y-1">
+                {#each clients.publishers as pub_client}
+                  <li class="flex items-center gap-2 text-sm">
+                    <span class="inline-block h-2 w-2 rounded-full bg-green-500"></span>
+                    <span class="font-mono text-xs text-gray-300">{shortId(pub_client.id)}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+          <!-- Consumers -->
+          <div class="rounded-lg border border-gray-800 bg-gray-900 p-4">
+            <h3 class="mb-2 text-sm font-semibold text-gray-400">
+              Consumers
+              <span class="ml-1 text-xs font-normal text-gray-600">({clients.consumers.length})</span>
+            </h3>
+            {#if clients.consumers.length === 0}
+              <p class="text-sm text-gray-600">No live consumers</p>
+            {:else}
+              <ul class="space-y-1">
+                {#each clients.consumers as consumer}
+                  <li class="flex items-center gap-2 text-sm">
+                    <span class="inline-block h-2 w-2 rounded-full bg-blue-500"></span>
+                    <span class="font-mono text-xs text-gray-300">{consumer.id}</span>
+                    {#if consumer.group_id}
+                      <span class="rounded bg-gray-800 px-1.5 py-0.5 text-xs text-gray-500">{consumer.group_id}</span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </div>
+      </section>
+    {/if}
 
     <!-- Partition grid -->
     <section>

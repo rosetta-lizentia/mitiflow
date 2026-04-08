@@ -79,6 +79,14 @@ export const getTopicPublishers = (name: string) =>
     `/topics/${encodeURIComponent(name)}/publishers`,
   );
 
+export const getTopicClients = (name: string) =>
+  request<import("./types").TopicClients>(
+    `/topics/${encodeURIComponent(name)}/clients`,
+  );
+
+export const getAllClients = () =>
+  request<import("./types").TopicClients[]>("/clients");
+
 // ── Cluster ─────────────────────────────────────────────────────────
 
 export const getClusterNodes = () =>

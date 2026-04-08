@@ -218,6 +218,18 @@ export interface EventQueryParams {
   limit?: number;
 }
 
+export interface LiveClient {
+  id: string;
+  role: "publisher" | "consumer";
+  group_id?: string;
+}
+
+export interface TopicClients {
+  topic: string;
+  publishers: LiveClient[];
+  consumers: LiveClient[];
+}
+
 // Consumer group offset reset
 export type ResetStrategy = "earliest" | "latest" | { to_seq: number };
 

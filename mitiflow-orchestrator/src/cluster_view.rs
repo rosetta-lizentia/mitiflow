@@ -225,20 +225,20 @@ impl ClusterView {
             if let Ok(sample) = reply.result()
                 && let Ok(status) =
                     serde_json::from_slice::<NodeStatus>(&sample.payload().to_bytes())
-                {
-                    let mut map = nodes.write().await;
-                    let entry = map
-                        .entry(status.node_id.clone())
-                        .or_insert_with(|| NodeInfo {
-                            metadata: None,
-                            health: None,
-                            status: None,
-                            online: true,
-                            last_seen: Utc::now(),
-                        });
-                    entry.status = Some(status);
-                    entry.last_seen = Utc::now();
-                }
+            {
+                let mut map = nodes.write().await;
+                let entry = map
+                    .entry(status.node_id.clone())
+                    .or_insert_with(|| NodeInfo {
+                        metadata: None,
+                        health: None,
+                        status: None,
+                        online: true,
+                        last_seen: Utc::now(),
+                    });
+                entry.status = Some(status);
+                entry.last_seen = Utc::now();
+            }
         }
 
         // Watch for liveliness changes
