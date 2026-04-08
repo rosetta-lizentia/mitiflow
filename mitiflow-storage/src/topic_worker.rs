@@ -27,11 +27,12 @@ pub struct TopicWorker {
     membership: Arc<MembershipTracker>,
     reconciler: Arc<Reconciler>,
     _recovery: Arc<RecoveryManager>,
-    status: StatusReporter,
+    status: Arc<StatusReporter>,
     overrides: Arc<RwLock<OverrideTable>>,
     cancel: CancellationToken,
     _override_task: Option<tokio::task::JoinHandle<()>>,
     _schema_tasks: Vec<tokio::task::JoinHandle<()>>,
+    _state_change_task: tokio::task::JoinHandle<()>,
 }
 
 impl TopicWorker {
@@ -81,7 +82,8 @@ impl TopicWorker {
         );
 
         // 4. Status reporter.
-        let status = StatusReporter::new(session, node_id.to_string(), &key_prefix).await?;
+        let status =
+            Arc::new(StatusReporter::new(session, node_id.to_string(), &key_prefix).await?);
 
         // 5. Override subscription.
         let overrides: Arc<RwLock<OverrideTable>> = Arc::new(RwLock::new(OverrideTable::default()));
@@ -166,13 +168,34 @@ impl TopicWorker {
             config: config.clone(),
             node_id: node_id.to_string(),
             membership: membership_arc,
-            reconciler,
+            reconciler: reconciler.clone(),
             _recovery: recovery_arc,
-            status,
+            status: Arc::clone(&status),
             overrides,
-            cancel,
+            cancel: cancel.clone(),
             _override_task: override_task,
             _schema_tasks: schema_tasks,
+            _state_change_task: {
+                // Listen for store state transitions (e.g. recovery → Active)
+                // and re-publish partition status so the orchestrator sees updates.
+                let state_changed = reconciler.state_changed();
+                let reconciler = Arc::clone(&reconciler);
+                let status = Arc::clone(&status);
+                let cancel = cancel.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = cancel.cancelled() => break,
+                            _ = state_changed.notified() => {
+                                let statuses = reconciler.partition_statuses().await;
+                                if let Err(e) = status.report(&statuses).await {
+                                    warn!("failed to report status after state change: {e}");
+                                }
+                            }
+                        }
+                    }
+                })
+            },
         };
 
         // 8. Initial reconciliation.

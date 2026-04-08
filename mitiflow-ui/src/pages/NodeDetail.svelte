@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getClusterNodes } from "$lib/api";
-  import type { NodeInfo } from "$lib/types";
+  import { getClusterNodes, getNodePartitions } from "$lib/api";
+  import type { NodeInfo, NodeTopicPartitions } from "$lib/types";
   import StatusBadge from "../components/StatusBadge.svelte";
   import TimeAgo from "../components/TimeAgo.svelte";
   import { formatBytes, formatMicros, formatNumber } from "$lib/format";
@@ -10,6 +10,7 @@
 
   let node = $state<NodeInfo | null>(null);
   let nodeId = $state("");
+  let topicPartitions = $state<NodeTopicPartitions[]>([]);
   let error = $state("");
 
   onMount(async () => {
@@ -24,7 +25,11 @@
           break;
         }
       }
-      if (!node) error = "Node not found";
+      if (!node) {
+        error = "Node not found";
+        return;
+      }
+      topicPartitions = await getNodePartitions(nodeId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -89,31 +94,36 @@
       </section>
     {/if}
 
-    {#if node.status?.partitions}
+    {#if topicPartitions.length > 0}
       <section>
-        <h2 class="mb-2 text-lg font-semibold text-gray-300">Partition Status</h2>
-        <div class="overflow-x-auto rounded-lg border border-gray-800">
-          <table class="w-full text-left text-sm">
-            <thead class="border-b border-gray-800 bg-gray-900/50 text-xs uppercase text-gray-500">
-              <tr>
-                <th class="px-4 py-2">Partition</th>
-                <th class="px-4 py-2">Replica</th>
-                <th class="px-4 py-2">State</th>
-                <th class="px-4 py-2">Events</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each node.status.partitions as ps}
-                <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td class="px-4 py-2">{ps.partition}</td>
-                  <td class="px-4 py-2">{ps.replica}</td>
-                  <td class="px-4 py-2"><StatusBadge status={ps.state} /></td>
-                  <td class="px-4 py-2">{formatNumber(ps.event_count)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <h2 class="mb-2 text-lg font-semibold text-gray-300">Partition Assignments</h2>
+        {#each topicPartitions as tp}
+          <div class="mb-4">
+            <h3 class="mb-1 text-sm font-medium text-gray-400">{tp.topic}</h3>
+            <div class="overflow-x-auto rounded-lg border border-gray-800">
+              <table class="w-full text-left text-sm">
+                <thead class="border-b border-gray-800 bg-gray-900/50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th class="px-4 py-2">Partition</th>
+                    <th class="px-4 py-2">Replica</th>
+                    <th class="px-4 py-2">State</th>
+                    <th class="px-4 py-2">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each tp.partitions as ps}
+                    <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                      <td class="px-4 py-2">{ps.partition}</td>
+                      <td class="px-4 py-2">{ps.replica}</td>
+                      <td class="px-4 py-2"><StatusBadge status={ps.state} /></td>
+                      <td class="px-4 py-2 text-gray-500">{ps.source}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {/each}
       </section>
     {/if}
   {/if}

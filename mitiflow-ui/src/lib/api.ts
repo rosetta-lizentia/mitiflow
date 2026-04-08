@@ -84,6 +84,11 @@ export const getTopicPublishers = (name: string) =>
 export const getClusterNodes = () =>
   request<Record<string, NodeInfo>>("/cluster/nodes");
 
+export const getNodePartitions = (id: string) =>
+  request<import("./types").NodeTopicPartitions[]>(
+    `/cluster/nodes/${encodeURIComponent(id)}/partitions`,
+  );
+
 export const getClusterStatus = () =>
   request<ClusterStatus>("/cluster/status");
 

@@ -106,6 +106,18 @@ export interface ReplicaInfo {
   source: string;
 }
 
+export interface NodeTopicPartitions {
+  topic: string;
+  partitions: NodePartitionEntry[];
+}
+
+export interface NodePartitionEntry {
+  partition: number;
+  replica: number;
+  state: string;
+  source: string;
+}
+
 export interface PublisherInfo {
   publisher_id: string;
   partitions: Record<number, number>;

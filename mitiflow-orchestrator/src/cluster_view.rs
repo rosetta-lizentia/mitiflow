@@ -217,6 +217,30 @@ impl ClusterView {
             }
         }
 
+        // Bootstrap: query existing status from storage agents' queryables
+        // so we have partition assignment data immediately at startup.
+        let status_query_key = format!("{key_prefix}/_cluster/status/*");
+        let status_replies = session.get(&status_query_key).await?;
+        while let Ok(reply) = status_replies.recv_async().await {
+            if let Ok(sample) = reply.result()
+                && let Ok(status) =
+                    serde_json::from_slice::<NodeStatus>(&sample.payload().to_bytes())
+                {
+                    let mut map = nodes.write().await;
+                    let entry = map
+                        .entry(status.node_id.clone())
+                        .or_insert_with(|| NodeInfo {
+                            metadata: None,
+                            health: None,
+                            status: None,
+                            online: true,
+                            last_seen: Utc::now(),
+                        });
+                    entry.status = Some(status);
+                    entry.last_seen = Utc::now();
+                }
+        }
+
         // Watch for liveliness changes
         let live_sub = session.liveliness().declare_subscriber(&agents_key).await?;
         let nodes_live = Arc::clone(&nodes);

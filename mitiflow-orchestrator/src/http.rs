@@ -193,6 +193,22 @@ pub struct ReplicaInfo {
     pub source: String,
 }
 
+/// Per-topic partition assignments for a single node.
+#[derive(Debug, Serialize)]
+pub struct NodeTopicPartitions {
+    pub topic: String,
+    pub partitions: Vec<NodePartitionEntry>,
+}
+
+/// A partition entry for the node detail view.
+#[derive(Debug, Serialize)]
+pub struct NodePartitionEntry {
+    pub partition: u32,
+    pub replica: u32,
+    pub state: String,
+    pub source: String,
+}
+
 /// Publisher info derived from watermarks.
 #[derive(Debug, Serialize)]
 pub struct PublisherInfo {
@@ -316,6 +332,10 @@ pub fn build_router(state: HttpState, auth_token: Option<&str>) -> Router {
         .route("/api/v1/topics/{name}/publishers", get(topic_publishers))
         // Cluster
         .route("/api/v1/cluster/nodes", get(cluster_nodes))
+        .route(
+            "/api/v1/cluster/nodes/{id}/partitions",
+            get(node_partitions),
+        )
         .route("/api/v1/cluster/status", get(cluster_status))
         .route(
             "/api/v1/cluster/overrides",
@@ -527,6 +547,46 @@ async fn cluster_nodes(State(state): State<HttpState>) -> Result<impl IntoRespon
         }
         None => Ok(Json(serde_json::json!({}))),
     }
+}
+
+/// Per-topic partition assignments for a single node, aggregated across all
+/// per-topic ClusterViews.
+async fn node_partitions(
+    State(state): State<HttpState>,
+    Path(node_id): Path<String>,
+) -> Result<Json<Vec<NodeTopicPartitions>>, AppError> {
+    let mut result = Vec::new();
+
+    if let Some(ref tm) = state.topic_manager {
+        let tm = tm.read().await;
+        let topics = state.config_store.list_topics()?;
+        for topic in topics {
+            if let Some(view) = tm.get_view(&topic.name) {
+                let assignments = view.assignments().await;
+                let mut partitions: Vec<NodePartitionEntry> = assignments
+                    .into_iter()
+                    .filter(|(_, a)| a.node_id == node_id || a.node_id.starts_with(&node_id))
+                    .map(|(_, a)| NodePartitionEntry {
+                        partition: a.partition,
+                        replica: a.replica,
+                        state: format!("{:?}", a.state),
+                        source: format!("{:?}", a.source),
+                    })
+                    .collect();
+                if partitions.is_empty() {
+                    continue;
+                }
+                partitions.sort_by_key(|p| (p.partition, p.replica));
+                result.push(NodeTopicPartitions {
+                    topic: topic.name.clone(),
+                    partitions,
+                });
+            }
+        }
+    }
+
+    result.sort_by(|a, b| a.topic.cmp(&b.topic));
+    Ok(Json(result))
 }
 
 async fn cluster_status(State(state): State<HttpState>) -> Result<Json<ClusterStatus>, AppError> {

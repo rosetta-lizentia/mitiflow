@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::Utc;
 use mitiflow::store::backend::StorageBackend;
 use mitiflow::{EventBusConfig, EventStore, FjallBackend};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use zenoh::Session;
@@ -52,6 +52,8 @@ pub struct Reconciler {
     membership: Option<Arc<MembershipTracker>>,
     /// Currently running stores keyed by (partition, replica).
     stores: Arc<RwLock<HashMap<(u32, u32), ManagedStore>>>,
+    /// Notified when a store transitions state (e.g. recovery → Active).
+    state_changed: Arc<Notify>,
 }
 
 impl Reconciler {
@@ -71,6 +73,7 @@ impl Reconciler {
             recovery: None,
             membership: None,
             stores: Arc::new(RwLock::new(HashMap::new())),
+            state_changed: Arc::new(Notify::new()),
         }
     }
 
@@ -194,6 +197,12 @@ impl Reconciler {
         stores.get(&(partition, replica)).map(|_| ())
     }
 
+    /// Returns a `Notify` that is woken whenever a store transitions state
+    /// (e.g. recovery completes and moves to Active).
+    pub fn state_changed(&self) -> Arc<Notify> {
+        Arc::clone(&self.state_changed)
+    }
+
     /// Shutdown all managed stores gracefully.
     pub async fn shutdown_all(&self) -> AgentResult<()> {
         let keys: Vec<(u32, u32)> = self.stores.read().await.keys().copied().collect();
@@ -250,6 +259,7 @@ impl Reconciler {
             let recovery = Arc::clone(recovery);
             let membership = Arc::clone(membership);
             let stores = Arc::clone(&self.stores);
+            let state_changed = Arc::clone(&self.state_changed);
             let backend = backend;
 
             tokio::spawn(async move {
@@ -282,6 +292,8 @@ impl Reconciler {
                 if let Some(m) = guard.get_mut(&(partition, replica)) {
                     m.state = StoreState::Active;
                 }
+                drop(guard);
+                state_changed.notify_waiters();
             });
         } else {
             // No recovery configured — mark Active immediately.
