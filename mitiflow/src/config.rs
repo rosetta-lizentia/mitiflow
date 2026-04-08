@@ -362,13 +362,13 @@ impl EventBusConfigBuilder {
             #[cfg(feature = "store")]
             watermark_key: None,
             #[cfg(feature = "store")]
-            watermark_interval: Duration::from_millis(100),
+            watermark_interval: Duration::from_secs(1),
             #[cfg(feature = "store")]
             durable_timeout: Duration::from_secs(5),
             #[cfg(feature = "store")]
             durable_urgency: Duration::from_millis(100),
             #[cfg(feature = "store")]
-            store_workers: 2,
+            store_workers: 1,
             #[cfg(feature = "store")]
             compaction_interval: None,
             #[cfg(feature = "store")]

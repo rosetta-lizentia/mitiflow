@@ -631,6 +631,11 @@ async fn run_watermark_task(
             }
         };
 
+        // Skip publishing when idle — no publishers means no events to confirm.
+        if publishers.is_empty() {
+            continue;
+        }
+
         let watermark = CommitWatermark {
             partition: handle.partition(),
             publishers,
