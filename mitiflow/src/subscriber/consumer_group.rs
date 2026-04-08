@@ -56,10 +56,13 @@ impl ConsumerGroupSubscriber {
     /// the EventStore, and begins consuming from assigned partitions.
     pub async fn new(
         session: &Session,
-        config: EventBusConfig,
+        mut config: EventBusConfig,
         group_config: ConsumerGroupConfig,
     ) -> Result<Self> {
         use crate::partition::PartitionManager;
+
+        // Resolve topic schema (AutoConfig applies orchestrator partition count, codec, etc.)
+        crate::schema::resolve_schema(session, &mut config).await?;
 
         let pm_config = config.clone();
         let pm_config = EventBusConfig::builder(&pm_config.key_prefix)
