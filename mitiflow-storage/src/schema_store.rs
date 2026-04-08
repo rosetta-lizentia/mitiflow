@@ -59,19 +59,38 @@ impl SchemaStore {
         Ok(())
     }
 
-    /// Store a schema only if its version is strictly greater than the
-    /// currently persisted version. Returns `true` if the write was accepted.
+    /// Store a schema if its version is newer, or if same version and the
+    /// wire-level contract (codec, partitions, key_format) matches (idempotent).
+    /// Rejects same-version writes with different wire-level fields (conflict).
+    /// Returns `true` if the write was accepted.
     pub fn put_if_newer(&self, schema: &TopicSchema) -> AgentResult<bool> {
-        if let Some(existing) = self.get(&schema.key_prefix)?
-            && schema.schema_version <= existing.schema_version
-        {
-            warn!(
-                key_prefix = %schema.key_prefix,
-                incoming = schema.schema_version,
-                current = existing.schema_version,
-                "rejected stale schema version"
-            );
-            return Ok(false);
+        if let Some(existing) = self.get(&schema.key_prefix)? {
+            if schema.schema_version < existing.schema_version {
+                warn!(
+                    key_prefix = %schema.key_prefix,
+                    incoming = schema.schema_version,
+                    current = existing.schema_version,
+                    "rejected stale schema version"
+                );
+                return Ok(false);
+            }
+            if schema.schema_version == existing.schema_version {
+                // Same version: accept if wire contract matches (idempotent),
+                // reject if it differs (conflict).
+                if schema.codec == existing.codec
+                    && schema.num_partitions == existing.num_partitions
+                    && schema.key_format == existing.key_format
+                {
+                    // Idempotent — no write needed, but signal acceptance.
+                    return Ok(true);
+                }
+                warn!(
+                    key_prefix = %schema.key_prefix,
+                    version = schema.schema_version,
+                    "rejected conflicting schema: same version but different wire contract"
+                );
+                return Ok(false);
+            }
         }
         self.put(schema)?;
         Ok(true)
@@ -148,13 +167,41 @@ mod tests {
     }
 
     #[test]
-    fn schema_store_put_if_newer_rejects_equal() {
+    fn schema_store_put_if_newer_accepts_same_version_same_content() {
         let dir = tempfile::tempdir().unwrap();
         let store = SchemaStore::open(dir.path()).unwrap();
 
         store.put(&sample_schema("app/events", 1)).unwrap();
+        // Same version, same wire contract → idempotent accept
         let accepted = store.put_if_newer(&sample_schema("app/events", 1)).unwrap();
+        assert!(accepted);
+    }
+
+    #[test]
+    fn schema_store_put_if_newer_rejects_same_version_different_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SchemaStore::open(dir.path()).unwrap();
+
+        store.put(&sample_schema("app/events", 1)).unwrap();
+
+        // Same version but different codec → conflict
+        let now = Utc::now();
+        let conflicting = TopicSchema {
+            name: "orders".into(),
+            key_prefix: "app/events".into(),
+            codec: CodecFormat::Json,
+            num_partitions: 16,
+            key_format: KeyFormat::Keyed,
+            schema_version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        let accepted = store.put_if_newer(&conflicting).unwrap();
         assert!(!accepted);
+
+        // Original intact
+        let got = store.get("app/events").unwrap().unwrap();
+        assert_eq!(got.codec, CodecFormat::Postcard);
     }
 
     #[test]

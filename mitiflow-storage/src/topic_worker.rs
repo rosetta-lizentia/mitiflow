@@ -114,6 +114,42 @@ impl TopicWorker {
                 Self::schema_subscriber_task(&schema_subscriber, &store, &cancel_clone).await;
             }));
         }
+
+        // 6b. Bootstrap: if no schema persisted locally, query the network
+        // (orchestrator or another storage agent) to self-warm.
+        {
+            let store = Arc::clone(&schema_store);
+            if store.get(&key_prefix).map(|s| s.is_none()).unwrap_or(true) {
+                info!(key_prefix = %key_prefix, "no local schema — querying network for bootstrap");
+                match mitiflow::schema::fetch_schema_with_timeout(
+                    session,
+                    &key_prefix,
+                    std::time::Duration::from_secs(3),
+                )
+                .await
+                {
+                    Ok(schema) => match store.put_if_newer(&schema) {
+                        Ok(_) => {
+                            info!(
+                                topic = %schema.name,
+                                version = schema.schema_version,
+                                "bootstrapped schema from network"
+                            );
+                        }
+                        Err(e) => {
+                            warn!("failed to persist bootstrapped schema: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        warn!(
+                            key_prefix = %key_prefix,
+                            "schema bootstrap query failed (orchestrator may not be running): {e}"
+                        );
+                    }
+                }
+            }
+        }
+
         {
             let schema_q_key = format!("{key_prefix}/_schema");
             let schema_queryable = session.declare_queryable(&schema_q_key).await?;

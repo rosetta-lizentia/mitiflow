@@ -1,11 +1,11 @@
 # Topic Schema Registry
 
-Design for a distributed topic schema registry that ensures publishers and
-subscribers agree on wire-level configuration (codec, partition count, key
-format) before exchanging events — and enables automatic configuration
-loading at runtime.
+Design for a distributed topic schema registry that guarantees deterministic
+per-topic schema discovery without startup-order races, while preserving the
+original goal of storage-served durability.
 
-**Status:** Implemented (phases 1–5).
+**Status:** Revised design — Phases 1-2 implemented, Phase 3 planned
+**Date:** 2026-04-07
 
 **Related docs:**
 [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md),
@@ -15,663 +15,575 @@ loading at runtime.
 
 ---
 
-## 1. The Problem
+## 1. Problem Statement
 
-Today, each publisher and subscriber constructs its own `EventBusConfig`
-independently via the builder pattern. **Nothing validates that participants
-on the same topic agree on critical wire-level properties.** Mismatches cause:
+The original schema registry implementation correctly identified the wire-level
+problem to solve, but coupled correctness to a best-effort pub/sub path.
 
-| Mismatch | Failure mode |
-|----------|-------------|
-| Codec (e.g., publisher sends Postcard, subscriber expects JSON) | Silent deserialization failure or garbage data |
-| Partition count | Hash ring divergence — key-based routing sends events to wrong partitions |
-| Key format (keyed vs. unkeyed) | Subscriber key filters match nothing, or unkeyed subscriber gets unexpected key expressions |
+Publishers and subscribers perform exact per-topic schema lookups:
 
-These failures are **silent at connection time** and only surface as runtime
-errors deep in the processing pipeline, making them extremely difficult to
-diagnose in distributed deployments.
+```
+session.get("{key_prefix}/_schema")
+```
 
-### What We Want
+That contract is sound and should remain unchanged.
 
-1. **Pre-flight validation** — pub/sub checks its local config against a
-   registered schema before starting, catching mismatches at creation time
-   with a clear error message.
-2. **Auto-configuration** — pub/sub can discover and load a topic's canonical
-   configuration at runtime, eliminating manual config duplication across
-   services.
-3. **No new SPOF** — the schema registry should not add a hard dependency on
-   a component that isn't already required.
+The failure came from how the system served and propagated schemas:
+
+1. The orchestrator published schemas once at startup and expected storage
+   agents to catch them.
+2. Storage agents subscribed after startup and sometimes missed those puts.
+3. The orchestrator's queryable did not match the exact per-topic query keys.
+
+The result was a startup-order race where schema queries timed out if storage
+agents had not already received and persisted the schema before the first
+consumer tried to fetch it.
+
+The redesign keeps the same client-facing query key and validation model, but
+changes the system invariant:
+
+**Exact-key query is the correctness path. Pub/sub is only a propagation path.**
+
+### 1.1 What Failed In The Initial Implementation
+
+The previous implementation failed in three distinct ways that interacted badly:
+
+| Problem | What happened | Effect |
+|---------|----------------|--------|
+| Queryable key mismatch | The orchestrator declared a single root `_schema` queryable instead of exact per-topic queryables | Exact per-topic `get()` calls timed out whenever storage agents had not already persisted the schema |
+| Orchestrator-to-storage race | Startup `publish_all_schemas()` ran before storage topic workers subscribed | Late-starting storage agents missed schema publishes entirely |
+| `schema_version = 0` default | Bootstrapped topics defaulted to version `0` and storage treated repeated publishes as stale | Restarts produced misleading stale-version behavior and complicated recovery |
+
+The critical dependency chain:
+
+```
+root queryable mismatch
+   -> orchestrator cannot answer exact per-topic schema queries
+   -> only storage agents can answer
+   -> storage startup race leaves stores empty
+   -> no respondent replies to fetch_schema()
+   -> consumer receives TopicSchemaNotFound
+```
 
 ---
 
-## 2. Design: Storage-Served, Orchestrator-Managed
+## 2. Design Goals
 
-Separate **write authority** from **persistence and serving**.
+The revised design optimizes for the following:
 
-| Concern | Owner |
-|---------|-------|
-| Schema creation & validated evolution | Orchestrator (when present) or CLI / first publisher (when absent) |
-| Schema persistence & serving | Storage agents (durable, replicated, co-located with event data) |
-| Schema querying | Any pub/sub client via `session.get("{key_prefix}/_schema")` |
+1. Exact per-topic schema discovery must work regardless of startup order.
+2. When an orchestrator exists, it remains the authoritative writer.
+3. Storage agents remain the durable steady-state responders.
+4. Schema propagation must be idempotent across restarts and redeployments.
+5. A missing schema on one topic must not affect other topics.
+6. Existing client APIs and query semantics should remain stable.
 
-```
-                          ┌─────────────────────────┐
-                          │     Orchestrator         │
-                          │  (validated writer)      │
-                          │                          │
-                          │  POST /api/v1/topics     │
-                          │   → validates schema     │
-                          │   → put _schema key      │
-                          └───────────┬──────────────┘
-                                      │ zenoh put
-                                      ▼
-┌──────────────┐   get    ┌─────────────────────────┐
-│  Publisher /  │ ◄──────►│   Storage Agent(s)       │
-│  Subscriber  │         │  ┌────────────────────┐  │
-│              │         │  │ fjall "schemas"    │  │
-│  validate or │         │  │ keyspace           │  │
-│  auto-config │         │  └────────────────────┘  │
-└──────────────┘         │  queryable: _schema      │
-                          └─────────────────────────┘
-                           (N agents = N respondents)
-```
+Non-goals:
 
-### Why Storage Agents?
-
-- **Already required** for durable topics — no new dependency
-- **Already have fjall** — adding a keyspace is trivial
-- **Naturally replicated** — with $R$ replicas, $R$ agents serve the schema
-- **Co-located with data** — schema describes the data the agent stores
-- **Survives orchestrator downtime** — new pub/sub instances can still
-  discover schemas from storage agents
-
-### Feature-Flag Independence
-
-`TopicSchema`, `KeyFormat`, `TopicSchemaMode`, and all validation logic
-live in `mitiflow/src/schema.rs` — **not behind `#[cfg(feature = "store")]`**.
-Schema fetch and validation use only `session.get()` / `session.put()`
-(always available in Zenoh). The `store` feature controls whether an
-`EventStore` persists event data; topic schema validation is orthogonal.
-
-This means:
-- `schema_mode` is always available on `EventBusConfigBuilder`
-- `EventBusConfig::from_topic()` works regardless of feature flags
-- A publisher compiled without `store` can still validate against (or
-  auto-configure from) a schema served by storage agents
-
-### Any Component with Fjall Can Serve Schemas
-
-Both storage agents and the orchestrator have fjall databases. Both can
-persist and serve schemas via `{key_prefix}/_schema` queryables. This
-gives a clean durability gradient:
-
-| Infrastructure present | Schema durable? | Served by |
-|------------------------|-----------------|----------|
-| Orchestrator + Storage agents | Yes (both persist) | Storage agents + orchestrator |
-| Orchestrator only (no storage) | Yes (orchestrator fjall) | Orchestrator |
-| Storage agents only (no orchestrator) | Yes (storage fjall) | Storage agents |
-| Neither (pub/sub only) | **No** — ephemeral in registrar publisher memory | Registrar publisher (if `RegisterOrValidate`) |
-
-The key insight: **schema durability follows from whichever fjall-backed
-component is present**, not from a specific component. The orchestrator
-already persists `TopicConfig` in its `ConfigStore` — extending it to
-also respond to `_schema` queries is a small addition.
+- Introducing a new external schema registry service
+- Changing the public query key format away from `{key_prefix}/_schema`
+- Making application workers self-register schemas in orchestrator-managed
+  deployments by default
 
 ---
 
-## 3. TopicSchema Model
+## 3. Chosen Architecture
 
-A shared struct in the core `mitiflow` crate, used by all components:
+The selected design is:
+
+**Authoritative writes, exact-key reads, storage-served steady state**
+
+Responsibilities are split as follows:
+
+| Component | Responsibility |
+|-----------|----------------|
+| Orchestrator | Authoritative writer, per-topic exact-key schema responder, bootstrap source for cold storage agents |
+| Storage agents | Durable schema cache, live schema subscriber, startup puller, steady-state exact-key responder |
+| Publishers / Subscribers | Exact-key schema fetchers; validate or auto-configure from first valid reply |
+| CLI / first publisher | Optional bootstrap path only for deployments without an orchestrator |
+
+### Why this design
+
+- It fixes the race at the root cause instead of masking it.
+- It preserves the original operational model: storage agents still serve
+  schemas after warm-up and during orchestrator downtime.
+- It avoids introducing a new dependency or changing client behavior.
+- It keeps orchestration policy in the orchestrator, not in application workers.
+
+### System view
+
+```
+                     exact get {topic_prefix}/_schema
+           +------------------------------------------------+
+           |                                                |
+           v                                                |
+  +-------------------+        notify put                   |
+  | Publisher /       | <-----------------------------+     |
+  | Subscriber        |                               |     |
+  | Validate /        |                               |     |
+  | AutoConfig        |                               |     |
+  +-------------------+                               |     |
+           ^                                          |     |
+           | first valid reply                        |     |
+           |                                          |     |
+  +-------------------+        bootstrap get          |     |
+  | Storage Agent     | ------------------------------+     |
+  | local schema      |                                     |
+  | store + queryable | <-----------------------------------+
+  +-------------------+            exact get {topic_prefix}/_schema
+           ^
+           |
+           | authoritative write + exact-key reply
+  +-------------------+
+  | Orchestrator      |
+  | topic config +    |
+  | schema metadata   |
+  +-------------------+
+```
+
+---
+
+## 4. Core Invariants
+
+The redesign depends on a small set of explicit rules.
+
+### 4.1 Query is the correctness path
+
+Clients and storage agents must assume that the only reliable way to discover
+the current schema is an exact-key query to `{key_prefix}/_schema`.
+
+Pub/sub delivery is best-effort. It is useful for convergence and cache warm-up,
+but correctness cannot depend on it.
+
+### 4.2 Responders answer exact per-topic keys only
+
+There is no root-level schema queryable such as `{cluster_prefix}/_schema`.
+Every responder answers the exact topic key:
+
+```
+myapp/orders/_schema
+myapp/events/_schema
+myapp/metrics/_schema
+```
+
+This matches the existing client contract and avoids wildcard parsing or key
+intersection ambiguity.
+
+### 4.3 Version zero is invalid
+
+`schema_version = 0` is reserved for "unset" and must never be published as a
+valid schema version.
+
+The first real schema version is `1`.
+
+### 4.4 Same version must be idempotent
+
+A repeated publish of the same schema version must be handled as follows:
+
+- Same version, same wire contract: accept as a no-op
+- Same version, different wire contract: reject as a conflict
+- Lower version: reject as stale
+- Higher version: accept and persist
+
+This makes schema propagation safe across restarts and repeated bootstrap.
+
+### 4.5 Schema metadata must be stable
+
+The orchestrator must not synthesize a new `created_at` or `updated_at`
+timestamp on every reply.
+
+Repeated replies for the same schema version must be stable. The orchestrator
+therefore needs persisted schema metadata, not a fresh in-memory reconstruction
+using "now" each time.
+
+### 4.6 Per-topic failure isolation
+
+Schema lookup failure on one topic should not cascade to other topics or
+unrelated application functionality. `TopicSchemaNotFound` is a per-topic,
+recoverable error.
+
+---
+
+## 5. Data Model
+
+The public `TopicSchema` shape stays the same. The redesign changes how the
+orchestrator persists and reconstructs it.
 
 ```rust
-/// Wire-level contract for a topic. All publishers and subscribers
-/// on the same key_prefix must agree on these fields.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TopicSchema {
-    /// Topic name (matches orchestrator TopicConfig.name).
     pub name: String,
-    /// Zenoh key prefix (e.g., "myapp/events").
     pub key_prefix: String,
-    /// Serialization codec. All participants must use the same codec.
     pub codec: CodecFormat,
-    /// Number of partitions. Must match across all participants for
-    /// consistent hash-ring routing.
     pub num_partitions: u32,
-    /// Key format — whether events carry application-level keys.
     pub key_format: KeyFormat,
-    /// Monotonically increasing version. Only forward-version writes
-    /// are accepted, preventing accidental downgrades.
     pub schema_version: u32,
-    /// When this schema was first created.
     pub created_at: DateTime<Utc>,
-    /// When this schema was last modified.
     pub updated_at: DateTime<Utc>,
 }
-
-/// Key format for events on a topic.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum KeyFormat {
-    /// Events have no application key: `{prefix}/p/{partition}/{seq}`
-    Unkeyed,
-    /// Events carry an exact key: `{prefix}/p/{partition}/k/{key}/{seq}`
-    Keyed,
-    /// Events carry a hierarchical key prefix: `{prefix}/p/{partition}/k/{prefix}/**`
-    KeyPrefix,
-}
 ```
 
-### Zenoh Key
+### 5.1 Orchestrator persistence
 
-Schema is stored and queried at:
+The lowest-migration implementation is:
 
-```
-{key_prefix}/_schema
-```
+- Keep `TopicConfig` as the control-plane record
+- Add persisted schema timestamps to `TopicConfig`
+- Derive `TopicSchema` from those persisted fields when replying or publishing
 
-This follows the existing `_` prefix convention for internal channels
-(`_store`, `_watermark`, `_heartbeat`, etc.).
+That is sufficient to make replies stable without introducing a second schema
+database in the orchestrator.
 
-### Validated Fields
-
-When a publisher or subscriber checks its local `EventBusConfig` against a
-`TopicSchema`, the following fields are compared:
-
-| Field | Mismatch severity | Behavior |
-|-------|-------------------|----------|
-| `codec` | **Fatal** — data corruption | Return `Error::TopicSchemaMismatch` |
-| `num_partitions` | **Fatal** — routing divergence | Return `Error::TopicSchemaMismatch` |
-| `key_format` | **Warning** — may work but unexpected | Log warning; fatal in strict mode |
-
-Other `EventBusConfig` fields (cache size, heartbeat mode, recovery mode,
-offload config, etc.) are **local tuning** and are intentionally *not*
-validated against the schema.
-
----
-
-## 4. Schema Lifecycle
-
-### 4.1 Creation
-
-Three paths, depending on deployment mode:
-
-**Path A — Orchestrator creates topic (production):**
-```
-User → POST /api/v1/topics { name, codec, num_partitions, key_format, ... }
-     → Orchestrator validates fields
-     → config_store.put_topic(topic_config)
-     → session.put("{key_prefix}/_schema", schema_json)
-     → Storage agents receive put, persist in fjall "schemas" keyspace
-```
-
-**Path B — CLI creates schema directly (no orchestrator):**
-```
-User → mitiflow ctl schema register --topic orders --codec postcard --partitions 16
-     → session.put("{key_prefix}/_schema", schema_json)
-     → Storage agents receive put, persist
-```
-
-**Path C — First publisher registers (dev/test):**
-```
-Publisher starts with TopicSchemaMode::RegisterOrValidate
-     → session.get("{key_prefix}/_schema") → timeout, no reply
-     → Publisher constructs TopicSchema from its EventBusConfig
-     → session.put("{key_prefix}/_schema", schema_json)
-     → Publisher also declares queryable on _schema (ephemeral, for peers
-       before storage agents pick it up)
-```
-
-### 4.2 Persistence (Storage Agents)
-
-Storage agents subscribe to `{key_prefix}/_schema` as part of their
-existing topic lifecycle. On receiving a schema put:
-
-1. Deserialize incoming `TopicSchema`
-2. Check monotonic version: if `incoming.schema_version <= persisted.schema_version`, reject (log warning, do not overwrite)
-3. Persist to fjall `"schemas"` keyspace keyed by `key_prefix`
-4. Update in-memory cache
-
-On startup, storage agents load persisted schemas from fjall and declare
-queryables immediately — no orchestrator round-trip needed.
-
-### 4.3 Serving (Queryable)
-
-Each storage agent declares a Zenoh queryable on `{key_prefix}/_schema`
-for every topic it manages. When a publisher or subscriber queries:
-
-```rust
-session.get("{key_prefix}/_schema")
-    .timeout(Duration::from_secs(2))
-    .await
-```
-
-Any storage agent (or orchestrator, or registrar publisher) can respond.
-The client uses the **first valid reply**.
-
-### 4.4 Schema Evolution
-
-Schema updates follow a monotonic version protocol:
-
-1. Writer (orchestrator or CLI) increments `schema_version`
-2. Writer puts updated schema to `{key_prefix}/_schema`
-3. Storage agents accept only if new version > current version
-4. Running publishers/subscribers are **not** affected (they validated at
-   startup). New instances will validate against the updated schema.
-
-**Breaking changes** (codec change, partition count change) require:
-
-1. Stop all publishers and subscribers for the topic
-2. Update the schema with a new version
-3. Restart participants with matching configs
-
-The orchestrator (when present) can enforce evolution rules:
-
-| Change | Policy |
-|--------|--------|
-| Codec change | Requires version bump, rejected if active publishers exist |
-| Partition count increase | Allowed (existing data stays, new partitions are empty) |
-| Partition count decrease | Rejected (would orphan data) |
-| Key format change | Requires version bump |
-
----
-
-## 5. Client Integration
-
-### 5.1 TopicSchemaMode
-
-A new enum on `EventBusConfig` controls schema behavior:
-
-```rust
-pub enum TopicSchemaMode {
-    /// No schema validation (current behavior, backward-compatible default).
-    Disabled,
-    /// Validate local config against registry, fail on mismatch.
-    Validate,
-    /// Load full config from registry (auto-configuration).
-    AutoConfig,
-    /// Register schema if absent, validate if present (dev/test).
-    RegisterOrValidate,
-}
-```
-
-**Default:** `Disabled` — fully backward-compatible. Existing code works
-without changes.
-
-### 5.2 Validation Flow
-
-On `EventPublisher::new()` or `EventSubscriber::new()`:
-
-```
-match config.schema_mode {
-    Disabled => proceed (current behavior),
-
-    Validate => {
-        schema = fetch_schema(session, key_prefix).await?;
-        // Returns Error::TopicSchemaNotFound if no respondent
-        validate(config, schema)?;
-        // Returns Error::TopicSchemaMismatch { field, expected, actual }
-    }
-
-    AutoConfig => {
-        schema = fetch_schema(session, key_prefix).await?;
-        config = build_config_from_schema(schema);
-        // Local overrides (cache_size, heartbeat, etc.) still apply
-    }
-
-    RegisterOrValidate => {
-        match fetch_schema(session, key_prefix).timeout(1s).await {
-            Ok(schema) => validate(config, schema)?,
-            Err(Timeout) => {
-                schema = TopicSchema::from_config(config);
-                register_schema(session, key_prefix, schema).await?;
-            }
-        }
-    }
-}
-```
-
-### 5.3 Auto-Configuration API
-
-```rust
-// Full auto-config: load everything from the registry
-let config = EventBusConfig::from_topic(&session, "myapp/events", "orders").await?;
-let publisher = EventPublisher::new(&session, config).await?;
-
-// Validate mode: build locally, check against registry
-let config = EventBusConfig::builder("myapp/events/orders")
-    .codec(CodecFormat::Postcard)
-    .num_partitions(16)
-    .schema_mode(TopicSchemaMode::Validate)
-    .build()?;
-let subscriber = EventSubscriber::new(&session, config).await?;
-
-// Dev mode: register or validate automatically
-let config = EventBusConfig::builder("myapp/events/orders")
-    .codec(CodecFormat::Postcard)
-    .num_partitions(16)
-    .schema_mode(TopicSchemaMode::RegisterOrValidate)
-    .build()?;
-let publisher = EventPublisher::new(&session, config).await?;
-```
-
-### 5.4 Error Types
-
-```rust
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
-pub enum Error {
-    // ... existing variants ...
-
-    #[error("topic schema not found for '{key_prefix}' (no storage agents or orchestrator responded)")]
-    TopicSchemaNotFound { key_prefix: String },
-
-    #[error("topic schema mismatch on field '{field}': local={local}, registered={registered}")]
-    TopicSchemaMismatch {
-        field: String,
-        local: String,
-        registered: String,
-    },
-
-    #[error("topic schema version conflict: local={local}, registered={registered}")]
-    TopicSchemaVersionConflict { local: u32, registered: u32 },
-}
-```
-
----
-
-## 6. Deployment Modes
-
-The schema registry adapts to all existing deployment modes:
-
-### With Orchestrator + Storage Agents (Production)
-
-```
-                Orchestrator
-               (creates topics,
-                validates evolution)
-                     │
-                     ▼ put _schema
-              Storage Agents ×N
-             (persist & serve)
-                     ▲
-                     │ get _schema
-              Publishers / Subscribers
-             (Validate or AutoConfig mode)
-```
-
-- Orchestrator is the **validated writer**
-- Storage agents are the **durable, redundant servers**
-- Pub/sub clients query storage agents (orchestrator is optional respondent)
-
-### Storage Agents Only (No Orchestrator)
-
-```
-              CLI: mitiflow ctl schema register
-                     │
-                     ▼ put _schema
-              Storage Agents ×N
-             (persist & serve)
-                     ▲
-                     │ get _schema
-              Publishers / Subscribers
-             (Validate or AutoConfig mode)
-```
-
-- Schema created via CLI or first publisher
-- Storage agents persist and serve
-- No governance — monotonic version is the only guard
-
-### Orchestrator Only (No Storage Agents)
-
-```
-              Orchestrator
-             (creates topics,
-              persists in ConfigStore,
-              serves _schema queryable)
-                     ▲
-                     │ get _schema
-              Publishers / Subscribers
-             (Validate or AutoConfig mode)
-```
-
-- Orchestrator persists schema in its own fjall `ConfigStore`
-- Orchestrator declares `_schema` queryable for each topic
-- No storage agents needed — useful for lightweight deployments where
-  event durability is not required but schema governance is
-
-### Pub/Sub Only (No Storage, No Orchestrator)
-
-```
-              First Publisher
-             (RegisterOrValidate mode)
-                     │
-                     ▼ put _schema + ephemeral queryable
-              Other Publishers / Subscribers
-             (RegisterOrValidate mode)
-                     │
-                     ▼ get _schema → first publisher responds
-```
-
-- First publisher registers schema and serves it via ephemeral queryable
-- Other participants validate against it
-- Schema is **not durable** — lost when the registrar publisher exits
-- Suitable for dev/test and ephemeral workloads
-- **Limitation:** if the registrar publisher restarts, it re-registers
-  from its own config. Peers that start between the exit and restart
-  will get `TopicSchemaNotFound` unless another peer also registered
-
-### Response Matrix
-
-| `schema_mode` | Orch + Storage | Orch only | Storage only | Neither |
-|---------------|---------------|-----------|--------------|----------|
-| `Disabled` | No validation | No validation | No validation | No validation |
-| `Validate` | Query either | Query orch | Query storage | Fail: `TopicSchemaNotFound` |
-| `AutoConfig` | Query either | Query orch | Query storage | Fail: `TopicSchemaNotFound` |
-| `RegisterOrValidate` | Validate against either | Validate against orch | Validate against storage | First pub registers (ephemeral) |
-
----
-
-## 7. Storage Agent Changes
-
-### 7.1 New Fjall Keyspace
-
-Each `TopicWorker` in the storage agent gains access to a shared
-`SchemaStore` backed by a `"schemas"` fjall keyspace in the agent's
-data directory:
-
-```rust
-pub struct SchemaStore {
-    keyspace: fjall::Keyspace,
-}
-
-impl SchemaStore {
-    pub fn get(&self, key_prefix: &str) -> Result<Option<TopicSchema>>;
-    pub fn put(&self, schema: &TopicSchema) -> Result<()>;
-    /// Put only if incoming version > current. Returns false if rejected.
-    pub fn put_if_newer(&self, schema: &TopicSchema) -> Result<bool>;
-}
-```
-
-The keyspace is shared across all topics on the node (keyed by
-`key_prefix`), avoiding one database per topic.
-
-### 7.2 Schema Subscriber
-
-The `TopicWorker` subscribes to `{key_prefix}/_schema` alongside its
-existing event subscriptions. On receiving a schema put:
-
-```rust
-if schema_store.put_if_newer(&incoming_schema)? {
-    info!(topic = %schema.name, version = schema.schema_version, "schema updated");
-} else {
-    warn!(topic = %schema.name, "rejected stale schema version");
-}
-```
-
-### 7.3 Schema Queryable
-
-Each `TopicWorker` declares a queryable on `{key_prefix}/_schema`:
-
-```rust
-let queryable = session.declare_queryable("{key_prefix}/_schema").await?;
-// On query: reply with persisted TopicSchema (or empty if none)
-```
-
-On agent startup, schemas are loaded from fjall and queryables are
-declared immediately — before any orchestrator contact.
-
----
-
-## 8. Orchestrator Changes
-
-### 8.1 Extended TopicConfig
-
-Add wire-level fields to the existing `TopicConfig`:
+Suggested additional persisted fields:
 
 ```rust
 pub struct TopicConfig {
-    // ... existing fields (name, key_prefix, num_partitions, replication_factor, retention, compaction, labels) ...
-
-    /// Wire codec for this topic. All publishers and subscribers must agree.
-    pub codec: CodecFormat,
-    /// Key format for events.
-    pub key_format: KeyFormat,
-    /// Schema version (monotonically increasing).
+    // existing fields...
     pub schema_version: u32,
+    pub schema_created_at: DateTime<Utc>,
+    pub schema_updated_at: DateTime<Utc>,
 }
 ```
 
-### 8.2 Schema Queryable
+If schema lifecycle logic later becomes more complex, a dedicated orchestrator
+schema keyspace can be introduced. It is not required for the first fix.
 
-The orchestrator declares a queryable on `{topic_key_prefix}/_schema`
-for every topic it manages. This mirrors the storage agent's queryable
-and ensures schemas are served even when no storage agents are running:
+### 5.2 Storage-side idempotence
 
-```rust
-// For each topic with a non-empty key_prefix:
-let schema_queryable = session
-    .declare_queryable(format!("{}/_schema", topic.key_prefix))
-    .await?;
-// On query: reply with TopicSchema derived from persisted TopicConfig
-```
+The storage agent should compare incoming schemas on the wire-contract fields:
 
-On startup, the orchestrator iterates all persisted topics and declares
-schema queryables alongside the existing `_config` queryables.
+- `name`
+- `key_prefix`
+- `codec`
+- `num_partitions`
+- `key_format`
+- `schema_version`
 
-### 8.3 Schema Publication on Topic Create/Update
-
-When the orchestrator creates or updates a topic, it also publishes the
-`TopicSchema` to `{key_prefix}/_schema`:
-
-```rust
-pub async fn create_topic(&mut self, config: TopicConfig) -> Result<()> {
-    // Existing: persist config, publish to _config/{name}
-    self.config_store.put_topic(&config)?;
-    let config_key = format!("{}/_config/{}", self.config.key_prefix, config.name);
-    self.session.put(&config_key, serde_json::to_vec(&config)?).await?;
-
-    // NEW: publish schema (storage agents subscribe and persist)
-    let schema = TopicSchema::from_topic_config(&config);
-    let schema_key = format!("{}/_schema", config.key_prefix);
-    self.session.put(&schema_key, serde_json::to_vec(&schema)?).await?;
-
-    // NEW: declare schema queryable for this topic
-    self.declare_schema_queryable(&config).await?;
-
-    Ok(())
-}
-```
-
-### 8.4 Schema Evolution Validation
-
-On topic update, the orchestrator validates the transition:
-
-```rust
-pub async fn update_topic(&mut self, name: &str, update: TopicUpdate) -> Result<()> {
-    let current = self.config_store.get_topic(name)?.ok_or(TopicNotFound)?;
-
-    // Validate evolution rules
-    if let Some(new_partitions) = update.num_partitions {
-        if new_partitions < current.num_partitions {
-            return Err(Error::InvalidSchemaEvolution(
-                "partition count cannot decrease".into()
-            ));
-        }
-    }
-
-    // Bump schema version
-    let new_version = current.schema_version + 1;
-    // ... apply update, persist, publish schema ...
-}
-```
+Timestamps should not be allowed to create false conflicts for an otherwise
+identical schema.
 
 ---
 
-## 9. CLI Integration
+## 6. Protocol
 
-```bash
-# Register a schema (no orchestrator needed — direct Zenoh put)
-mitiflow ctl schema register \
-    --key-prefix myapp/events \
-    --topic orders \
-    --codec postcard \
-    --partitions 16 \
-    --key-format keyed
+### 6.1 Exact-key query protocol
 
-# Inspect a schema (queries storage agents / orchestrator)
-mitiflow ctl schema inspect --key-prefix myapp/events
-# → TopicSchema { name: "orders", codec: Postcard, num_partitions: 16,
-#                  key_format: Keyed, schema_version: 1, ... }
+All readers use the same query shape:
 
-# Validate local config against registry
-mitiflow ctl schema validate --key-prefix myapp/events \
-    --codec postcard --partitions 16
-
-# Via orchestrator HTTP API (with governance)
-mitiflow ctl topic create --name orders \
-    --key-prefix myapp/events \
-    --codec postcard \
-    --partitions 16 \
-    --key-format keyed \
-    --replication-factor 2
+```rust
+session.get("{key_prefix}/_schema")
 ```
+
+Rules:
+
+1. Responders reply on the same exact key.
+2. Clients accept the first valid schema reply.
+3. If no responder answers before timeout, clients return `TopicSchemaNotFound`.
+4. No wildcard query is required for normal schema discovery.
+
+This preserves the existing API in the core crate.
+
+### 6.2 Authoritative write protocol
+
+When the orchestrator creates or updates a topic:
+
+1. Validate the requested evolution
+2. Assign the canonical schema version
+3. Persist the updated `TopicConfig` including stable schema timestamps
+4. Ensure the per-topic schema queryable exists for that topic
+5. Publish the schema to `{key_prefix}/_schema` as a notification
+
+The publish is a cache update signal for storage agents and late readers. It is
+not the only durable source of truth.
+
+### 6.3 Storage agent warm-up protocol
+
+Each topic worker follows this lifecycle:
+
+```
+Topic worker start
+  -> subscribe to {key_prefix}/_schema for live updates
+  -> read local schema store
+       -> if present: serve immediately
+       -> if missing: enter bootstrap loop
+             -> exact get {key_prefix}/_schema
+             -> if reply: persist locally and serve
+             -> if no reply: retry with backoff until shutdown
+  -> keep subscriber running for newer schema versions
+```
+
+Important consequences:
+
+- A storage agent that starts late no longer depends on having caught the
+  orchestrator's startup publish.
+- If the orchestrator is unavailable but another storage agent already has the
+  schema, bootstrap still succeeds.
+- If no responder has the schema, the topic worker logs a clear "schema missing"
+  state instead of silently timing out forever.
+
+### 6.4 Startup publish remains optional warm-up
+
+`publish_all_schemas()` may remain as a startup best-effort cache warm-up for
+backward compatibility and faster convergence.
+
+However, the system must be correct even if every one of those publishes is
+missed.
 
 ---
 
-## 10. Implementation Plan
+## 7. Component Behavior
 
-### Phase 1: Schema Model (core crate) ✅
+### 7.1 Orchestrator
 
-- `TopicSchema`, `KeyFormat`, `TopicSchemaMode` in `mitiflow/src/schema.rs`
-- `TopicSchemaMismatch`, `TopicSchemaNotFound` error variants in `error.rs`
-- `schema_mode` field on `EventBusConfigBuilder`
-- `EventBusConfig::from_topic()` convenience constructor
-- 10 unit tests + 7 integration tests for validation logic
+The orchestrator must declare one exact-key schema queryable per topic.
 
-### Phase 2: Storage Agent Schema Store ✅
+That queryable set changes with topic lifecycle:
 
-- `SchemaStore` (fjall keyspace) in `mitiflow-storage/src/schema_store.rs`
-- `_schema` subscriber + queryable wired into `TopicWorker`
-- `TopicSupervisor` opens shared `SchemaStore` at `{data_dir}/_schemas`
-- 6 unit tests for `SchemaStore` (open, put, get, put_if_newer, version rejection)
+- On startup: create queryables for all persisted topics
+- On topic create: create a queryable for the new topic
+- On topic delete: remove the queryable for that topic
+- On topic update: keep the same queryable, update the persisted schema it serves
 
-### Phase 3: Orchestrator Extension ✅
+This is preferred over a single wildcard queryable because topic key prefixes
+are already modeled as per-topic values, and clients already query exact keys.
 
-- `TopicConfig` extended with `codec`, `key_format`, `schema_version` (all `#[serde(default)]`)
-- `create_topic()` publishes `TopicSchema` to `{key_prefix}/_schema`
-- `run_schema_queryable()` serves schemas from persisted `TopicConfig`
-- `publish_all_schemas()` on startup alongside `publish_all_configs()`
-- HTTP API `CreateTopicRequest` and `UpdateTopicRequest` include schema fields
+### 7.2 Storage agents
 
-### Phase 4: Publisher/Subscriber Validation ✅
+Storage agents remain the durable steady-state responders.
 
-- `fetch_schema()` and `register_schema()` in core crate (Zenoh `get`/`put` with timeout)
-- `resolve_schema()` dispatches on `TopicSchemaMode` in `EventPublisher::new()` and `EventSubscriber::init()`
-- `RegisterOrValidate` path: publisher declares ephemeral `_schema` queryable
-- Integration tests: mismatch detection, auto-config, register-or-validate
+Their responsibilities are:
 
-### Phase 5: CLI ✅
+- Persist schemas locally in fjall
+- Serve exact-key queries from the local store
+- Subscribe for live schema updates
+- Perform startup pull if the local store is empty
 
-- `mitiflow ctl schema inspect|register|validate` subcommands
-- Inspect: fetches and pretty-prints schema JSON
-- Register: parses codec/key_format strings, creates TopicSchema, registers via Zenoh
-- Validate: fetches schema, compares codec and partitions, reports mismatches
-- UI integration deferred (see ROADMAP)
+Storage agents do not become authoritative writers in orchestrator-managed
+production. They mirror and serve the canonical schema.
+
+### 7.3 Publishers and subscribers
+
+Client behavior stays stable:
+
+- `Disabled`: no schema lookup
+- `Validate`: fetch exact schema and compare local config
+- `AutoConfig`: fetch exact schema and overwrite wire-level config
+- `RegisterOrValidate`: only for deployments without authoritative control plane
+
+`RegisterOrValidate` remains useful for local development and orchestrator-less
+deployments, but should not be the default for orchestrator-managed production.
+
+---
+
+## 8. Failure Behavior
+
+The revised design intentionally separates control-plane correctness from
+startup timing.
+
+| Situation | Expected behavior |
+|-----------|-------------------|
+| Orchestrator up, storage cold | Clients succeed via orchestrator; storage agents bootstrap by exact query and then serve locally |
+| Orchestrator down, storage warm | Clients succeed via storage agents |
+| Orchestrator down, one storage warm, one storage cold | Cold storage agent bootstraps from warm storage agent |
+| Orchestrator up, startup schema publish missed | No correctness impact; storage agent still bootstraps by query |
+| No responder has schema | `Validate` and `AutoConfig` fail with `TopicSchemaNotFound` |
+
+This eliminates startup order as a correctness variable.
+
+---
+
+## 9. Consumer Integration Guidance
+
+Applications consuming multiple Mitiflow topics should handle schema lookup
+failures gracefully rather than treating them as fatal.
+
+### 9.1 Recommended policy for orchestrator-managed topics
+
+For topics managed by the orchestrator:
+
+- Use `Validate` mode in publisher and subscriber configs
+- Do not switch to `RegisterOrValidate` as a workaround for registry bugs
+
+The registry should be fixed at the infrastructure level.
+
+### 9.2 Failure containment
+
+Applications that initialize multiple publishers or subscribers should do so
+independently per topic:
+
+- A failed schema lookup on one topic should disable that topic's publisher or
+  subscriber, not collapse the entire application
+- Initialization should be capability-based: each topic either succeeds or
+  enters a retry/degraded state independently
+
+This is an application-level concern, but the design should make it natural:
+
+- `TopicSchemaNotFound` is a recoverable, per-topic error
+- Applications can retry individual topic lookups with backoff
+- Unaffected topics should continue operating normally
+
+---
+
+## 10. Migration Strategy
+
+The migration should be staged so that each step improves correctness without
+requiring a flag day.
+
+### Stage 1: Orchestrator becomes a correct responder
+
+Ship the per-topic exact-key queryable change first.
+
+After this stage:
+
+- Clients can fetch schemas before any storage agent has warmed up
+- Existing storage agents continue to work unchanged
+- The startup race is no longer fatal for readers
+
+### Stage 2: Storage agents become self-warming
+
+Add the bootstrap query loop and idempotent same-version handling.
+
+After this stage:
+
+- Storage agents no longer depend on startup publish timing
+- Restarting an agent with an existing volume becomes safe and quiet
+- Schema durability works as originally intended
+
+### Stage 3: Consumers stop cascading failures
+
+Consuming applications adopt per-topic failure containment so missing Mitiflow
+capabilities do not terminate unrelated functionality.
+
+After this stage:
+
+- A transient schema outage becomes degraded functionality instead of a fatal error
+- Observability improves because the first transport error is logged in context
+
+### Stage 4: Cleanup and hardening
+
+After the correctness path is fixed, add:
+
+- better schema readiness diagnostics
+- startup-order integration tests
+- rollout docs and operational guidance
+
+---
+
+## 11. Implementation Plan
+
+The concrete rollout below is designed for the current code layout.
+
+### Phase 1: Fix orchestrator schema serving
+
+Primary goal: make exact per-topic query work before any storage agent starts.
+
+Files:
+
+- `mitiflow-orchestrator/src/orchestrator.rs`
+- `mitiflow-orchestrator/src/config.rs`
+
+Changes:
+
+1. Replace the single `{cluster_prefix}/_schema` queryable with one queryable
+   per topic key prefix.
+2. Manage queryable lifecycle on startup, topic create, and topic delete.
+3. Persist stable schema timestamps in `TopicConfig` so repeated replies for the
+   same schema version are deterministic.
+4. Change `schema_version` defaults from `0` to `1`, or reject `0` during
+   bootstrap normalization.
+5. Keep `publish_all_schemas()` only as a warm-up helper.
+
+Acceptance criteria:
+
+- Querying `{topic_key_prefix}/_schema` succeeds with only the orchestrator running.
+- Repeated queries return stable schema metadata for the same version.
+- Bootstrapped topics do not publish or serve version `0`.
+
+### Phase 2: Fix storage bootstrap and idempotence
+
+Primary goal: make late-starting storage agents converge without relying on
+startup pub/sub timing.
+
+Files:
+
+- `mitiflow-storage/src/topic_worker.rs`
+- `mitiflow-storage/src/schema_store.rs`
+
+Changes:
+
+1. On topic worker startup, subscribe to live `_schema` updates and then load
+   the local schema store.
+2. If no local schema exists, run an exact-key bootstrap fetch loop with backoff.
+3. Persist fetched schema before serving it locally.
+4. Replace strict `incoming <= current` rejection with idempotent same-version
+   handling and explicit equal-version conflict detection.
+5. Emit clear logs for `schema missing`, `bootstrap retry`, `schema warmed`, and
+   `equal-version conflict`.
+
+Acceptance criteria:
+
+- A storage agent started after the orchestrator still persists all topic schemas.
+- Restarting a storage agent with an existing volume does not log false stale-version warnings.
+- Same-version different-content publishes are rejected explicitly.
+
+### Phase 3: Consumer failure containment (application-level)
+
+Primary goal: turn schema outages into degraded behavior instead of fatal errors
+in applications that consume multiple Mitiflow topics.
+
+This phase is application-specific. Mitiflow provides the building blocks (per-topic
+`TopicSchemaNotFound` errors, retryable `fetch_schema_with_timeout`), but the
+containment logic lives in the consuming application.
+
+Recommended changes for multi-topic consumers:
+
+1. Initialize publishers, subscribers, and consumer groups independently per topic.
+2. Let each topic enter a retry/degraded state on schema lookup failure.
+3. Do not disable unrelated topics when one topic's schema is unavailable.
+
+Acceptance criteria:
+
+- One failed topic schema lookup does not disable the entire application transport.
+- Unaffected topics continue operating normally.
+- Application roles that do not depend on the unavailable topic keep running.
+
+### Phase 4: Test matrix and rollout
+
+Primary goal: prove the redesign under real startup permutations.
+
+Areas to cover:
+
+- Orchestrator-only schema fetch
+- Storage-late bootstrap
+- Restart with existing schema volume
+- Same-version idempotent republish
+- Same-version conflicting republish
+- Multi-topic consumer with partial schema availability
+
+Suggested rollout order:
+
+1. Deploy orchestrator exact-key fix
+2. Deploy storage bootstrap fix
+3. Update consuming applications to use per-topic failure containment
+4. Remove any temporary operational workarounds tied to startup order
+
+---
+
+## 12. Summary
+
+The schema registry should continue to look simple from the client side:
+
+```
+get({key_prefix}/_schema)
+```
+
+The redesign makes that simplicity real.
+
+The core shift is architectural, not cosmetic:
+
+- exact query becomes the only correctness path
+- storage agents bootstrap by pull, not by timing luck
+- orchestrator serves exact per-topic schemas directly
+- per-topic schema failure is isolated, not cascading
+
+That preserves the original design intent while removing the race that blocked
+schema discovery under real startup conditions.

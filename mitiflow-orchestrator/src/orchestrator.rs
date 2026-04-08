@@ -40,6 +40,77 @@ pub struct OrchestratorConfig {
     pub bootstrap_topics_from: Option<std::path::PathBuf>,
 }
 
+/// Manages per-topic `_schema` queryables so that exact-key queries
+/// (e.g. `myapp/events/_schema`) are routed to the correct responder.
+struct SchemaQueryableManager {
+    session: Session,
+    config_store: Arc<ConfigStore>,
+    cancel: CancellationToken,
+    /// Per-topic key_prefix → spawned task handle.
+    queryables: HashMap<String, tokio::task::JoinHandle<()>>,
+}
+
+impl SchemaQueryableManager {
+    fn new(session: Session, config_store: Arc<ConfigStore>, cancel: CancellationToken) -> Self {
+        Self {
+            session,
+            config_store,
+            cancel,
+            queryables: HashMap::new(),
+        }
+    }
+
+    /// Declare a Zenoh queryable for a single topic and spawn its handler task.
+    async fn add_topic(
+        &mut self,
+        topic_key_prefix: &str,
+        orchestrator_key_prefix: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.queryables.contains_key(topic_key_prefix) {
+            return Ok(());
+        }
+        let schema_key = format!("{topic_key_prefix}/_schema");
+        let queryable = self.session.declare_queryable(&schema_key).await?;
+        let config_store = Arc::clone(&self.config_store);
+        let cancel = self.cancel.clone();
+        let topic_kp = topic_key_prefix.to_string();
+        let orch_kp = orchestrator_key_prefix.to_string();
+
+        let handle = tokio::spawn(async move {
+            run_per_topic_schema_queryable(queryable, config_store, &topic_kp, &orch_kp, cancel)
+                .await;
+        });
+        self.queryables.insert(topic_key_prefix.to_string(), handle);
+        Ok(())
+    }
+
+    /// Remove the queryable for a topic (task is cancelled via the shared token
+    /// or by aborting the handle).
+    fn remove_topic(&mut self, topic_key_prefix: &str) {
+        if let Some(handle) = self.queryables.remove(topic_key_prefix) {
+            handle.abort();
+        }
+    }
+
+    /// Bootstrap queryables for all topics already in the config store.
+    async fn bootstrap_all(
+        &mut self,
+        orchestrator_key_prefix: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Ok(topics) = self.config_store.list_topics() {
+            for topic in &topics {
+                let kp = if topic.key_prefix.is_empty() {
+                    orchestrator_key_prefix.to_string()
+                } else {
+                    topic.key_prefix.clone()
+                };
+                self.add_topic(&kp, orchestrator_key_prefix).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The orchestrator control-plane service.
 pub struct Orchestrator {
     session: Session,
@@ -50,6 +121,7 @@ pub struct Orchestrator {
     cluster_view: Option<Arc<ClusterView>>,
     override_manager: Option<Arc<OverrideManager>>,
     topic_manager: Option<Arc<RwLock<TopicManager>>>,
+    schema_manager: Option<SchemaQueryableManager>,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -70,6 +142,7 @@ impl Orchestrator {
             cluster_view: None,
             override_manager: None,
             topic_manager: None,
+            schema_manager: None,
             cancel: CancellationToken::new(),
             tasks: Vec::new(),
         })
@@ -170,23 +243,16 @@ impl Orchestrator {
             .await;
         }));
 
-        // Start _schema queryable so publishers/subscribers can fetch topic schemas.
+        // Start per-topic _schema queryables so publishers/subscribers can
+        // fetch schemas via exact-key queries (e.g. `myapp/events/_schema`).
         {
-            let schema_key = format!("{}/_schema", self.config.key_prefix);
-            let schema_queryable = self.session.declare_queryable(&schema_key).await?;
-            let config_store_for_schema = Arc::clone(&self.config_store);
-            let cancel_for_schema = self.cancel.clone();
-            let key_prefix = self.config.key_prefix.clone();
-
-            self.tasks.push(tokio::spawn(async move {
-                run_schema_queryable(
-                    schema_queryable,
-                    config_store_for_schema,
-                    &key_prefix,
-                    cancel_for_schema,
-                )
-                .await;
-            }));
+            let mut sm = SchemaQueryableManager::new(
+                self.session.clone(),
+                Arc::clone(&self.config_store),
+                self.cancel.clone(),
+            );
+            sm.bootstrap_all(&self.config.key_prefix).await?;
+            self.schema_manager = Some(sm);
         }
 
         // Start event tail subscriber — subscribes to {prefix}/p/** and pushes
@@ -271,6 +337,12 @@ impl Orchestrator {
         &mut self,
         config: crate::config::TopicConfig,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Normalize schema_version: 0 is reserved for "unset", bump to 1.
+        let mut config = config;
+        if config.schema_version == 0 {
+            config.schema_version = 1;
+        }
+
         self.config_store.put_topic(&config)?;
 
         // Publish config via Zenoh
@@ -296,6 +368,11 @@ impl Orchestrator {
         let schema_bytes = serde_json::to_vec(&schema)?;
         self.session.put(&schema_key, schema_bytes).await?;
 
+        // Register a per-topic schema queryable (if schema manager is running)
+        if let Some(ref mut sm) = self.schema_manager {
+            sm.add_topic(&key_prefix, &self.config.key_prefix).await?;
+        }
+
         // Create per-topic cluster view if applicable
         if let Some(ref tm) = self.topic_manager
             && !config.key_prefix.is_empty()
@@ -315,11 +392,26 @@ impl Orchestrator {
         &mut self,
         name: &str,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        // Look up key_prefix before deleting so we can remove the queryable.
+        let topic_key_prefix = self.config_store.get_topic(name)?.map(|t| {
+            if t.key_prefix.is_empty() {
+                self.config.key_prefix.clone()
+            } else {
+                t.key_prefix
+            }
+        });
+
         let deleted = self.config_store.delete_topic(name)?;
         if deleted {
             // Publish delete via Zenoh
             let key = format!("{}/_config/{}", self.config.key_prefix, name);
             self.session.delete(&key).await?;
+
+            // Remove per-topic schema queryable
+            if let Some(sm) = &mut self.schema_manager
+                && let Some(kp) = &topic_key_prefix {
+                    sm.remove_topic(kp);
+                }
 
             // Remove per-topic cluster view
             if let Some(ref tm) = self.topic_manager {
@@ -482,13 +574,19 @@ impl Orchestrator {
                 } else {
                     topic.key_prefix.clone()
                 };
+                // Normalize: version 0 is "unset", treat as 1.
+                let version = if topic.schema_version == 0 {
+                    1
+                } else {
+                    topic.schema_version
+                };
                 let schema = mitiflow::schema::TopicSchema::new(
                     &key_prefix,
                     &topic.name,
                     topic.num_partitions,
                     topic.codec,
                     topic.key_format,
-                    topic.schema_version,
+                    version,
                 );
                 let schema_key = format!("{key_prefix}/_schema");
                 if let Ok(bytes) = serde_json::to_vec(&schema)
@@ -714,11 +812,15 @@ async fn run_config_queryable(
 
 /// Handle `_schema` queries so publishers/subscribers can fetch topic schemas.
 ///
-/// Looks up the topic config from the store, constructs a `TopicSchema`, and replies.
-async fn run_schema_queryable(
+/// Handle schema queries for a **single topic** via its dedicated queryable.
+///
+/// The queryable is declared on `{topic_key_prefix}/_schema`, so Zenoh
+/// routing guarantees that only exact-match queries arrive here.
+async fn run_per_topic_schema_queryable(
     queryable: zenoh::query::Queryable<zenoh::handlers::FifoChannelHandler<zenoh::query::Query>>,
     config_store: Arc<ConfigStore>,
-    key_prefix: &str,
+    topic_key_prefix: &str,
+    orchestrator_key_prefix: &str,
     cancel: CancellationToken,
 ) {
     loop {
@@ -727,27 +829,29 @@ async fn run_schema_queryable(
             result = queryable.recv_async() => {
                 match result {
                     Ok(query) => {
-                        // Find topics whose key_prefix matches (or use the orchestrator prefix).
+                        // Find the topic whose key_prefix matches.
                         if let Ok(topics) = config_store.list_topics() {
                             for topic in &topics {
-                                let topic_prefix = if topic.key_prefix.is_empty() {
-                                    key_prefix.to_string()
+                                let kp = if topic.key_prefix.is_empty() {
+                                    orchestrator_key_prefix.to_string()
                                 } else {
                                     topic.key_prefix.clone()
                                 };
-                                let expected_key = format!("{topic_prefix}/_schema");
-                                if expected_key == query.key_expr().as_str() {
+                                if kp == topic_key_prefix {
+                                    // Normalize: version 0 → 1
+                                    let version = if topic.schema_version == 0 { 1 } else { topic.schema_version };
                                     let schema = mitiflow::schema::TopicSchema::new(
-                                        &topic_prefix,
+                                        &kp,
                                         &topic.name,
                                         topic.num_partitions,
                                         topic.codec,
                                         topic.key_format,
-                                        topic.schema_version,
+                                        version,
                                     );
                                     if let Ok(bytes) = serde_json::to_vec(&schema) {
                                         let _ = query.reply(query.key_expr(), bytes).await;
                                     }
+                                    break;
                                 }
                             }
                         }
@@ -757,5 +861,5 @@ async fn run_schema_queryable(
             }
         }
     }
-    debug!("schema queryable stopped");
+    debug!("per-topic schema queryable stopped for {topic_key_prefix}");
 }
