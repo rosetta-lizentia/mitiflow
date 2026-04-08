@@ -70,6 +70,9 @@ pub struct EventPublisher {
     cancel: CancellationToken,
     /// Handles to spawned background tasks (for join on graceful shutdown).
     _tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Zenoh liveliness token — kept alive for the publisher's lifetime so that
+    /// peers (orchestrator, storage agents) can discover this publisher.
+    _liveliness: zenoh::liveliness::LivelinessToken,
     /// Broadcast sender for watermark updates.
     /// Each `publish_durable()` call subscribes to receive all watermarks.
     #[cfg(feature = "store")]
@@ -238,7 +241,7 @@ impl EventPublisher {
             .congestion_control(config.congestion_control)
             .await?;
 
-        let _liveliness = session
+        let liveliness = session
             .liveliness()
             .declare_token(format!("{key_prefix}/_publishers/{publisher_id}"))
             .await?;
@@ -309,6 +312,7 @@ impl EventPublisher {
             config,
             cancel,
             _tasks: tasks,
+            _liveliness: liveliness,
             #[cfg(feature = "store")]
             watermark_tx,
         })
