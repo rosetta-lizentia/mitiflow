@@ -104,14 +104,14 @@ async fn publish_to_custom_key() {
     let (session, publisher, subscriber) = common::setup_pubsub("custom_key").await;
 
     // Publish to a custom sub-key.
-    let seq = publisher
+    let receipt = publisher
         .publish_to(
             "test/custom_key/orders/123",
             &Event::new(TestPayload { value: 99 }),
         )
         .await
         .unwrap();
-    assert_eq!(seq, 0);
+    assert_eq!(receipt.seq, 0);
 
     let event: Event<TestPayload> = tokio::time::timeout(Duration::from_secs(5), subscriber.recv())
         .await

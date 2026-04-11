@@ -2245,6 +2245,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "crc32fast",
  "humantime",
  "humantime-serde",
  "lightbench",

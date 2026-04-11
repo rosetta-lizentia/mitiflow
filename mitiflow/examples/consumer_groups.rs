@@ -91,8 +91,8 @@ mod inner {
                 user_id: user_id.to_string(),
                 action: "login".into(),
             });
-            let seq = publisher.publish_keyed(user_id, &event).await?;
-            println!("  published: user={user_id}, seq={seq}");
+            let receipt = publisher.publish_keyed(user_id, &event).await?;
+            println!("  published: user={user_id}, seq={}", receipt.seq);
         }
 
         // Receive events.

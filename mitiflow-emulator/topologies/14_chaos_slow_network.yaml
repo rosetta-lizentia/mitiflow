@@ -1,0 +1,56 @@
+# Scenario 4: Slow Network + Backpressure
+#
+# Introduces network latency and packet loss to test slow consumer offload
+# and backpressure handling. Requires CAP_NET_ADMIN.
+
+manifest:
+  enabled: true
+  directory: "./manifests/scenario-4"
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+zenoh:
+  mode: peer
+
+topics:
+  - name: events
+    key_prefix: chaos/scenario4/events
+    num_partitions: 8
+
+components:
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 500.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: scenario4
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    isolation: container
+    output:
+      mode: count
+      report_interval_sec: 5
+
+chaos:
+  enabled: true
+  schedule:
+    - at: 5s
+      target: cons-1
+      action: slow
+      delay_ms: 200
+      loss_percent: 5.0
+      duration: 10s
+    - at: 20s
+      target: cons-1
+      action: slow
+      delay_ms: 500
+      loss_percent: 10.0
+      duration: 5s

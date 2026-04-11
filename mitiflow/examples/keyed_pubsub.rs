@@ -48,7 +48,7 @@ async fn main() -> mitiflow::Result<()> {
     // ── 3. Publish keyed events ──
     println!("Publishing keyed events...\n");
 
-    let seq = publisher
+    let receipt = publisher
         .publish_keyed(
             "order-123",
             &Event::new(OrderEvent {
@@ -57,9 +57,9 @@ async fn main() -> mitiflow::Result<()> {
             }),
         )
         .await?;
-    println!("  [order-123] seq={seq}");
+    println!("  [order-123] seq={}", receipt.seq);
 
-    let seq = publisher
+    let receipt = publisher
         .publish_keyed(
             "order-456",
             &Event::new(OrderEvent {
@@ -68,10 +68,10 @@ async fn main() -> mitiflow::Result<()> {
             }),
         )
         .await?;
-    println!("  [order-456] seq={seq}");
+    println!("  [order-456] seq={}", receipt.seq);
 
     // Hierarchical key example
-    let seq = publisher
+    let receipt = publisher
         .publish_keyed(
             "user/42/orders",
             &Event::new(OrderEvent {
@@ -80,9 +80,9 @@ async fn main() -> mitiflow::Result<()> {
             }),
         )
         .await?;
-    println!("  [user/42/orders] seq={seq}");
+    println!("  [user/42/orders] seq={}", receipt.seq);
 
-    let seq = publisher
+    let receipt = publisher
         .publish_keyed(
             "order-123",
             &Event::new(OrderEvent {
@@ -91,7 +91,7 @@ async fn main() -> mitiflow::Result<()> {
             }),
         )
         .await?;
-    println!("  [order-123] seq={seq}");
+    println!("  [order-123] seq={}", receipt.seq);
 
     // ── 4. Receive from wildcard subscriber ──
     println!("\n--- Wildcard subscriber (all events) ---");

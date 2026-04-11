@@ -1,0 +1,56 @@
+# Scenario 1: Storage Agent Kill + Invariant Checker
+#
+# Kills a storage agent twice during a 30s run, restarts after 3s each time.
+# Validates zero event loss via invariant checker.
+
+manifest:
+  enabled: true
+  directory: "./manifests/scenario-1"
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+zenoh:
+  mode: peer
+
+topics:
+  - name: events
+    key_prefix: chaos/scenario1/events
+    num_partitions: 8
+
+components:
+  - name: storage-1
+    kind: storage_agent
+    topic: events
+    capacity: 100
+
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 100.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: scenario1
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 5
+
+chaos:
+  enabled: true
+  schedule:
+    - at: 5s
+      target: storage-1
+      action: kill
+      restart_after: 3s
+    - at: 15s
+      target: storage-1
+      action: kill
+      restart_after: 3s

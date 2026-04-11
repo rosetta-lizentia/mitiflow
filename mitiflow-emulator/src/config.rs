@@ -38,6 +38,10 @@ pub struct TopologyConfig {
     /// Chaos engineering schedule.
     #[serde(default)]
     pub chaos: ChaosConfig,
+
+    /// Manifest output configuration.
+    #[serde(default)]
+    pub manifest: ManifestConfig,
 }
 
 impl TopologyConfig {
@@ -214,6 +218,25 @@ pub struct LoggingConfig {
     pub per_component: bool,
 }
 
+/// Manifest output configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    #[serde(default = "default_manifest_dir")]
+    pub directory: PathBuf,
+}
+
+impl Default for ManifestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            directory: default_manifest_dir(),
+        }
+    }
+}
+
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
@@ -234,6 +257,10 @@ fn default_log_directory() -> PathBuf {
 }
 fn default_log_level() -> LogLevel {
     LogLevel::Info
+}
+
+fn default_manifest_dir() -> PathBuf {
+    PathBuf::from("./manifests")
 }
 
 /// Where to write logs.
@@ -736,6 +763,20 @@ pub struct ChaosEventDef {
     /// Network delay for slow action (ms).
     pub delay_ms: Option<u64>,
 
+    /// Target components to partition from (isolate target from these).
+    #[serde(default)]
+    pub partition_from: Vec<String>,
+
+    /// Duration before healing the partition.
+    #[serde(default, with = "humantime_serde")]
+    pub heal_after: Option<std::time::Duration>,
+
+    /// Packet loss percentage for slow action (0-100).
+    pub loss_percent: Option<f64>,
+
+    /// Bandwidth limit for slow action (e.g. "1mbit").
+    pub bandwidth: Option<String>,
+
     /// Network jitter for slow action (ms).
     pub jitter_ms: Option<u64>,
 
@@ -752,6 +793,7 @@ pub enum ChaosAction {
     Pause,
     Restart,
     Slow,
+    NetworkPartition,
     KillRandom,
 }
 
@@ -805,5 +847,77 @@ mod tests {
             ComponentKind::Agent.binary_name(),
             "mitiflow-emulator-agent"
         );
+    }
+
+    #[test]
+    fn parse_network_partition_chaos_action() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+chaos:
+  enabled: true
+  schedule:
+    - at: 10s
+      action: network_partition
+      target: c1
+      partition_from: [c2, c3]
+      heal_after: 5s
+      loss_percent: 25.5
+      bandwidth: 1mbit
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let event = &config.chaos.schedule[0];
+        assert_eq!(event.action, ChaosAction::NetworkPartition);
+        assert_eq!(event.partition_from, vec!["c2", "c3"]);
+        assert_eq!(event.heal_after, Some(std::time::Duration::from_secs(5)));
+        assert_eq!(event.loss_percent, Some(25.5));
+        assert_eq!(event.bandwidth.as_deref(), Some("1mbit"));
+    }
+
+    #[test]
+    fn parse_manifest_config_and_defaults() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+manifest:
+  enabled: true
+  directory: /tmp/test
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        assert!(config.manifest.enabled);
+        assert_eq!(config.manifest.directory, PathBuf::from("/tmp/test"));
+
+        let yaml_without_manifest = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml_without_manifest).expect("yaml should parse");
+        assert!(!config.manifest.enabled);
+        assert_eq!(config.manifest.directory, PathBuf::from("./manifests"));
+    }
+
+    #[test]
+    fn parse_all_existing_topology_yaml_files() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("topologies");
+        for entry in std::fs::read_dir(&dir).expect("topologies dir should exist") {
+            let entry = entry.expect("dir entry should be readable");
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("yaml") {
+                continue;
+            }
+
+            let yaml = std::fs::read_to_string(&path).expect("topology yaml should be readable");
+            TopologyConfig::from_yaml(&yaml)
+                .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()));
+        }
     }
 }

@@ -1,0 +1,68 @@
+# Scenario 3: Rapid Kill/Restart Cycle with Gap Recovery
+#
+# Kills a consumer 5 times at 3s intervals, restarting after 1s each.
+# Validates zero event loss via gap recovery.
+
+manifest:
+  enabled: true
+  directory: "./manifests/scenario-3"
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+zenoh:
+  mode: peer
+
+topics:
+  - name: events
+    key_prefix: chaos/scenario3/events
+    num_partitions: 8
+
+components:
+  - name: storage-1
+    kind: storage_agent
+    topic: events
+    capacity: 100
+
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 200.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: scenario3
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 5
+
+chaos:
+  enabled: true
+  schedule:
+    - at: 3s
+      target: cons-1
+      action: kill
+      restart_after: 1s
+    - at: 6s
+      target: cons-1
+      action: kill
+      restart_after: 1s
+    - at: 9s
+      target: cons-1
+      action: kill
+      restart_after: 1s
+    - at: 12s
+      target: cons-1
+      action: kill
+      restart_after: 1s
+    - at: 15s
+      target: cons-1
+      action: kill
+      restart_after: 1s

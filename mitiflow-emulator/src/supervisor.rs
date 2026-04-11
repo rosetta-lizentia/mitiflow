@@ -2,14 +2,18 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::backend::{ComponentHandle, ComponentSpec, ExecutionBackend};
+use crate::chaos::{ChaosScheduler, HandleRef};
 use crate::config::{ComponentDef, ComponentKind, IsolationMode, TopologyConfig};
 use crate::log_aggregator::LogAggregator;
+use crate::restart_channel::{
+    RestartReceiver, RestartRequest, RestartSender, create_restart_channel,
+};
 use crate::role_config::{
     AgentRoleConfig, AgentTopicRoleEntry, ConsumerGroupRoleConfig, ConsumerRoleConfig,
     OrchestratorRoleConfig, OutputRoleConfig, PayloadRoleConfig, ProcessorRoleConfig,
@@ -25,6 +29,8 @@ pub struct Supervisor {
     handles: Vec<(ComponentDef, Vec<Box<dyn ComponentHandle>>)>,
     log_aggregator: Option<LogAggregator>,
     cancel: CancellationToken,
+    restart_rx: RestartReceiver,
+    restart_tx: RestartSender,
     duration: Option<Duration>,
     dry_run: bool,
     chaos_enabled: Option<bool>,
@@ -36,6 +42,8 @@ impl Supervisor {
         backend: Box<dyn ExecutionBackend>,
         container_backend: Option<Box<dyn ExecutionBackend>>,
     ) -> Self {
+        let (restart_tx, restart_rx) = create_restart_channel();
+
         Self {
             config,
             backend,
@@ -43,10 +51,16 @@ impl Supervisor {
             handles: Vec::new(),
             log_aggregator: None,
             cancel: CancellationToken::new(),
+            restart_rx,
+            restart_tx,
             duration: None,
             dry_run: false,
             chaos_enabled: None,
         }
+    }
+
+    pub fn restart_sender(&self) -> RestartSender {
+        self.restart_tx.clone()
     }
 
     pub fn with_duration(mut self, d: Duration) -> Self {
@@ -167,40 +181,138 @@ impl Supervisor {
         // Start chaos scheduler if enabled.
         let chaos_enabled = self.chaos_enabled.unwrap_or(self.config.chaos.enabled);
 
-        let _chaos_cancel = self.cancel.clone();
-        let _chaos_enabled = if chaos_enabled && !self.config.chaos.schedule.is_empty() {
+        let chaos_task = if chaos_enabled && !self.config.chaos.schedule.is_empty() {
             info!(
                 "Chaos engineering enabled with {} events",
                 self.config.chaos.schedule.len()
             );
-            true
+
+            // Build a flat registry of (name, instance_index, handle_ptr) with 'static lifetime.
+            // Safety: the handles in `self.handles` live until `shutdown()` which is called
+            // after the select! block below, so they outlive the chaos task spawned here.
+            let registry: Vec<(String, usize, HandleRef)> = self
+                .handles
+                .iter()
+                .flat_map(|(def, handles)| {
+                    handles.iter().enumerate().map(move |(i, h)| {
+                        // SAFETY: the Box<dyn ComponentHandle> lives in self.handles for the
+                        // entire duration of run(), so the raw pointer is valid until shutdown.
+                        let handle_ref: HandleRef =
+                            unsafe { &*(&**h as *const dyn ComponentHandle) };
+                        (def.name.clone(), i, handle_ref)
+                    })
+                })
+                .collect();
+
+            let registry: &'static [(String, usize, HandleRef)] =
+                Box::leak(registry.into_boxed_slice());
+
+            let lookup = move |name: &str, instance: Option<usize>| -> Option<HandleRef> {
+                registry.iter().find_map(|(n, i, h)| {
+                    if n == name && instance.is_none_or(|inst| *i == inst) {
+                        Some(*h)
+                    } else {
+                        None
+                    }
+                })
+            };
+
+            let mut scheduler =
+                ChaosScheduler::new(&self.config.chaos.schedule, self.restart_tx.clone());
+            let chaos_cancel = self.cancel.clone();
+            let start = Instant::now();
+            Some(tokio::spawn(async move {
+                scheduler.run(chaos_cancel, start, lookup).await;
+            }))
         } else {
-            false
+            None
         };
 
-        // Wait for shutdown signal.
+        // Wait for shutdown signal and process restart requests.
         let cancel = self.cancel.clone();
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C, shutting down...");
-            }
-            _ = async {
-                if let Some(d) = self.duration {
-                    tokio::time::sleep(d).await;
-                    info!("Duration elapsed ({:?}), shutting down...", d);
-                } else {
-                    std::future::pending::<()>().await;
+        let shutdown_deadline = self.duration.map(|d| (tokio::time::Instant::now() + d, d));
+
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received Ctrl+C, shutting down...");
+                    break;
                 }
-            } => {}
-            _ = cancel.cancelled() => {
-                info!("Shutdown requested");
+                _ = async {
+                    if let Some((deadline, _)) = shutdown_deadline {
+                        tokio::time::sleep_until(deadline).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                }, if shutdown_deadline.is_some() => {
+                    if let Some((_, d)) = shutdown_deadline {
+                        info!("Duration elapsed ({:?}), shutting down...", d);
+                    }
+                    break;
+                }
+                _ = cancel.cancelled() => {
+                    info!("Shutdown requested");
+                    break;
+                }
+                Some(request) = self.restart_rx.recv() => {
+                    self.handle_restart_request(request).await;
+                }
             }
+        }
+
+        self.cancel.cancel();
+        if let Some(task) = chaos_task {
+            let _ = task.await;
         }
 
         // Graceful shutdown.
         self.shutdown().await;
 
         Ok(())
+    }
+
+    async fn handle_restart_request(&mut self, request: RestartRequest) {
+        tokio::time::sleep(request.delay).await;
+
+        let instance_idx = request.instance.unwrap_or(0);
+        let maybe_component = self
+            .handles
+            .iter_mut()
+            .find(|(def, _)| def.name == request.component);
+
+        let Some((def, instances)) = maybe_component else {
+            warn!(
+                "Restart request ignored: component '{}' not found",
+                request.component
+            );
+            return;
+        };
+
+        let Some(handle) = instances.get_mut(instance_idx) else {
+            warn!(
+                "Restart request ignored: component '{}' has no instance {}",
+                def.name, instance_idx
+            );
+            return;
+        };
+
+        match handle.restart().await {
+            Ok(()) => {
+                info!("Restarted {}:{}", def.name, instance_idx);
+
+                // Re-wire log streams for the restarted process.
+                // The old streams are EOF'd; the restarted process has fresh ones.
+                if let Some(log_agg) = &self.log_aggregator {
+                    if let Some(stdout) = handle.take_stdout() {
+                        log_agg.add_stdout(&request.component, instance_idx, stdout);
+                    }
+                    if let Some(stderr) = handle.take_stderr() {
+                        log_agg.add_stderr(&request.component, instance_idx, stderr);
+                    }
+                }
+            }
+            Err(e) => warn!("Failed to restart {}:{}: {}", def.name, instance_idx, e),
+        }
     }
 
     /// Build a ComponentSpec for a given component/instance.
@@ -427,6 +539,19 @@ impl Supervisor {
         };
 
         env.insert("MITIFLOW_EMU_CONFIG".into(), role_config);
+
+        if self.config.manifest.enabled {
+            env.insert(
+                "MITIFLOW_MANIFEST_DIR".into(),
+                self.config
+                    .manifest
+                    .directory
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            env.insert("MITIFLOW_COMPONENT_NAME".into(), comp.name.clone());
+            env.insert("MITIFLOW_INSTANCE_INDEX".into(), instance.to_string());
+        }
 
         // Set RUST_LOG for child process.
         // Component-level log_level overrides the global logging.level.

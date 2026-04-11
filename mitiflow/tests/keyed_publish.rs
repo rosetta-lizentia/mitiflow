@@ -279,22 +279,32 @@ async fn publish_keyed_sequence_increments() {
     let config = keyed_config("keyed_seq");
     let publisher = EventPublisher::new(&session, config).await.unwrap();
 
-    let seq0 = publisher
+    let receipt0 = publisher
         .publish_keyed("seq-key", &Event::new(TestPayload { value: 0 }))
         .await
         .unwrap();
-    let seq1 = publisher
+    let receipt1 = publisher
         .publish_keyed("seq-key", &Event::new(TestPayload { value: 1 }))
         .await
         .unwrap();
-    let seq2 = publisher
+    let receipt2 = publisher
         .publish_keyed("seq-key", &Event::new(TestPayload { value: 2 }))
         .await
         .unwrap();
 
     // Sequences should be monotonically increasing within the same partition
-    assert!(seq1 > seq0, "seq1 ({seq1}) > seq0 ({seq0})");
-    assert!(seq2 > seq1, "seq2 ({seq2}) > seq1 ({seq1})");
+    assert!(
+        receipt1.seq > receipt0.seq,
+        "seq1 ({}) > seq0 ({})",
+        receipt1.seq,
+        receipt0.seq
+    );
+    assert!(
+        receipt2.seq > receipt1.seq,
+        "seq2 ({}) > seq1 ({})",
+        receipt2.seq,
+        receipt1.seq
+    );
     drop(publisher);
     session.close().await.unwrap();
 }
@@ -455,12 +465,12 @@ mod durable_keyed {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let event = Event::new(TestPayload { value: 99 });
-        let seq = publisher
+        let receipt = publisher
             .publish_keyed_durable("durable-key", &event)
             .await
             .unwrap();
 
-        assert_eq!(seq, 0);
+        assert_eq!(receipt.seq, 0);
 
         drop(store);
         drop(publisher);
@@ -489,12 +499,12 @@ mod durable_keyed {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let payload = vec![10u8, 20, 30];
-        let seq = publisher
+        let receipt = publisher
             .publish_bytes_keyed_durable("bytes-dur-key", payload)
             .await
             .unwrap();
 
-        assert_eq!(seq, 0);
+        assert_eq!(receipt.seq, 0);
 
         drop(store);
         drop(publisher);

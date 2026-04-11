@@ -71,10 +71,10 @@ async fn publish_durable_events(
             metric: metrics[(i as usize) % metrics.len()].to_string(),
             value: 10.0 * i as f64 + (i % 7) as f64 * std::f64::consts::PI,
         });
-        let seq = publisher.publish_durable(&event).await?;
+        let receipt = publisher.publish_durable(&event).await?;
         println!(
-            "  committed seq={seq:02}: {}:{} = {:.2}",
-            event.payload.host, event.payload.metric, event.payload.value
+            "  committed seq={:02}: {}:{} = {:.2}",
+            receipt.seq, event.payload.host, event.payload.metric, event.payload.value
         );
     }
     Ok(())

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{
-    CodecConfig, ComponentDef, ComponentKind, DefaultsConfig, TopicDef, TopologyConfig,
+    ChaosAction, CodecConfig, ComponentDef, ComponentKind, DefaultsConfig, TopicDef, TopologyConfig,
 };
 use crate::error::{EmulatorError, ValidationWarning};
 
@@ -224,7 +224,9 @@ fn validate_no_cycles(
         visited += 1;
         if let Some(targets) = edges.get(node) {
             for &target in targets {
-                let deg = in_degree.get_mut(target).unwrap();
+                let deg = in_degree.get_mut(target).expect(
+                    "target node must exist in in_degree map; all nodes are inserted above",
+                );
                 *deg -= 1;
                 if *deg == 0 {
                     queue.push(target);
@@ -341,6 +343,11 @@ fn validate_chaos_targets(
     let names: HashSet<&str> = components.iter().map(|c| c.name.as_str()).collect();
 
     for event in schedule {
+        if event.action == ChaosAction::NetworkPartition && event.partition_from.is_empty() {
+            return Err(EmulatorError::Validation(
+                "chaos event action network_partition requires non-empty partition_from".into(),
+            ));
+        }
         if let Some(target) = &event.target
             && !names.contains(target.as_str())
         {
@@ -391,5 +398,76 @@ pub fn resolve_component_config(
         replication_factor,
         cache_size,
         heartbeat_ms,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::TopologyConfig;
+
+    #[test]
+    fn network_partition_empty_partition_from_is_rejected() {
+        let yaml = r#"
+components:
+  - name: prod-1
+    kind: producer
+    topic: events
+  - name: cons-1
+    kind: consumer
+    topic: events
+topics:
+  - name: events
+    key_prefix: demo/events
+chaos:
+  enabled: true
+  schedule:
+    - at: 5s
+      action: network_partition
+      target: prod-1
+      partition_from: []
+"#;
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let result = validate(&config);
+        assert!(
+            result.is_err(),
+            "expected validation error for network_partition with empty partition_from"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("partition_from"),
+            "error message should mention partition_from, got: {err}"
+        );
+    }
+
+    #[test]
+    fn network_partition_with_partition_from_passes() {
+        let yaml = r#"
+components:
+  - name: prod-1
+    kind: producer
+    topic: events
+  - name: cons-1
+    kind: consumer
+    topic: events
+topics:
+  - name: events
+    key_prefix: demo/events
+chaos:
+  enabled: true
+  schedule:
+    - at: 5s
+      action: network_partition
+      target: prod-1
+      partition_from: [cons-1]
+      heal_after: 3s
+"#;
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let result = validate(&config);
+        assert!(
+            result.is_ok(),
+            "expected validation to pass with non-empty partition_from, got: {:?}",
+            result
+        );
     }
 }

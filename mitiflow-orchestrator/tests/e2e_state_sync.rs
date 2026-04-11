@@ -141,11 +141,6 @@ impl StateSyncCluster {
         }
     }
 
-    /// Get the node_id of agent at the given slot (if running).
-    fn agent_node_id(&self, idx: usize) -> Option<&str> {
-        self.agents[idx].as_ref().map(|s| s.node_id.as_str())
-    }
-
     /// Start orchestrator without HTTP.
     async fn start_orchestrator(&mut self) {
         let session = zenoh::open(zenoh::Config::default()).await.unwrap();
@@ -209,25 +204,6 @@ impl StateSyncCluster {
         let cv = orch.cluster_view().unwrap();
         loop {
             let count = cv.online_count().await;
-            if count >= expected {
-                return count;
-            }
-            if start.elapsed() > timeout {
-                return count;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-    }
-
-    /// Wait for the orchestrator's ClusterView to see `expected` total nodes
-    /// (both online and offline).
-    async fn wait_for_total_node_count(&self, expected: usize, timeout: Duration) -> usize {
-        let start = tokio::time::Instant::now();
-        let orch = self.orchestrator.as_ref().unwrap();
-        let cv = orch.cluster_view().unwrap();
-        loop {
-            let nodes = cv.nodes().await;
-            let count = nodes.len();
             if count >= expected {
                 return count;
             }

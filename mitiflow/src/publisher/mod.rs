@@ -20,7 +20,7 @@ use crate::config::{EventBusConfig, HeartbeatMode};
 use crate::error::Error;
 use crate::error::Result;
 use crate::event::Event;
-use crate::types::PublisherId;
+use crate::types::{EventId, PublisherId};
 
 /// A sample cached in the publisher's recovery buffer.
 ///
@@ -43,6 +43,16 @@ pub struct HeartbeatBeacon {
     pub pub_id: PublisherId,
     /// Per-partition sequence counters (each value is the highest assigned seq).
     pub partition_seqs: HashMap<u32, u64>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Publish acknowledgement returned after a successful publish operation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PublishReceipt {
+    pub event_id: EventId,
+    pub seq: u64,
+    pub publisher_id: PublisherId,
+    pub partition: u32,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -332,45 +342,46 @@ impl EventPublisher {
     ///
     /// On the subscriber side, use [`EventSubscriber::recv_raw`] to receive
     /// the bytes without a deserialization step.
-    pub async fn publish_bytes(&self, bytes: Vec<u8>) -> Result<u64> {
+    pub async fn publish_bytes(&self, bytes: Vec<u8>) -> Result<PublishReceipt> {
         let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
-        let event_id = crate::types::EventId::new();
+        let event_id = EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(&key, bytes, seq, event_id, timestamp, NO_URGENCY)
             .await?;
-        Ok(seq)
+        Ok(self.publish_receipt(event_id, seq, partition, timestamp))
     }
 
     /// Publish raw bytes to an explicit key expression, bypassing codec encoding.
     ///
     /// The partition is extracted from the key expression (e.g., `prefix/p/3/data`).
     /// If the key has no `/p/` segment, partition 0 is used.
-    pub async fn publish_bytes_to(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
+    pub async fn publish_bytes_to(&self, key: &str, bytes: Vec<u8>) -> Result<PublishReceipt> {
         let partition = crate::attachment::extract_partition(key);
         let seq = self.next_seq_for(partition);
-        let event_id = crate::types::EventId::new();
+        let event_id = EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(key, bytes, seq, event_id, timestamp, NO_URGENCY)
             .await?;
-        Ok(seq)
+        Ok(self.publish_receipt(event_id, seq, partition, timestamp))
     }
 
     /// Publish raw bytes and wait for watermark confirmation from the Event Store.
     ///
     /// Raw-bytes variant of [`publish_durable`] — skips codec encoding.
     #[cfg(feature = "store")]
-    pub async fn publish_bytes_durable(&self, bytes: Vec<u8>) -> Result<u64> {
+    pub async fn publish_bytes_durable(&self, bytes: Vec<u8>) -> Result<PublishReceipt> {
         let urgency_ms = self.urgency_ms();
         let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
-        let event_id = crate::types::EventId::new();
+        let event_id = EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(&key, bytes, seq, event_id, timestamp, urgency_ms)
             .await?;
-        self.wait_for_watermark(partition, seq).await
+        self.wait_for_watermark(partition, seq).await?;
+        Ok(self.publish_receipt(event_id, seq, partition, timestamp))
     }
 
     /// Publish raw bytes to an explicit key expression and wait for watermark
@@ -379,15 +390,20 @@ impl EventPublisher {
     /// The partition is extracted from the key expression (e.g., `prefix/p/3/data`).
     /// If the key has no `/p/` segment, partition 0 is used.
     #[cfg(feature = "store")]
-    pub async fn publish_bytes_durable_to(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
+    pub async fn publish_bytes_durable_to(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> Result<PublishReceipt> {
         let urgency_ms = self.urgency_ms();
         let partition = crate::attachment::extract_partition(key);
         let seq = self.next_seq_for(partition);
-        let event_id = crate::types::EventId::new();
+        let event_id = EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(key, bytes, seq, event_id, timestamp, urgency_ms)
             .await?;
-        self.wait_for_watermark(partition, seq).await
+        self.wait_for_watermark(partition, seq).await?;
+        Ok(self.publish_receipt(event_id, seq, partition, timestamp))
     }
 
     /// Publish a keyed event. Partition is determined by `hash(key) % num_partitions`.
@@ -395,7 +411,11 @@ impl EventPublisher {
     /// The key is embedded in the Zenoh key expression as
     /// `{prefix}/p/{partition}/k/{key}/{seq}`, enabling Zenoh-native key
     /// filtering without any wire overhead.
-    pub async fn publish_keyed<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64> {
+    pub async fn publish_keyed<T: Serialize>(
+        &self,
+        key: &str,
+        event: &Event<T>,
+    ) -> Result<PublishReceipt> {
         crate::attachment::validate_key(key)?;
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
         let seq = self.next_seq_for(partition);
@@ -405,13 +425,13 @@ impl EventPublisher {
         );
         self.publish_inner(&key_expr, event, seq, NO_URGENCY)
             .await?;
-        Ok(seq)
+        Ok(self.publish_receipt(event.id, seq, partition, event.timestamp))
     }
 
     /// Publish pre-serialised bytes with a key.
     ///
     /// Raw-bytes variant of [`publish_keyed`] — skips codec encoding.
-    pub async fn publish_bytes_keyed(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
+    pub async fn publish_bytes_keyed(&self, key: &str, bytes: Vec<u8>) -> Result<PublishReceipt> {
         crate::attachment::validate_key(key)?;
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
         let seq = self.next_seq_for(partition);
@@ -419,11 +439,11 @@ impl EventPublisher {
             "{}/p/{}/k/{}/{}",
             self.config.key_prefix, partition, key, seq
         );
-        let event_id = crate::types::EventId::new();
+        let event_id = EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(&key_expr, bytes, seq, event_id, timestamp, NO_URGENCY)
             .await?;
-        Ok(seq)
+        Ok(self.publish_receipt(event_id, seq, partition, timestamp))
     }
 
     /// Publish a keyed event and wait for watermark confirmation.
@@ -434,7 +454,7 @@ impl EventPublisher {
         &self,
         key: &str,
         event: &Event<T>,
-    ) -> Result<u64> {
+    ) -> Result<PublishReceipt> {
         crate::attachment::validate_key(key)?;
         let urgency_ms = self.urgency_ms();
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
@@ -445,14 +465,19 @@ impl EventPublisher {
         );
         self.publish_inner(&key_expr, event, seq, urgency_ms)
             .await?;
-        self.wait_for_watermark(partition, seq).await
+        self.wait_for_watermark(partition, seq).await?;
+        Ok(self.publish_receipt(event.id, seq, partition, event.timestamp))
     }
 
     /// Publish pre-serialised bytes with a key and wait for watermark confirmation.
     ///
     /// Raw-bytes durable variant of [`publish_keyed`].
     #[cfg(feature = "store")]
-    pub async fn publish_bytes_keyed_durable(&self, key: &str, bytes: Vec<u8>) -> Result<u64> {
+    pub async fn publish_bytes_keyed_durable(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> Result<PublishReceipt> {
         crate::attachment::validate_key(key)?;
         let urgency_ms = self.urgency_ms();
         let partition = crate::partition::hash_ring::partition_for(key, self.config.num_partitions);
@@ -461,35 +486,40 @@ impl EventPublisher {
             "{}/p/{}/k/{}/{}",
             self.config.key_prefix, partition, key, seq
         );
-        let event_id = crate::types::EventId::new();
+        let event_id = EventId::new();
         let timestamp = chrono::Utc::now();
         self.put_payload(&key_expr, bytes, seq, event_id, timestamp, urgency_ms)
             .await?;
-        self.wait_for_watermark(partition, seq).await
+        self.wait_for_watermark(partition, seq).await?;
+        Ok(self.publish_receipt(event_id, seq, partition, timestamp))
     }
 
     /// Publish an event on the configured key prefix (fast path).
     ///
     /// Assigns a monotonic sequence number, attaches metadata, inserts into
-    /// the recovery cache, and publishes via Zenoh. Returns the assigned
-    /// sequence number.
-    pub async fn publish<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
+    /// the recovery cache, and publishes via Zenoh. Returns the publish
+    /// receipt containing assigned sequence and metadata.
+    pub async fn publish<T: Serialize>(&self, event: &Event<T>) -> Result<PublishReceipt> {
         let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         self.publish_inner(&key, event, seq, NO_URGENCY).await?;
-        Ok(seq)
+        Ok(self.publish_receipt(event.id, seq, partition, event.timestamp))
     }
 
     /// Publish an event to an explicit key expression (e.g., a partition key).
     ///
     /// The partition is extracted from the key expression (e.g., `prefix/p/3/data`).
     /// If the key has no `/p/` segment, partition 0 is used.
-    pub async fn publish_to<T: Serialize>(&self, key: &str, event: &Event<T>) -> Result<u64> {
+    pub async fn publish_to<T: Serialize>(
+        &self,
+        key: &str,
+        event: &Event<T>,
+    ) -> Result<PublishReceipt> {
         let partition = crate::attachment::extract_partition(key);
         let seq = self.next_seq_for(partition);
         self.publish_inner(key, event, seq, NO_URGENCY).await?;
-        Ok(seq)
+        Ok(self.publish_receipt(event.id, seq, partition, event.timestamp))
     }
 
     /// Publish an event and wait for watermark confirmation from the Event Store.
@@ -504,18 +534,19 @@ impl EventPublisher {
     /// [`CommitWatermark`]: crate::store::CommitWatermark
     /// [`EventStore`]: crate::store::EventStore
     #[cfg(feature = "store")]
-    pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<u64> {
+    pub async fn publish_durable<T: Serialize>(&self, event: &Event<T>) -> Result<PublishReceipt> {
         let urgency_ms = self.urgency_ms();
         let partition = self.assign_partition();
         let seq = self.next_seq_for(partition);
         let key = format!("{}/p/{}/{}", self.config.key_prefix, partition, seq);
         self.publish_inner(&key, event, seq, urgency_ms).await?;
-        self.wait_for_watermark(partition, seq).await
+        self.wait_for_watermark(partition, seq).await?;
+        Ok(self.publish_receipt(event.id, seq, partition, event.timestamp))
     }
 
     /// Wait until the Event Store's watermark covers `seq` for this publisher on the given partition.
     #[cfg(feature = "store")]
-    async fn wait_for_watermark(&self, partition: u32, seq: u64) -> Result<u64> {
+    async fn wait_for_watermark(&self, partition: u32, seq: u64) -> Result<()> {
         let watermark_tx = self
             .watermark_tx
             .as_ref()
@@ -530,7 +561,7 @@ impl EventPublisher {
                 match rx.recv().await {
                     Ok(wm) => {
                         if wm.partition == partition && wm.is_durable(&my_id, seq) {
-                            return Ok(seq);
+                            return Ok(());
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
@@ -604,6 +635,22 @@ impl EventPublisher {
 
         trace!(seq, publisher_id = %self.publisher_id, key, "published event");
         Ok(())
+    }
+
+    fn publish_receipt(
+        &self,
+        event_id: EventId,
+        seq: u64,
+        partition: u32,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> PublishReceipt {
+        PublishReceipt {
+            event_id,
+            seq,
+            publisher_id: self.publisher_id,
+            partition,
+            timestamp,
+        }
     }
 
     /// Compute urgency_ms from the configured `durable_urgency` duration.

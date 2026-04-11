@@ -1,0 +1,58 @@
+# Scenario 2: Network Partition Between Storage + Orchestrator
+#
+# Partitions storage-1 from the orchestrator for 10s, then heals.
+# Requires CAP_NET_ADMIN and container isolation.
+
+manifest:
+  enabled: true
+  directory: "./manifests/scenario-2"
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+zenoh:
+  mode: peer
+
+topics:
+  - name: events
+    key_prefix: chaos/scenario2/events
+    num_partitions: 8
+
+components:
+  - name: storage-1
+    kind: storage_agent
+    topic: events
+    capacity: 100
+    isolation: container
+
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 50.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: scenario2
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 5
+
+  - name: orchestrator
+    kind: orchestrator
+    isolation: container
+
+chaos:
+  enabled: true
+  schedule:
+    - at: 5s
+      target: storage-1
+      action: network_partition
+      partition_from: ["orchestrator"]
+      heal_after: 10s

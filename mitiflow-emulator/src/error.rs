@@ -18,6 +18,25 @@ pub enum EmulatorError {
     #[error("process error: {0}")]
     Process(String),
 
+    /// Network fault during topology or transport operations.
+    #[error("Network fault error: {0}")]
+    NetworkFault(String),
+
+    /// Internal invariant violation.
+    #[error("Invariant violation: {0}")]
+    Invariant(String),
+
+    /// Manifest I/O error.
+    #[error("Manifest I/O error: {0}")]
+    Manifest(String),
+
+    /// Privilege error.
+    #[error("Privilege error: {operation} requires {capability}")]
+    Privilege {
+        operation: String,
+        capability: String,
+    },
+
     /// I/O error.
     #[error("I/O error: {source}")]
     Io {
@@ -72,3 +91,33 @@ impl std::fmt::Display for ValidationWarning {
 }
 
 pub type Result<T> = std::result::Result<T, EmulatorError>;
+
+#[cfg(test)]
+mod tests {
+    use super::EmulatorError;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn new_variants_display_correctly_and_are_send_sync() {
+        assert_send_sync::<EmulatorError>();
+
+        let network = EmulatorError::NetworkFault("timeout".into());
+        assert_eq!(network.to_string(), "Network fault error: timeout");
+
+        let invariant = EmulatorError::Invariant("state mismatch".into());
+        assert_eq!(invariant.to_string(), "Invariant violation: state mismatch");
+
+        let manifest = EmulatorError::Manifest("missing manifest".into());
+        assert_eq!(manifest.to_string(), "Manifest I/O error: missing manifest");
+
+        let privilege = EmulatorError::Privilege {
+            operation: "start node".into(),
+            capability: "admin access".into(),
+        };
+        assert_eq!(
+            privilege.to_string(),
+            "Privilege error: start node requires admin access"
+        );
+    }
+}

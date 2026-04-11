@@ -27,7 +27,7 @@ pub use config::{
 pub use dlq::{BackoffStrategy, DeadLetterQueue, DlqConfig, RetryOutcome};
 pub use error::{Error, Result};
 pub use event::{Event, RawEvent};
-pub use publisher::EventPublisher;
+pub use publisher::{EventPublisher, PublishReceipt};
 pub use schema::{KeyFormat, TopicSchema, TopicSchemaMode};
 pub use subscriber::EventSubscriber;
 pub use types::{EventId, PublisherId};

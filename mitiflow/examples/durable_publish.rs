@@ -50,10 +50,10 @@ async fn main() -> mitiflow::Result<()> {
             amount: 100.0 + i as f64 * 25.0,
         });
 
-        let seq = publisher.publish_durable(&event).await?;
+        let receipt = publisher.publish_durable(&event).await?;
         println!(
-            "Durably published order {} (seq={seq}, id={})",
-            event.payload.order_id, event.id
+            "Durably published order {} (seq={}, id={})",
+            event.payload.order_id, receipt.seq, event.id
         );
     }
 

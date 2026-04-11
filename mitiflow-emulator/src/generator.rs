@@ -85,14 +85,16 @@ impl PayloadGenerator {
                     })
                     .collect();
                 let obj = json!({ "data": padding });
-                serde_json::to_vec(&obj).unwrap()
+                serde_json::to_vec(&obj)
+                    .expect("JSON serialization of padding payload should not fail")
             }
             Self::Fixed { content } => content.clone(),
             Self::Counter { prefix, seq } => {
                 let val = *seq;
                 *seq += 1;
                 let obj = json!({ "seq": val, "prefix": *prefix });
-                serde_json::to_vec(&obj).unwrap()
+                serde_json::to_vec(&obj)
+                    .expect("JSON serialization of counter payload should not fail")
             }
             Self::Schema { fields } => {
                 let mut rng = rand::rng();
@@ -100,7 +102,8 @@ impl PayloadGenerator {
                 for (name, field_gen) in fields.iter() {
                     map.insert(name.clone(), field_gen.generate(&mut rng));
                 }
-                serde_json::to_vec(&serde_json::Value::Object(map)).unwrap()
+                serde_json::to_vec(&serde_json::Value::Object(map))
+                    .expect("JSON serialization of schema payload should not fail")
             }
         }
     }

@@ -54,8 +54,8 @@ async fn main() -> mitiflow::Result<()> {
             humidity: 45.0 + i as f64 * 1.1,
         };
         let event = Event::new(reading);
-        let seq = publisher.publish(&event).await?;
-        println!("Published event seq={seq}, id={}", event.id);
+        let receipt = publisher.publish(&event).await?;
+        println!("Published event seq={}, id={}", receipt.seq, event.id);
     }
 
     // Receive all events.
@@ -84,8 +84,8 @@ async fn main() -> mitiflow::Result<()> {
         temperature: 25.0,
         humidity: 50.0,
     });
-    let seq = publisher.publish_keyed("sensor-0", &keyed_event).await?;
-    println!("Published keyed event: key=sensor-0, seq={seq}");
+    let receipt = publisher.publish_keyed("sensor-0", &keyed_event).await?;
+    println!("Published keyed event: key=sensor-0, seq={}", receipt.seq);
 
     let raw = tokio::time::timeout(Duration::from_secs(5), subscriber.recv_raw())
         .await

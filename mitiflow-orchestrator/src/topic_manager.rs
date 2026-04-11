@@ -79,9 +79,10 @@ impl TopicManager {
             false
         };
         if let Some(lm) = self.lag_monitors.remove(topic_name)
-            && let Ok(lm) = Arc::try_unwrap(lm) {
-                lm.shutdown().await;
-            }
+            && let Ok(lm) = Arc::try_unwrap(lm)
+        {
+            lm.shutdown().await;
+        }
         if had_view {
             info!(topic = %topic_name, "per-topic cluster view and lag monitor removed");
         }
