@@ -68,7 +68,8 @@ fjall = "3.1"
 # Testing
 tokio-test = "0.4"
 tempfile = "3"
-rand = "0.10"
+rand = { version = "0.10", features = ["chacha"] }
+rand_distr = "0.6"
 
 scc = "3.6"
 criterion = "0.8.2"

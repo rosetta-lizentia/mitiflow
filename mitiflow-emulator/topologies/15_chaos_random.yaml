@@ -1,0 +1,98 @@
+# Seeded Random Chaos Demo
+#
+# Demonstrates random fault injection with:
+# - Poisson-distributed timing (lambda = 0.5 faults/sec)
+# - Weighted action selection (kill 30%, slow 30%, partition 20%, pause 20%)
+# - Safety guardrails (max 3 concurrent faults, min 1s interval)
+# - Deterministic seed for reproducibility
+#
+# Run twice with same seed to verify identical fault sequences:
+#   mitiflow-emulator run topologies/15_chaos_random.yaml --seed 42 --duration 30
+#   mitiflow-emulator run topologies/15_chaos_random.yaml --seed 42 --duration 30
+
+manifest:
+  enabled: true
+  directory: "./manifests/random-chaos"
+
+defaults:
+  codec: json
+  cache_size: 512
+  heartbeat_ms: 500
+  recovery_mode: both
+
+topics:
+  - name: events
+    key_prefix: chaos/random/events
+    num_partitions: 8
+
+components:
+  - name: store-1
+    kind: storage_agent
+    topic: events
+    capacity: 100
+
+  - name: prod-1
+    kind: producer
+    topic: events
+    rate: 100.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: random-chaos
+
+  - name: prod-2
+    kind: producer
+    topic: events
+    rate: 100.0
+    durable: true
+    payload:
+      generator: counter
+      prefix: random-chaos
+
+  - name: cons-1
+    kind: consumer
+    topic: events
+    output:
+      mode: count
+      report_interval_sec: 5
+
+  - name: cons-2
+    kind: consumer
+    topic: events
+    consumer_group:
+      group_id: random-group
+      commit_mode: auto
+    output:
+      mode: count
+      report_interval_sec: 5
+
+chaos:
+  enabled: true
+  seed: 42
+  schedule:
+    - at: 5s
+      action: kill
+      target: store-1
+      restart_after: 3s
+  random:
+    fault_rate: 0.5
+    duration: 120s
+    max_concurrent_faults: 3
+    min_interval: 1s
+    actions:
+      kill:
+        probability: 0.3
+        restart_after: [2s, 10s]
+        pool: [store-1, cons-1]
+      slow:
+        probability: 0.3
+        delay_ms: [50, 500]
+        pool: [prod-1]
+      network_partition:
+        probability: 0.2
+        heal_after: [5s, 30s]
+        pool: [cons-1, cons-2]
+      pause:
+        probability: 0.2
+        pause_duration: [1s, 5s]
+        pool: [prod-1, cons-1]

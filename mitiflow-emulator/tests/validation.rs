@@ -378,6 +378,118 @@ chaos:
     assert!(msg.contains("ghost"), "got: {msg}");
 }
 
+#[test]
+fn error_random_chaos_unknown_action_name() {
+    let config = parse(
+        r#"
+topics:
+  - name: events
+    key_prefix: test/events
+
+components:
+  - name: prod
+    kind: producer
+    topic: events
+
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 5s
+    actions:
+      typo_action:
+        probability: 1.0
+"#,
+    );
+    let err = validate(&config).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("unknown action type"), "got: {msg}");
+    assert!(msg.contains("typo_action"), "got: {msg}");
+}
+
+#[test]
+fn error_random_chaos_mixed_valid_and_invalid_action_names() {
+    let config = parse(
+        r#"
+topics:
+  - name: events
+    key_prefix: test/events
+
+components:
+  - name: prod
+    kind: producer
+    topic: events
+
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 5s
+    actions:
+      kill:
+        probability: 0.8
+        pool: [prod]
+      typo_action:
+        probability: 0.2
+"#,
+    );
+    let err = validate(&config).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("unknown action type"), "got: {msg}");
+    assert!(msg.contains("typo_action"), "got: {msg}");
+}
+
+#[test]
+fn valid_random_chaos_known_action_names() {
+    let config = parse(
+        r#"
+topics:
+  - name: events
+    key_prefix: test/events
+
+components:
+  - name: prod
+    kind: producer
+    topic: events
+  - name: cons
+    kind: consumer
+    topic: events
+
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 5s
+    actions:
+      kill:
+        probability: 0.2
+        restart_after: [1s, 2s]
+        pool: [prod, cons]
+      pause:
+        probability: 0.2
+        pause_duration: [100ms, 500ms]
+        pool: [prod]
+      restart:
+        probability: 0.2
+        restart_after: [100ms, 1s]
+        pool: [cons]
+      slow:
+        probability: 0.1
+        delay_ms: [10, 50]
+        pool: [prod]
+      network_partition:
+        probability: 0.2
+        heal_after: [1s, 2s]
+        pool: [prod, cons]
+      kill_random:
+        probability: 0.1
+        restart_after: [1s, 2s]
+        pool: [prod, cons]
+"#,
+    );
+    validate(&config).unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Warnings
 // ---------------------------------------------------------------------------

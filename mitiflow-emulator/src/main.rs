@@ -60,6 +60,10 @@ enum Commands {
         /// Container runtime (docker or podman).
         #[arg(long, default_value = "docker")]
         container_runtime: String,
+
+        /// Chaos seed for deterministic random fault injection.
+        #[arg(long)]
+        seed: Option<u64>,
     },
 
     /// Validate a topology YAML file without running it.
@@ -83,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             container_image,
             container_runtime,
+            seed,
         } => {
             // Initialize tracing.
             let filter = log_level.as_deref().unwrap_or("info");
@@ -115,7 +120,8 @@ async fn main() -> anyhow::Result<()> {
 
             supervisor = supervisor
                 .with_dry_run(dry_run)
-                .with_chaos_override(chaos_override);
+                .with_chaos_override(chaos_override)
+                .with_seed(seed);
 
             supervisor.run().await?;
         }

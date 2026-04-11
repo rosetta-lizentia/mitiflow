@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{
-    ChaosAction, CodecConfig, ComponentDef, ComponentKind, DefaultsConfig, TopicDef, TopologyConfig,
+    ChaosAction, CodecConfig, ComponentDef, ComponentKind, DefaultsConfig, RandomChaosConfig,
+    TopicDef, TopologyConfig,
 };
 use crate::error::{EmulatorError, ValidationWarning};
 
@@ -56,6 +57,12 @@ pub fn validate(config: &TopologyConfig) -> crate::error::Result<ValidationResul
     // Validate chaos targets exist.
     if config.chaos.enabled {
         validate_chaos_targets(&config.chaos.schedule, &config.components)?;
+    }
+
+    // Validate random chaos config if present.
+    if let Some(random) = &config.chaos.random {
+        validate_random_chaos(random)?;
+        validate_random_chaos_targets(random, &config.components)?;
     }
 
     Ok(ValidationResult { warnings })
@@ -333,6 +340,115 @@ fn check_storage_coverage(
             });
         }
     }
+}
+
+/// Validate random chaos configuration fields.
+fn validate_random_chaos(random: &RandomChaosConfig) -> crate::error::Result<()> {
+    if !random.fault_rate.is_finite() || random.fault_rate <= 0.0 {
+        return Err(EmulatorError::Validation(
+            "chaos.random.fault_rate must be finite and > 0".into(),
+        ));
+    }
+    if random.duration.is_zero() {
+        return Err(EmulatorError::Validation(
+            "chaos.random.duration must be > 0".into(),
+        ));
+    }
+    if random.actions.is_empty() {
+        return Err(EmulatorError::Validation(
+            "chaos.random.actions must not be empty".into(),
+        ));
+    }
+
+    let prob_sum: f64 = random.actions.values().map(|a| a.probability).sum();
+    if !prob_sum.is_finite() || prob_sum <= 0.0 {
+        return Err(EmulatorError::Validation(
+            "chaos.random.actions: probability values must sum to > 0".into(),
+        ));
+    }
+
+    const VALID_ACTION_NAMES: &[&str] = &[
+        "kill",
+        "pause",
+        "restart",
+        "slow",
+        "network_partition",
+        "kill_random",
+    ];
+    const TARGET_REQUIRED: &[&str] = &[
+        "kill",
+        "pause",
+        "restart",
+        "slow",
+        "network_partition",
+        "kill_random",
+    ];
+    for (name, action) in &random.actions {
+        if !VALID_ACTION_NAMES.contains(&name.as_str()) {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"]: unknown action type \"{name}\""
+            )));
+        }
+        if !action.probability.is_finite() || action.probability < 0.0 {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"]: probability must be finite and >= 0"
+            )));
+        }
+        if TARGET_REQUIRED.contains(&name.as_str()) && action.pool.is_empty() {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"]: pool must not be empty for action type \"{name}\""
+            )));
+        }
+        if let Some([min, max]) = action.restart_after
+            && min > max
+        {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"].restart_after: min must be <= max"
+            )));
+        }
+        if let Some([min, max]) = action.delay_ms
+            && min > max
+        {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"].delay_ms: min must be <= max"
+            )));
+        }
+        if let Some([min, max]) = action.heal_after
+            && min > max
+        {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"].heal_after: min must be <= max"
+            )));
+        }
+        if let Some([min, max]) = action.pause_duration
+            && min > max
+        {
+            return Err(EmulatorError::Validation(format!(
+                "chaos.random.actions[\"{name}\"].pause_duration: min must be <= max"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_random_chaos_targets(
+    random: &RandomChaosConfig,
+    components: &[ComponentDef],
+) -> crate::error::Result<()> {
+    let names: HashSet<&str> = components.iter().map(|c| c.name.as_str()).collect();
+
+    for action in random.actions.values() {
+        for pool_target in &action.pool {
+            if !names.contains(pool_target.as_str()) {
+                return Err(EmulatorError::Validation(format!(
+                    "chaos.random.actions pool contains unknown component: \"{}\"",
+                    pool_target
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Validate chaos event targets reference existing components.

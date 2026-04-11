@@ -110,8 +110,28 @@ fn validate_08_slow_consumer_with_store() {
 }
 
 #[test]
+fn validate_09_multi_shard_offload() {
+    let result = load_and_validate("09_multi_shard_offload.yaml");
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
+}
+
+#[test]
 fn validate_10_multi_topic_agent() {
     let result = load_and_validate("10_multi_topic_agent.yaml");
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn validate_15_chaos_random() {
+    let result = load_and_validate("15_chaos_random.yaml");
     assert!(
         result.warnings.is_empty(),
         "unexpected warnings: {:?}",

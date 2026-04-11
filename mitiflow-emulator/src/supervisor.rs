@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use rand::rngs::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -34,6 +36,7 @@ pub struct Supervisor {
     duration: Option<Duration>,
     dry_run: bool,
     chaos_enabled: Option<bool>,
+    seed: Option<u64>,
 }
 
 impl Supervisor {
@@ -56,6 +59,7 @@ impl Supervisor {
             duration: None,
             dry_run: false,
             chaos_enabled: None,
+            seed: None,
         }
     }
 
@@ -75,6 +79,11 @@ impl Supervisor {
 
     pub fn with_chaos_override(mut self, enabled: Option<bool>) -> Self {
         self.chaos_enabled = enabled;
+        self
+    }
+
+    pub fn with_seed(mut self, seed: Option<u64>) -> Self {
+        self.seed = seed;
         self
     }
 
@@ -181,10 +190,17 @@ impl Supervisor {
         // Start chaos scheduler if enabled.
         let chaos_enabled = self.chaos_enabled.unwrap_or(self.config.chaos.enabled);
 
-        let chaos_task = if chaos_enabled && !self.config.chaos.schedule.is_empty() {
+        let has_events =
+            !self.config.chaos.schedule.is_empty() || self.config.chaos.random.is_some();
+        let chaos_task = if chaos_enabled && has_events {
             info!(
-                "Chaos engineering enabled with {} events",
-                self.config.chaos.schedule.len()
+                "Chaos engineering enabled with {} fixed events{}",
+                self.config.chaos.schedule.len(),
+                if self.config.chaos.random.is_some() {
+                    " + random"
+                } else {
+                    ""
+                }
             );
 
             // Build a flat registry of (name, instance_index, handle_ptr) with 'static lifetime.
@@ -217,8 +233,32 @@ impl Supervisor {
                 })
             };
 
-            let mut scheduler =
-                ChaosScheduler::new(&self.config.chaos.schedule, self.restart_tx.clone());
+            let seed = self
+                .seed
+                .or(self.config.chaos.seed)
+                .unwrap_or_else(|| rand::rng().random::<u64>());
+            info!("Chaos seed: {seed}");
+
+            let mut scheduler = ChaosScheduler::new_unified(
+                &self.config.chaos.schedule,
+                self.config.chaos.random.as_ref(),
+                seed,
+                self.restart_tx.clone(),
+            )
+            .map_err(|e| {
+                crate::error::EmulatorError::Chaos(format!("chaos scheduler creation failed: {e}"))
+            })?
+            .with_rng(ChaCha8Rng::seed_from_u64(seed));
+
+            if self.config.manifest.enabled {
+                let dir = std::path::PathBuf::from(&self.config.manifest.directory);
+                let writer = crate::metrics::ChaosManifestWriter::new(&dir).map_err(|e| {
+                    crate::error::EmulatorError::Manifest(format!(
+                        "chaos manifest writer creation failed: {e}"
+                    ))
+                })?;
+                scheduler = scheduler.with_chaos_manifest(writer);
+            }
             let chaos_cancel = self.cancel.clone();
             let start = Instant::now();
             Some(tokio::spawn(async move {

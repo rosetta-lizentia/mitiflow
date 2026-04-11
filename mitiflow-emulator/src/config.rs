@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -727,9 +728,17 @@ pub struct ChaosConfig {
     #[serde(default)]
     pub enabled: bool,
 
+    /// Optional RNG seed for reproducible random chaos.
+    #[serde(default)]
+    pub seed: Option<u64>,
+
     /// Scheduled chaos events.
     #[serde(default)]
     pub schedule: Vec<ChaosEventDef>,
+
+    /// Random/stochastic chaos configuration.
+    #[serde(default)]
+    pub random: Option<RandomChaosConfig>,
 }
 
 /// A single chaos event definition.
@@ -797,9 +806,105 @@ pub enum ChaosAction {
     KillRandom,
 }
 
+// ---------------------------------------------------------------------------
+// Random chaos
+// ---------------------------------------------------------------------------
+
+/// Stochastic (Poisson-process) chaos mode configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RandomChaosConfig {
+    pub fault_rate: f64,
+    #[serde(with = "humantime_serde")]
+    pub duration: Duration,
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent_faults: usize,
+    #[serde(default = "default_min_interval", with = "humantime_serde")]
+    pub min_interval: Duration,
+    pub actions: HashMap<String, RandomActionConfig>,
+}
+
+/// Per-action configuration for random chaos.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RandomActionConfig {
+    pub probability: f64,
+    #[serde(default)]
+    pub pool: Vec<String>,
+    #[serde(default, with = "humantime_range_serde")]
+    pub restart_after: Option<[Duration; 2]>,
+    #[serde(default)]
+    pub delay_ms: Option<[u64; 2]>,
+    #[serde(default, with = "humantime_range_serde")]
+    pub heal_after: Option<[Duration; 2]>,
+    #[serde(default, with = "humantime_range_serde")]
+    pub pause_duration: Option<[Duration; 2]>,
+}
+
+fn default_max_concurrent() -> usize {
+    3
+}
+
+fn default_min_interval() -> Duration {
+    Duration::from_secs(1)
+}
+
+/// Serde module for `Option<[Duration; 2]>` serialized as `["2s", "10s"]`.
+pub mod humantime_range_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(value: &Option<[Duration; 2]>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            None => serializer.serialize_none(),
+            Some([min, max]) => {
+                let pair = [
+                    humantime::format_duration(*min).to_string(),
+                    humantime::format_duration(*max).to_string(),
+                ];
+                pair.serialize(serializer)
+            }
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<[Duration; 2]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<Vec<String>> = Option::deserialize(deserializer)?;
+        match opt {
+            None => Ok(None),
+            Some(v) => {
+                if v.len() != 2 {
+                    return Err(serde::de::Error::custom(format!(
+                        "expected exactly 2 duration strings, got {}",
+                        v.len()
+                    )));
+                }
+                let min = humantime::parse_duration(&v[0]).map_err(|e| {
+                    serde::de::Error::custom(format!("invalid duration \"{}\": {}", v[0], e))
+                })?;
+                let max = humantime::parse_duration(&v[1]).map_err(|e| {
+                    serde::de::Error::custom(format!("invalid duration \"{}\": {}", v[1], e))
+                })?;
+                if min > max {
+                    return Err(serde::de::Error::custom(format!(
+                        "duration range minimum ({}) must be <= maximum ({})",
+                        v[0], v[1]
+                    )));
+                }
+                Ok(Some([min, max]))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validation::validate;
+    use std::time::Duration;
 
     #[test]
     fn default_zenoh_config() {
@@ -872,9 +977,302 @@ chaos:
         let event = &config.chaos.schedule[0];
         assert_eq!(event.action, ChaosAction::NetworkPartition);
         assert_eq!(event.partition_from, vec!["c2", "c3"]);
-        assert_eq!(event.heal_after, Some(std::time::Duration::from_secs(5)));
+        assert_eq!(event.heal_after, Some(Duration::from_secs(5)));
         assert_eq!(event.loss_percent, Some(25.5));
         assert_eq!(event.bandwidth.as_deref(), Some("1mbit"));
+    }
+
+    #[test]
+    fn parse_random_chaos_config() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+chaos:
+  enabled: true
+  seed: 42
+  random:
+    fault_rate: 0.75
+    duration: 30s
+    max_concurrent_faults: 5
+    min_interval: 2s
+    actions:
+      kill:
+        probability: 0.4
+        pool: [c1]
+        restart_after: [2s, 10s]
+      pause:
+        probability: 0.2
+        pool: [c1]
+        pause_duration: [500ms, 2s]
+      slow:
+        probability: 0.25
+        pool: [c1]
+        delay_ms: [100, 250]
+      network_partition:
+        probability: 0.15
+        pool: [c1]
+        heal_after: [5s, 15s]
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        assert_eq!(config.chaos.seed, Some(42));
+
+        let random = config.chaos.random.expect("random config should exist");
+        assert_eq!(random.fault_rate, 0.75);
+        assert_eq!(random.duration, Duration::from_secs(30));
+        assert_eq!(random.max_concurrent_faults, 5);
+        assert_eq!(random.min_interval, Duration::from_secs(2));
+        assert_eq!(random.actions.len(), 4);
+
+        let kill = random.actions.get("kill").expect("kill action");
+        assert_eq!(kill.probability, 0.4);
+        assert_eq!(kill.pool, vec!["c1"]);
+        assert_eq!(
+            kill.restart_after,
+            Some([Duration::from_secs(2), Duration::from_secs(10)])
+        );
+
+        let pause = random.actions.get("pause").expect("pause action");
+        assert_eq!(
+            pause.pause_duration,
+            Some([Duration::from_millis(500), Duration::from_secs(2)])
+        );
+
+        let slow = random.actions.get("slow").expect("slow action");
+        assert_eq!(slow.delay_ms, Some([100, 250]));
+
+        let partition = random
+            .actions
+            .get("network_partition")
+            .expect("partition action");
+        assert_eq!(
+            partition.heal_after,
+            Some([Duration::from_secs(5), Duration::from_secs(15)])
+        );
+    }
+
+    #[test]
+    fn parse_random_chaos_config_defaults() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+chaos:
+  enabled: true
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        assert_eq!(config.chaos.seed, None);
+        assert_eq!(config.chaos.random, None);
+    }
+
+    #[test]
+    fn parse_random_chaos_config_partial() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+topics:
+  - name: t1
+    key_prefix: demo/t1
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.5
+    duration: 45s
+    actions:
+      kill:
+        probability: 1.0
+        pool: [c1]
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let random = config.chaos.random.expect("random config should exist");
+        assert_eq!(random.fault_rate, 1.5);
+        assert_eq!(random.duration, Duration::from_secs(45));
+        assert_eq!(random.max_concurrent_faults, 3);
+        assert_eq!(random.min_interval, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn parse_random_chaos_actions() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+topics:
+  - name: t1
+    key_prefix: demo/t1
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 20s
+    actions:
+      kill:
+        probability: 0.25
+        pool: [c1]
+        restart_after: [1s, 3s]
+      pause:
+        probability: 0.25
+        pool: [c1]
+        pause_duration: [250ms, 2s]
+      slow:
+        probability: 0.25
+        pool: [c1]
+        delay_ms: [50, 100]
+      network_partition:
+        probability: 0.25
+        pool: [c1]
+        heal_after: [2s, 6s]
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let random = config.chaos.random.expect("random config should exist");
+        let kill = random.actions.get("kill").expect("kill action");
+        assert_eq!(
+            kill.restart_after,
+            Some([Duration::from_secs(1), Duration::from_secs(3)])
+        );
+        assert_eq!(kill.pool, vec!["c1"]);
+        let pause = random.actions.get("pause").expect("pause action");
+        assert_eq!(
+            pause.pause_duration,
+            Some([Duration::from_millis(250), Duration::from_secs(2)])
+        );
+        let slow = random.actions.get("slow").expect("slow action");
+        assert_eq!(slow.delay_ms, Some([50, 100]));
+        let partition = random
+            .actions
+            .get("network_partition")
+            .expect("partition action");
+        assert_eq!(
+            partition.heal_after,
+            Some([Duration::from_secs(2), Duration::from_secs(6)])
+        );
+    }
+
+    #[test]
+    fn random_chaos_validation_rejects_invalid_fault_rate() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+topics:
+  - name: t1
+    key_prefix: demo/t1
+chaos:
+  enabled: true
+  random:
+    fault_rate: 0
+    duration: 1s
+    actions:
+      kill:
+        probability: 1.0
+        pool: [c1]
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let err = validate(&config)
+            .expect_err("validation should fail")
+            .to_string();
+        assert!(
+            err.contains("fault_rate"),
+            "error should mention fault_rate: {err}"
+        );
+    }
+
+    #[test]
+    fn random_chaos_validation_rejects_empty_actions() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+topics:
+  - name: t1
+    key_prefix: demo/t1
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 1s
+    actions: {}
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let err = validate(&config)
+            .expect_err("validation should fail")
+            .to_string();
+        assert!(
+            err.contains("actions"),
+            "error should mention actions: {err}"
+        );
+    }
+
+    #[test]
+    fn random_chaos_validation_rejects_empty_pool_for_targeted_action() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+topics:
+  - name: t1
+    key_prefix: demo/t1
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 1s
+    actions:
+      kill:
+        probability: 1.0
+        pool: []
+"#;
+
+        let config = TopologyConfig::from_yaml(yaml).expect("yaml should parse");
+        let err = validate(&config)
+            .expect_err("validation should fail")
+            .to_string();
+        assert!(err.contains("pool"), "error should mention pool: {err}");
+    }
+
+    #[test]
+    fn random_chaos_validation_rejects_bad_range() {
+        let yaml = r#"
+components:
+  - name: c1
+    kind: producer
+    topic: t1
+topics:
+  - name: t1
+    key_prefix: demo/t1
+chaos:
+  enabled: true
+  random:
+    fault_rate: 1.0
+    duration: 1s
+    actions:
+      kill:
+        probability: 1.0
+        pool: [c1]
+        restart_after: [10s, 2s]
+"#;
+
+        let err = TopologyConfig::from_yaml(yaml)
+            .expect_err("yaml should fail")
+            .to_string();
+        assert!(
+            err.contains("minimum"),
+            "error should mention range ordering: {err}"
+        );
     }
 
     #[test]
@@ -919,5 +1317,49 @@ components:
             TopologyConfig::from_yaml(&yaml)
                 .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()));
         }
+    }
+
+    #[test]
+    fn backward_compat_chaos_config_no_random() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("topologies");
+        let yaml =
+            std::fs::read_to_string(dir.join("06_chaos.yaml")).expect("06_chaos.yaml should exist");
+        let config: TopologyConfig = serde_yaml::from_str(&yaml).expect("parse 06_chaos.yaml");
+        assert!(
+            config.chaos.random.is_none(),
+            "existing topology should have no random config"
+        );
+        assert!(
+            config.chaos.seed.is_none(),
+            "existing topology should have no seed"
+        );
+        assert!(
+            !config.chaos.schedule.is_empty(),
+            "06_chaos should have schedule events"
+        );
+    }
+
+    #[test]
+    fn parse_15_chaos_random() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("topologies");
+        let yaml = std::fs::read_to_string(dir.join("15_chaos_random.yaml"))
+            .expect("15_chaos_random.yaml should exist");
+        let config: TopologyConfig =
+            serde_yaml::from_str(&yaml).expect("parse 15_chaos_random.yaml");
+
+        assert!(config.chaos.enabled);
+        assert_eq!(config.chaos.seed, Some(42));
+        assert!(config.chaos.random.is_some());
+        assert_eq!(config.chaos.schedule.len(), 1);
+
+        let random = config.chaos.random.as_ref().expect("random config");
+        assert!((random.fault_rate - 0.5).abs() < f64::EPSILON);
+        assert_eq!(random.max_concurrent_faults, 3);
+        assert_eq!(random.min_interval, Duration::from_secs(1));
+        assert_eq!(random.actions.len(), 4);
+        assert!(random.actions.contains_key("kill"));
+        assert!(random.actions.contains_key("slow"));
+        assert!(random.actions.contains_key("network_partition"));
+        assert!(random.actions.contains_key("pause"));
     }
 }
