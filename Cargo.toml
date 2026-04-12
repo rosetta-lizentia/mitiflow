@@ -27,8 +27,8 @@ mitiflow-orchestrator = { path = "mitiflow-orchestrator" }
 
 
 # Zenoh
-zenoh = "1.8"
-zenoh-ext = "1.8"
+zenoh = "1.9"
+zenoh-ext = "1.9"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
