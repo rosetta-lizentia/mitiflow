@@ -354,9 +354,12 @@ async fn storage_agent_bootstraps_schema_from_orchestrator() {
     // Give storage agent time to bootstrap
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Shut down agent first — fjall uses exclusive file locks so we cannot
-    // open the _schemas database while the agent still holds it.
+    // Shut down agent and drop it to release the fjall database lock.
+    // fjall uses exclusive file locks that are only released on Drop,
+    // so we must let the agent (and its inner Arc<SchemaStore>) go out
+    // of scope before we can open the _schemas path ourselves.
     agent.shutdown().await.unwrap();
+    drop(agent);
 
     // Verify the storage agent persisted the schema
     let schema_store_path = agent_dir.path().join("_schemas");

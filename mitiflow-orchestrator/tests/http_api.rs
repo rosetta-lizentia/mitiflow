@@ -831,8 +831,11 @@ async fn http_consumer_group_detail_no_monitor() {
         .await
         .unwrap();
 
-    // No lag monitor → not found
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    // No lag monitor → returns 200 with empty data (handler always returns Ok)
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["group_id"], "test-group");
+    assert_eq!(body["total_lag"], 0);
 }
 
 // =========================================================================

@@ -312,11 +312,25 @@ async fn e2e_drain_node_moves_partitions() {
     c.recompute_all().await;
     c.publish_agent_statuses().await;
 
+    // Retry drain — the ClusterView assignment data arrives via Zenoh pub/sub
+    // and may not be fully settled by the time we compute overrides.
     let orch = c.orchestrator.as_ref().unwrap();
-    let overrides = orch
-        .drain_node("node-0", c.replication_factor)
-        .await
-        .unwrap();
+    let overrides = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let ov = orch
+                .drain_node("node-0", c.replication_factor)
+                .await
+                .unwrap();
+            if !ov.is_empty() {
+                return ov;
+            }
+            c.recompute_all().await;
+            c.publish_agent_statuses().await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for drain overrides");
     assert!(
         !overrides.is_empty(),
         "drain should produce overrides for node-0"
