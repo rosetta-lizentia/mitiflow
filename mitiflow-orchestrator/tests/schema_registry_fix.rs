@@ -354,6 +354,10 @@ async fn storage_agent_bootstraps_schema_from_orchestrator() {
     // Give storage agent time to bootstrap
     tokio::time::sleep(Duration::from_millis(500)).await;
 
+    // Shut down agent first — fjall uses exclusive file locks so we cannot
+    // open the _schemas database while the agent still holds it.
+    agent.shutdown().await.unwrap();
+
     // Verify the storage agent persisted the schema
     let schema_store_path = agent_dir.path().join("_schemas");
     let schema_store = SchemaStore::open(&schema_store_path).unwrap();
@@ -367,7 +371,6 @@ async fn storage_agent_bootstraps_schema_from_orchestrator() {
     assert_eq!(stored.name, "workflows");
     assert_eq!(stored.codec, CodecFormat::Postcard);
 
-    agent.shutdown().await.unwrap();
     orch.shutdown().await;
     agent_session.close().await.unwrap();
     orch_session.close().await.unwrap();
