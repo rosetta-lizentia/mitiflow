@@ -100,6 +100,8 @@ pub struct ReplayFilters {
     pub key: Option<String>,
     /// Only return events whose application key starts with this prefix.
     pub key_prefix: Option<String>,
+    /// Only return events from this publisher.
+    pub publisher_id: Option<PublisherId>,
 }
 
 impl ReplayFilters {
@@ -139,6 +141,12 @@ impl ReplayFilters {
                     "key_prefix" => {
                         filters.key_prefix = Some(v.trim().to_string());
                     }
+                    "publisher_id" => {
+                        let uuid = uuid::Uuid::parse_str(v.trim()).map_err(|e| {
+                            Error::InvalidConfig(format!("invalid publisher_id: {e}"))
+                        })?;
+                        filters.publisher_id = Some(PublisherId::from_uuid(uuid));
+                    }
                     _ => { /* ignore unknown parameters */ }
                 }
             }
@@ -160,6 +168,14 @@ impl ReplayFilters {
             return app_key.is_some_and(|k| k.starts_with(prefix.as_str()));
         }
         true // no key filter → matches everything
+    }
+
+    /// Check whether the given publisher matches the filter.
+    pub fn matches_publisher(&self, pub_id: &PublisherId) -> bool {
+        match &self.publisher_id {
+            Some(filter_id) => pub_id == filter_id,
+            None => true,
+        }
     }
 }
 
@@ -311,5 +327,36 @@ mod tests {
         let f = ReplayFilters::default();
         assert!(f.matches_key(Some("anything")));
         assert!(f.matches_key(None));
+    }
+
+    #[test]
+    fn replay_filters_from_selector_with_publisher_id() {
+        let pub_id = "01913a7c-8e5d-7a5b-b6e0-123456789abc";
+        let f = ReplayFilters::from_selector(&format!(
+            "after_hlc=1000:0&publisher_id={pub_id}&limit=100"
+        ))
+        .unwrap();
+        assert_eq!(
+            f.publisher_id,
+            Some(PublisherId::from_uuid(
+                uuid::Uuid::parse_str(pub_id).unwrap()
+            ))
+        );
+        assert_eq!(f.limit, Some(100));
+    }
+
+    #[test]
+    fn replay_filters_matches_publisher() {
+        let pub_id = PublisherId::new();
+        let f = ReplayFilters {
+            publisher_id: Some(pub_id),
+            ..Default::default()
+        };
+        assert!(f.matches_publisher(&pub_id));
+        assert!(!f.matches_publisher(&PublisherId::new()));
+
+        // No filter matches everything.
+        let f2 = ReplayFilters::default();
+        assert!(f2.matches_publisher(&pub_id));
     }
 }
