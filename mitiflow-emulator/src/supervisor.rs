@@ -374,6 +374,7 @@ impl Supervisor {
             },
             listen: self.config.zenoh.listen.clone(),
             connect: self.config.zenoh.connect.clone(),
+            timestamping_enabled: self.config.zenoh.timestamping_enabled,
         };
         env.insert(
             "MITIFLOW_ZENOH_CONFIG".into(),

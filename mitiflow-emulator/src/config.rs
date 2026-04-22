@@ -84,6 +84,13 @@ pub struct ZenohConfig {
     /// Auto-start a local Zenoh router for large topologies.
     #[serde(default)]
     pub auto_router: bool,
+
+    /// Enable HLC timestamping on all outgoing publications.
+    ///
+    /// Required when using `EventReplayer` — without HLC timestamps the storage
+    /// backend skips writes and replay returns no events.
+    #[serde(default)]
+    pub timestamping_enabled: bool,
 }
 
 impl Default for ZenohConfig {
@@ -93,6 +100,7 @@ impl Default for ZenohConfig {
             listen: Vec::new(),
             connect: Vec::new(),
             auto_router: false,
+            timestamping_enabled: false,
         }
     }
 }

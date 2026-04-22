@@ -20,6 +20,8 @@ pub struct ZenohRoleConfig {
     pub listen: Vec<String>,
     #[serde(default)]
     pub connect: Vec<String>,
+    #[serde(default)]
+    pub timestamping_enabled: bool,
 }
 
 /// Producer role configuration.
