@@ -57,3 +57,6 @@ pub use config::OffloadConfig;
 
 #[cfg(feature = "store")]
 pub use subscriber::offload::OffloadEvent;
+
+#[cfg(feature = "store")]
+pub use subscriber::replay::{EventReplayer, ReplayEnd, ReplayPosition, ReplayScope};

@@ -28,6 +28,9 @@ pub mod keyed_consumer;
 #[cfg(feature = "store")]
 pub mod offload;
 
+#[cfg(feature = "store")]
+pub mod replay;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
