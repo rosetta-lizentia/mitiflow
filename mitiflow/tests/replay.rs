@@ -405,3 +405,65 @@ async fn replay_into_live() {
     store.shutdown();
     session.close().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_key_scoped() {
+    let session = open_session().await;
+    let dir = temp_dir("replay_key");
+    let config = replay_config("replay_key");
+
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+    let mut store = EventStore::new(&session, backend, config.clone());
+    store.run().await.unwrap();
+
+    let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
+
+    publisher
+        .publish_keyed("alpha", &Event::new(TestPayload { value: 1 }))
+        .await
+        .unwrap();
+    publisher
+        .publish_keyed("beta", &Event::new(TestPayload { value: 2 }))
+        .await
+        .unwrap();
+    publisher
+        .publish_keyed("alpha", &Event::new(TestPayload { value: 3 }))
+        .await
+        .unwrap();
+    publisher
+        .publish_keyed("beta", &Event::new(TestPayload { value: 4 }))
+        .await
+        .unwrap();
+    publisher
+        .publish_keyed("alpha", &Event::new(TestPayload { value: 5 }))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut replayer = EventReplayer::builder(&session, config.clone())
+        .key("alpha")
+        .end(ReplayEnd::Bounded { limit: 100 })
+        .build()
+        .await
+        .unwrap();
+
+    let mut received = Vec::new();
+    loop {
+        match replayer.recv::<TestPayload>().await {
+            Ok(event) => received.push(event),
+            Err(mitiflow::Error::EndOfReplay) => break,
+            Err(e) => panic!("unexpected: {e}"),
+        }
+    }
+
+    assert_eq!(received.len(), 3, "should only get alpha events");
+    assert_eq!(received[0].payload.value, 1);
+    assert_eq!(received[1].payload.value, 3);
+    assert_eq!(received[2].payload.value, 5);
+
+    replayer.shutdown().await;
+    drop(publisher);
+    store.shutdown();
+    session.close().await.unwrap();
+}
