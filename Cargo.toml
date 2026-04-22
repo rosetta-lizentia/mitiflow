@@ -71,7 +71,7 @@ tempfile = "3"
 rand = { version = "0.10", features = ["chacha"] }
 rand_distr = "0.6"
 
-scc = "3.6"
+scc = "3"
 criterion = "0.8.2"
 
 lightbench = "0.3"
