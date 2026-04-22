@@ -5,3 +5,6 @@ target
 manifest/
 manifests/
 .tmp-chaos-*
+
+.claude
+.omc
