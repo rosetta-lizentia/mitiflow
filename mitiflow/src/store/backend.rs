@@ -855,7 +855,7 @@ mod fjall_impl {
                     .into_inner()
                     .map_err(|e| Error::StoreError(format!("replay scan error: {e}")))?;
 
-                let Some((hlc, _pub_id, _seq)) = decode_replay_key(&kv.0) else {
+                let Some((hlc, pub_id, _seq)) = decode_replay_key(&kv.0) else {
                     continue;
                 };
 
@@ -869,6 +869,11 @@ mod fjall_impl {
                     && hlc >= *before
                 {
                     break; // replay keys are sorted, no more matches
+                }
+
+                // Apply publisher filter before primary index lookup to avoid I/O.
+                if !filters.matches_publisher(&pub_id) {
+                    continue;
                 }
 
                 // Look up full event from primary index.

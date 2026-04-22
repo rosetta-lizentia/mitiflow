@@ -516,6 +516,7 @@ fn replay_hlc_range_filter() {
             limit: None,
             key: None,
             key_prefix: None,
+            publisher_id: None,
         })
         .unwrap();
 
@@ -560,6 +561,55 @@ fn replay_limit() {
     for (i, event) in limited.iter().enumerate() {
         assert_eq!(event.metadata.seq, i as u64);
     }
+}
+
+#[test]
+fn fjall_replay_filters_by_publisher() {
+    let dir = temp_dir("replay_pub_filter");
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+
+    let pub_a = PublisherId::new();
+    let pub_b = PublisherId::new();
+
+    for (i, (pub_id, seq)) in [(pub_a, 0), (pub_a, 1), (pub_b, 0), (pub_a, 2), (pub_b, 1)]
+        .iter()
+        .enumerate()
+    {
+        let hlc = HlcTimestamp {
+            physical_ns: 1000 + i as u64,
+            logical: 0,
+        };
+        let meta = EventMetadata {
+            seq: *seq,
+            publisher_id: *pub_id,
+            event_id: EventId::new(),
+            timestamp: Utc::now(),
+            key_expr: format!("test/events/{i}"),
+            key: None,
+            hlc_timestamp: Some(hlc),
+        };
+        backend.store(&meta.key_expr.clone(), b"{}", meta).unwrap();
+    }
+
+    let results = backend
+        .query_replay(&ReplayFilters {
+            publisher_id: Some(pub_a),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(results.len(), 3);
+    assert!(results.iter().all(|e| e.metadata.publisher_id == pub_a));
+
+    let results = backend
+        .query_replay(&ReplayFilters {
+            publisher_id: Some(pub_b),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(results.len(), 2);
+
+    let results = backend.query_replay(&ReplayFilters::default()).unwrap();
+    assert_eq!(results.len(), 5);
 }
 
 /// GC removes replay index entries alongside primary events.
@@ -1122,6 +1172,7 @@ fn replay_key_filter_with_hlc_range() {
             }),
             limit: None,
             key_prefix: None,
+            publisher_id: None,
         })
         .unwrap();
 
