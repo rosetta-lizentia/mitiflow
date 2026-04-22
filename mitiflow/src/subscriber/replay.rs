@@ -473,10 +473,10 @@ impl EventReplayer {
                                     Some(m) => m,
                                     None => continue,
                                 };
-                                if let Some(filter_pub) = scope_publisher {
-                                    if meta.pub_id != filter_pub {
-                                        continue;
-                                    }
+                                if let Some(filter_pub) = scope_publisher
+                                    && meta.pub_id != filter_pub
+                                {
+                                    continue;
                                 }
                                 let raw = RawEvent {
                                     id: meta.event_id,
