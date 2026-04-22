@@ -151,6 +151,33 @@ pub enum Error {
         help("Schema versions must be monotonically increasing. Bump the version number.")
     )]
     TopicSchemaVersionConflict { local: u32, registered: u32 },
+
+    /// A bounded replay has been fully consumed — no more events to return.
+    #[error("end of replay")]
+    #[diagnostic(
+        code(mitiflow::end_of_replay),
+        help("The bounded replay is exhausted. Use Tailing or ThenLive for unbounded replay.")
+    )]
+    EndOfReplay,
+
+    /// The store queryable did not respond within the timeout.
+    #[error("store unreachable: no responders for '{key_expr}'")]
+    #[diagnostic(
+        code(mitiflow::store_unreachable),
+        help(
+            "Ensure at least one EventStore is running for this partition. \
+             Check Zenoh connectivity and store_key_prefix configuration."
+        )
+    )]
+    StoreUnreachable { key_expr: String },
+
+    /// No committed replay offset found for the given consumer group.
+    #[error("no committed replay offset for group '{group_id}'")]
+    #[diagnostic(
+        code(mitiflow::offset_not_found),
+        help("The group has not committed a replay offset yet. Use ReplayPosition::Earliest to start from the beginning.")
+    )]
+    OffsetNotFound { group_id: String },
 }
 
 impl From<serde_json::Error> for Error {
@@ -240,5 +267,30 @@ mod tests {
         };
         let code = err.code().map(|c| c.to_string());
         assert_eq!(code.as_deref(), Some("mitiflow::stale_commit"));
+    }
+
+    #[test]
+    fn end_of_replay_has_help() {
+        let err = Error::EndOfReplay;
+        let help = err.help().map(|h| h.to_string());
+        assert!(help.is_some());
+    }
+
+    #[test]
+    fn store_unreachable_has_code() {
+        let err = Error::StoreUnreachable {
+            key_expr: "test/_store/0".into(),
+        };
+        let code = err.code().map(|c| c.to_string());
+        assert_eq!(code.as_deref(), Some("mitiflow::store_unreachable"));
+    }
+
+    #[test]
+    fn offset_not_found_has_help() {
+        let err = Error::OffsetNotFound {
+            group_id: "orders".into(),
+        };
+        let help = err.help().map(|h| h.to_string());
+        assert!(help.is_some());
     }
 }
