@@ -5,6 +5,7 @@ mod common;
 use std::time::Duration;
 
 use common::TestPayload;
+use futures::StreamExt;
 use mitiflow::store::FjallBackend;
 use mitiflow::store::backend::{EventMetadata, HlcTimestamp, StorageBackend};
 use mitiflow::subscriber::replay::EventReplayer;
@@ -461,6 +462,43 @@ async fn replay_key_scoped() {
     assert_eq!(received[0].payload.value, 1);
     assert_eq!(received[1].payload.value, 3);
     assert_eq!(received[2].payload.value, 5);
+
+    replayer.shutdown().await;
+    drop(publisher);
+    store.shutdown();
+    session.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_stream_adapter() {
+    let session = open_session().await;
+    let dir = temp_dir("replay_stream");
+    let config = replay_config("replay_stream");
+
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+    let mut store = EventStore::new(&session, backend, config.clone());
+    store.run().await.unwrap();
+
+    let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
+    publish_and_wait(&publisher, 5).await;
+
+    let mut replayer = EventReplayer::builder(&session, config.clone())
+        .partition(0)
+        .end(ReplayEnd::Bounded { limit: 100 })
+        .build()
+        .await
+        .unwrap();
+
+    let mut count = 0;
+    {
+        let mut stream = Box::pin(replayer.stream::<TestPayload>());
+        while let Some(result) = stream.next().await {
+            result.unwrap();
+            count += 1;
+        }
+    }
+
+    assert_eq!(count, 5);
 
     replayer.shutdown().await;
     drop(publisher);
