@@ -517,7 +517,11 @@ async fn run_queryable_task(
                         let params = query.parameters().to_string();
 
                         // Key-scoped queries route through ReplayFilters (HLC-ordered).
-                        let events = if params.contains("key=") || params.contains("key_prefix=") {
+                        let events = if params.contains("key=")
+                            || params.contains("key_prefix=")
+                            || params.contains("after_hlc")
+                            || params.contains("publisher_id")
+                        {
                             let filters = match ReplayFilters::from_selector(&params) {
                                 Ok(f) => f,
                                 Err(e) => {
