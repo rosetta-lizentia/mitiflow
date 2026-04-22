@@ -175,7 +175,9 @@ pub enum Error {
     #[error("no committed replay offset for group '{group_id}'")]
     #[diagnostic(
         code(mitiflow::offset_not_found),
-        help("The group has not committed a replay offset yet. Use ReplayPosition::Earliest to start from the beginning.")
+        help(
+            "The group has not committed a replay offset yet. Use ReplayPosition::Earliest to start from the beginning."
+        )
     )]
     OffsetNotFound { group_id: String },
 }

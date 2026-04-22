@@ -163,9 +163,9 @@ impl EventReplayerBuilder {
         let selector_base = match &self.scope {
             ReplayScope::All => format!("{store_prefix}/*"),
             ReplayScope::Partition(p) => format!("{store_prefix}/{p}"),
-            ReplayScope::Key(_)
-            | ReplayScope::KeyPrefix(_)
-            | ReplayScope::Publisher(_) => format!("{store_prefix}/*"),
+            ReplayScope::Key(_) | ReplayScope::KeyPrefix(_) | ReplayScope::Publisher(_) => {
+                format!("{store_prefix}/*")
+            }
         };
 
         let cursor = match &self.position {
@@ -300,30 +300,28 @@ impl EventReplayer {
             let batch = self.poll().await;
 
             match batch {
-                Ok(events) if events.is_empty() => {
-                    match &self.end {
-                        ReplayEnd::Tailing { poll_interval } => {
-                            tokio::time::sleep(*poll_interval).await;
-                            continue;
-                        }
-                        ReplayEnd::ThenLive => {
-                            self.start_live_subscriber().await?;
-                            self.flush_overlap_buffer();
-                            self.live_active = true;
-                            self.seen_seqs.clear();
-                            if let Some(ref rx) = self.live_rx {
-                                return rx.recv_async().await.map_err(|_| Error::ChannelClosed);
-                            }
-                            return Err(Error::ChannelClosed);
-                        }
-                        _ => {
-                            if self.exhausted {
-                                return Err(Error::EndOfReplay);
-                            }
-                            continue;
-                        }
+                Ok(events) if events.is_empty() => match &self.end {
+                    ReplayEnd::Tailing { poll_interval } => {
+                        tokio::time::sleep(*poll_interval).await;
+                        continue;
                     }
-                }
+                    ReplayEnd::ThenLive => {
+                        self.start_live_subscriber().await?;
+                        self.flush_overlap_buffer();
+                        self.live_active = true;
+                        self.seen_seqs.clear();
+                        if let Some(ref rx) = self.live_rx {
+                            return rx.recv_async().await.map_err(|_| Error::ChannelClosed);
+                        }
+                        return Err(Error::ChannelClosed);
+                    }
+                    _ => {
+                        if self.exhausted {
+                            return Err(Error::EndOfReplay);
+                        }
+                        continue;
+                    }
+                },
                 Ok(events) => {
                     if matches!(self.end, ReplayEnd::ThenLive) && self.live_rx.is_none() {
                         self.start_live_subscriber().await?;
@@ -376,10 +374,7 @@ impl EventReplayer {
     }
 
     pub async fn commit(&self, group_id: &str) -> Result<()> {
-        let key = format!(
-            "{}/_replay_offsets/{}",
-            self.config.key_prefix, group_id,
-        );
+        let key = format!("{}/_replay_offsets/{}", self.config.key_prefix, group_id,);
         let payload =
             serde_json::to_vec(&self.cursor).map_err(|e| Error::Serialization(e.to_string()))?;
         self.session
@@ -569,8 +564,7 @@ impl EventReplayer {
 
                     let key_expr = sample.key_expr().as_str().to_string();
                     let payload = sample.payload().to_bytes().to_vec();
-                    let app_key =
-                        crate::attachment::extract_key(&key_expr).map(|s| s.to_string());
+                    let app_key = crate::attachment::extract_key(&key_expr).map(|s| s.to_string());
 
                     let hlc = if let (Some(phys), Some(log)) =
                         (meta.hlc_physical_ns, meta.hlc_logical)
@@ -616,7 +610,12 @@ impl EventReplayer {
             let hlc_b = b.metadata.hlc_timestamp.unwrap_or_default();
             hlc_a
                 .cmp(&hlc_b)
-                .then(a.metadata.publisher_id.to_bytes().cmp(&b.metadata.publisher_id.to_bytes()))
+                .then(
+                    a.metadata
+                        .publisher_id
+                        .to_bytes()
+                        .cmp(&b.metadata.publisher_id.to_bytes()),
+                )
                 .then(a.metadata.seq.cmp(&b.metadata.seq))
         });
 
@@ -653,10 +652,7 @@ async fn fetch_replay_offset(
     group_id: &str,
     timeout: Duration,
 ) -> Result<Option<HlcTimestamp>> {
-    let selector = format!(
-        "{}/_replay_offsets/{}",
-        config.key_prefix, group_id,
-    );
+    let selector = format!("{}/_replay_offsets/{}", config.key_prefix, group_id,);
     let replies = session
         .get(&selector)
         .timeout(timeout)

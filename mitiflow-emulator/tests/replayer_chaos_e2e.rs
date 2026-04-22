@@ -177,7 +177,9 @@ async fn replayer_survives_storage_agent_chaos() {
     // --- Phase 3: in-process EventReplayer ---
     let mut zc = zenoh::Config::default();
     let me = |e: Box<dyn std::error::Error + Send + Sync>| e.to_string();
-    zc.insert_json5("mode", r#""peer""#).map_err(me).expect("zenoh mode");
+    zc.insert_json5("mode", r#""peer""#)
+        .map_err(me)
+        .expect("zenoh mode");
     zc.insert_json5("timestamping/enabled", "true")
         .map_err(|e: Box<dyn std::error::Error + Send + Sync>| e.to_string())
         .expect("timestamping");

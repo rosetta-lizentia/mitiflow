@@ -271,7 +271,9 @@ async fn replay_local_backend() {
             key: Some("item".to_string()),
             hlc_timestamp: Some(hlc),
         };
-        backend.store(&meta.key_expr.clone(), &payload, meta).unwrap();
+        backend
+            .store(&meta.key_expr.clone(), &payload, meta)
+            .unwrap();
     }
 
     let backend_arc: Arc<dyn StorageBackend> = Arc::new(backend);
