@@ -157,6 +157,7 @@ fn bench_store_query_replay(c: &mut Criterion) {
         limit: Some(100),
         key: None,
         key_prefix: None,
+        publisher_id: None,
     };
 
     c.bench_function("store_query/replay_10k", |b| {

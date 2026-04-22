@@ -781,6 +781,53 @@ fn extract_param(params: &str, key: &str) -> Option<String> {
     })
 }
 
+fn extract_replay_group_id(key: &str) -> Option<&str> {
+    key.rsplit_once("/_replay_offsets/").map(|(_, g)| g)
+}
+
+async fn run_replay_offset_task(
+    queryable: zenoh::query::Queryable<FifoChannelHandler<zenoh::query::Query>>,
+    subscriber: zenoh::pubsub::Subscriber<FifoChannelHandler<Sample>>,
+    cancel: CancellationToken,
+) {
+    let mut offsets: HashMap<String, Vec<u8>> = HashMap::new();
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            query_result = queryable.recv_async() => {
+                match query_result {
+                    Ok(query) => {
+                        let key_str = query.key_expr().as_str();
+                        if let Some(group_id) = extract_replay_group_id(key_str)
+                            && let Some(bytes) = offsets.get(group_id)
+                        {
+                            let _ = query.reply(query.key_expr(), bytes.clone()).await;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            sub_result = subscriber.recv_async() => {
+                match sub_result {
+                    Ok(sample) => {
+                        if sample.kind() != SampleKind::Put {
+                            continue;
+                        }
+                        let key_str = sample.key_expr().as_str().to_string();
+                        if let Some(group_id) = extract_replay_group_id(&key_str) {
+                            let payload = sample.payload().to_bytes().to_vec();
+                            debug!(group_id, "stored replay offset");
+                            offsets.insert(group_id.to_string(), payload);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    debug!("store replay offset task stopped");
+}
+
 /// Task for keyed offset commits and fetches via `{prefix}/_offsets/key/**`.
 async fn run_keyed_offset_task(
     queryable: zenoh::query::Queryable<FifoChannelHandler<zenoh::query::Query>>,
@@ -1021,6 +1068,21 @@ impl EventStore {
             keyed_offset_queryable,
             keyed_offset_subscriber,
             handle,
+            self.cancel.clone(),
+        )));
+
+        let replay_offset_key = format!("{key_prefix}/_replay_offsets");
+        let replay_offset_queryable = self
+            .session
+            .declare_queryable(format!("{replay_offset_key}/**"))
+            .await?;
+        let replay_offset_subscriber = self
+            .session
+            .declare_subscriber(format!("{replay_offset_key}/**"))
+            .await?;
+        self._tasks.push(tokio::spawn(run_replay_offset_task(
+            replay_offset_queryable,
+            replay_offset_subscriber,
             self.cancel.clone(),
         )));
 

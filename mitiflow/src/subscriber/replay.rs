@@ -59,7 +59,7 @@ pub struct EventReplayer {
     session: Session,
     config: EventBusConfig,
     scope: ReplayScope,
-    position: ReplayPosition,
+    _position: ReplayPosition,
     end: ReplayEnd,
     cursor: HlcTimestamp,
     batch_size: usize,
@@ -182,7 +182,7 @@ impl EventReplayerBuilder {
             session: self.session,
             config: self.config,
             scope: self.scope,
-            position: self.position,
+            _position: self.position,
             end: self.end,
             cursor,
             batch_size: self.batch_size,
@@ -230,10 +230,10 @@ impl EventReplayer {
             self.poll_remote(poll_limit, before_hlc).await?
         };
 
-        if let Some(last) = events.last() {
-            if let Some(hlc) = &last.metadata.hlc_timestamp {
-                self.cursor = *hlc;
-            }
+        if let Some(last) = events.last()
+            && let Some(hlc) = &last.metadata.hlc_timestamp
+        {
+            self.cursor = *hlc;
         }
 
         self.delivered += events.len();
@@ -247,10 +247,10 @@ impl EventReplayer {
             }
         }
 
-        if let ReplayEnd::Bounded { limit } = &self.end {
-            if self.delivered >= *limit {
-                self.exhausted = true;
-            }
+        if let ReplayEnd::Bounded { limit } = &self.end
+            && self.delivered >= *limit
+        {
+            self.exhausted = true;
         }
 
         Ok(events)
