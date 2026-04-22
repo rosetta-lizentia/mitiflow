@@ -384,6 +384,7 @@ async fn replay_into_live() {
     }
 
     let live_sub = replayer.into_live(&session).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     for i in 5..8u64 {
         publisher
