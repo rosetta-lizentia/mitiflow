@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::event::{Event, RawEvent};
 use crate::store::backend::{EventMetadata, HlcTimestamp, StoredEvent};
 use crate::store::query::ReplayFilters;
+use crate::subscriber::EventSubscriber;
 use crate::types::PublisherId;
 
 /// What to replay — scopes the query to a subset of the event log.
@@ -398,6 +399,23 @@ impl EventReplayer {
             }
             None => Ok(false),
         }
+    }
+
+    pub async fn into_live(self, session: &Session) -> Result<EventSubscriber> {
+        let config = self.config.clone();
+        let subscriber = match &self.scope {
+            ReplayScope::All => EventSubscriber::new(session, config).await?,
+            ReplayScope::Partition(p) => {
+                EventSubscriber::new_partitioned(session, config, &[*p]).await?
+            }
+            ReplayScope::Key(k) => EventSubscriber::new_keyed(session, config, k).await?,
+            ReplayScope::KeyPrefix(p) => {
+                EventSubscriber::new_key_prefix(session, config, p).await?
+            }
+            ReplayScope::Publisher(_) => EventSubscriber::new(session, config).await?,
+        };
+        self.cancel.cancel();
+        Ok(subscriber)
     }
 
     pub async fn shutdown(mut self) {
