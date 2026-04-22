@@ -300,3 +300,56 @@ async fn replay_local_backend() {
     replayer.shutdown().await;
     session.close().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_then_live_seamless() {
+    let session = open_session().await;
+    let dir = temp_dir("replay_then_live");
+    let config = replay_config("replay_then_live");
+
+    let backend = FjallBackend::open(dir.path(), 0).unwrap();
+    let mut store = EventStore::new(&session, backend, config.clone());
+    store.run().await.unwrap();
+
+    let publisher = EventPublisher::new(&session, config.clone()).await.unwrap();
+    publish_and_wait(&publisher, 5).await;
+
+    let mut replayer = EventReplayer::builder(&session, config.clone())
+        .partition(0)
+        .end(ReplayEnd::ThenLive)
+        .build()
+        .await
+        .unwrap();
+
+    let mut received = Vec::new();
+    for _ in 0..5 {
+        let event: Event<TestPayload> =
+            tokio::time::timeout(Duration::from_secs(5), replayer.recv())
+                .await
+                .expect("timed out")
+                .expect("recv failed");
+        received.push(event);
+    }
+    assert_eq!(received.len(), 5);
+
+    for i in 5..8u64 {
+        publisher
+            .publish(&Event::new(TestPayload { value: i }))
+            .await
+            .unwrap();
+    }
+
+    for expected_val in 5..8u64 {
+        let event: Event<TestPayload> =
+            tokio::time::timeout(Duration::from_secs(5), replayer.recv())
+                .await
+                .expect("timed out waiting for live event")
+                .expect("recv failed");
+        assert_eq!(event.payload.value, expected_val);
+    }
+
+    replayer.shutdown().await;
+    drop(publisher);
+    store.shutdown();
+    session.close().await.unwrap();
+}

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 
 use futures::Stream;
@@ -70,6 +70,11 @@ pub struct EventReplayer {
     exhausted: bool,
     cancel: CancellationToken,
     local_backend: Option<std::sync::Arc<dyn crate::store::backend::StorageBackend>>,
+    live_rx: Option<flume::Receiver<RawEvent>>,
+    live_tasks: Vec<tokio::task::JoinHandle<()>>,
+    overlap_buffer: VecDeque<RawEvent>,
+    seen_seqs: HashSet<(PublisherId, u64)>,
+    live_active: bool,
 }
 
 impl EventReplayer {
@@ -193,6 +198,11 @@ impl EventReplayerBuilder {
             exhausted: false,
             cancel: CancellationToken::new(),
             local_backend: self.local_backend,
+            live_rx: None,
+            live_tasks: Vec::new(),
+            overlap_buffer: VecDeque::new(),
+            seen_seqs: HashSet::new(),
+            live_active: false,
         })
     }
 }
@@ -264,10 +274,25 @@ impl EventReplayer {
     pub async fn recv_raw(&mut self) -> Result<RawEvent> {
         loop {
             if let Some(stored) = self.buffer.pop_front() {
-                return Ok(stored_to_raw(stored));
+                let raw = stored_to_raw(stored);
+                if matches!(self.end, ReplayEnd::ThenLive) {
+                    self.seen_seqs.insert((raw.publisher_id, raw.seq));
+                }
+                return Ok(raw);
             }
 
-            if self.exhausted {
+            if let Some(raw) = self.overlap_buffer.pop_front() {
+                return Ok(raw);
+            }
+
+            if self.live_active {
+                if let Some(ref rx) = self.live_rx {
+                    return rx.recv_async().await.map_err(|_| Error::ChannelClosed);
+                }
+                return Err(Error::ChannelClosed);
+            }
+
+            if self.exhausted && !matches!(self.end, ReplayEnd::ThenLive) {
                 return Err(Error::EndOfReplay);
             }
 
@@ -275,19 +300,48 @@ impl EventReplayer {
 
             match batch {
                 Ok(events) if events.is_empty() => {
-                    if let ReplayEnd::Tailing { poll_interval } = &self.end {
-                        tokio::time::sleep(*poll_interval).await;
-                        continue;
+                    match &self.end {
+                        ReplayEnd::Tailing { poll_interval } => {
+                            tokio::time::sleep(*poll_interval).await;
+                            continue;
+                        }
+                        ReplayEnd::ThenLive => {
+                            self.start_live_subscriber().await?;
+                            self.flush_overlap_buffer();
+                            self.live_active = true;
+                            self.seen_seqs.clear();
+                            if let Some(ref rx) = self.live_rx {
+                                return rx.recv_async().await.map_err(|_| Error::ChannelClosed);
+                            }
+                            return Err(Error::ChannelClosed);
+                        }
+                        _ => {
+                            if self.exhausted {
+                                return Err(Error::EndOfReplay);
+                            }
+                            continue;
+                        }
                     }
-                    if self.exhausted {
-                        return Err(Error::EndOfReplay);
-                    }
-                    continue;
                 }
                 Ok(events) => {
+                    if matches!(self.end, ReplayEnd::ThenLive) && self.live_rx.is_none() {
+                        self.start_live_subscriber().await?;
+                    }
                     self.buffer.extend(events);
                 }
-                Err(Error::EndOfReplay) => return Err(Error::EndOfReplay),
+                Err(Error::EndOfReplay) => {
+                    if matches!(self.end, ReplayEnd::ThenLive) {
+                        self.start_live_subscriber().await?;
+                        self.flush_overlap_buffer();
+                        self.live_active = true;
+                        self.seen_seqs.clear();
+                        if let Some(ref rx) = self.live_rx {
+                            return rx.recv_async().await.map_err(|_| Error::ChannelClosed);
+                        }
+                        return Err(Error::ChannelClosed);
+                    }
+                    return Err(Error::EndOfReplay);
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -346,12 +400,101 @@ impl EventReplayer {
         }
     }
 
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         self.cancel.cancel();
+        let tasks = std::mem::take(&mut self.live_tasks);
+        for handle in tasks {
+            let _ = handle.await;
+        }
     }
 }
 
 impl EventReplayer {
+    async fn start_live_subscriber(&mut self) -> Result<()> {
+        if self.live_rx.is_some() {
+            return Ok(());
+        }
+
+        let (tx, rx) = flume::bounded::<RawEvent>(self.config.event_channel_capacity);
+        let cancel = self.cancel.clone();
+
+        let key_expr = match &self.scope {
+            ReplayScope::All => format!("{}/**", self.config.key_prefix),
+            ReplayScope::Partition(p) => format!("{}/p/{p}/**", self.config.key_prefix),
+            ReplayScope::Key(k) => self.config.key_expr_for_key(k),
+            ReplayScope::KeyPrefix(p) => self.config.key_expr_for_key_prefix(p),
+            ReplayScope::Publisher(_) => format!("{}/**", self.config.key_prefix),
+        };
+
+        let session = self.session.clone();
+        let scope_publisher = match &self.scope {
+            ReplayScope::Publisher(id) => Some(*id),
+            _ => None,
+        };
+
+        let task = tokio::spawn(async move {
+            let sub = match session.declare_subscriber(&key_expr).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("replayer: failed to declare live subscriber: {e}");
+                    return;
+                }
+            };
+
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    sample_result = sub.recv_async() => {
+                        match sample_result {
+                            Ok(sample) => {
+                                let ke = sample.key_expr().as_str();
+                                if ke.contains("/_") {
+                                    continue;
+                                }
+                                let meta = match sample.attachment().and_then(|a| decode_metadata(a).ok()) {
+                                    Some(m) => m,
+                                    None => continue,
+                                };
+                                if let Some(filter_pub) = scope_publisher {
+                                    if meta.pub_id != filter_pub {
+                                        continue;
+                                    }
+                                }
+                                let raw = RawEvent {
+                                    id: meta.event_id,
+                                    seq: meta.seq,
+                                    publisher_id: meta.pub_id,
+                                    key_expr: ke.to_string(),
+                                    payload: sample.payload().to_bytes().to_vec(),
+                                    timestamp: meta.timestamp,
+                                };
+                                if tx.send_async(raw).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        self.live_rx = Some(rx);
+        self.live_tasks.push(task);
+        debug!("replayer: live subscriber started for ThenLive transition");
+        Ok(())
+    }
+
+    fn flush_overlap_buffer(&mut self) {
+        if let Some(ref rx) = self.live_rx {
+            while let Ok(raw) = rx.try_recv() {
+                if !self.seen_seqs.contains(&(raw.publisher_id, raw.seq)) {
+                    self.overlap_buffer.push_back(raw);
+                }
+            }
+        }
+    }
+
     async fn poll_remote(
         &self,
         limit: usize,

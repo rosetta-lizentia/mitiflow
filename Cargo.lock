@@ -2180,6 +2180,7 @@ dependencies = [
  "criterion",
  "fjall",
  "flume 0.11.1",
+ "futures",
  "miette",
  "postcard",
  "rand 0.10.1",
