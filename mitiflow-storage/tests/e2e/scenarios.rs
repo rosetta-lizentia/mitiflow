@@ -343,6 +343,10 @@ async fn e2e_data_live_ingestion() {
     cluster.start_agent(1).await;
     cluster.wait_for_stable(Duration::from_millis(1500)).await;
 
+    let total = cluster.wait_for_coverage(4, Duration::from_secs(10)).await;
+    assert_eq!(total, 4, "all stores should be assigned before publishing");
+    cluster.wait_for_no_overlap(Duration::from_secs(10)).await;
+
     // Publish events.
     let pub_session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let publisher = cluster.create_publisher(&pub_session).await;
@@ -350,13 +354,13 @@ async fn e2e_data_live_ingestion() {
         cluster.publish_events(&publisher, p, 5).await;
     }
 
-    // Wait for ingestion.
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-
-    // Verify events are stored.
+    // Verify events are stored. CI can lag while store subscribers/queryables
+    // settle, so poll the actual query path instead of sleeping once.
     let mut found_total = 0;
     for p in 0..4u32 {
-        let count = cluster.query_store_count(&pub_session, p).await;
+        let count = cluster
+            .wait_for_events(&pub_session, p, 1, Duration::from_secs(10))
+            .await;
         found_total += count;
     }
 
