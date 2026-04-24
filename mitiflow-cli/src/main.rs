@@ -232,7 +232,7 @@ async fn run_orchestrator(config_path: Option<PathBuf>) -> anyhow::Result<()> {
 
     let orch_config = if let Some(path) = config_path {
         let content = std::fs::read_to_string(&path)?;
-        serde_yaml::from_str::<OrchestratorYamlConfig>(&content)?.into_orch_config()
+        serde_yaml::from_str::<OrchestratorYamlConfig>(&content)?.into_orch_config()?
     } else {
         let key_prefix = std::env::var("MITIFLOW_KEY_PREFIX").unwrap_or_else(|_| "mitiflow".into());
         let data_dir = std::env::var("MITIFLOW_DATA_DIR")
@@ -249,7 +249,7 @@ async fn run_orchestrator(config_path: Option<PathBuf>) -> anyhow::Result<()> {
             lag_interval: Duration::from_millis(lag_interval_ms),
             admin_prefix: None,
             http_bind: None,
-            auth_token: None,
+            auth_token: auth_token_from_env()?,
             bootstrap_topics_from: std::env::var("MITIFLOW_BOOTSTRAP_TOPICS_FROM")
                 .ok()
                 .map(PathBuf::from),
@@ -360,7 +360,9 @@ async fn run_ctl(command: CtlCommands) -> anyhow::Result<()> {
                 println!("Draining node {node_id}...");
                 // In a real implementation this would hit the admin API.
                 // For now, just print instruction:
-                println!("Use the orchestrator HTTP API to drain: POST /admin/drain/{node_id}");
+                println!(
+                    "Use the orchestrator HTTP API to drain: POST /api/v1/cluster/nodes/{node_id}/drain"
+                );
             }
         },
         CtlCommands::Diagnose { prefix, timeout } => {
@@ -612,7 +614,7 @@ async fn run_dev(
         lag_interval: Duration::from_secs(1),
         admin_prefix: Some(format!("{prefix}/_admin")),
         http_bind: Some("0.0.0.0:8080".parse().unwrap()),
-        auth_token: None,
+        auth_token: auth_token_from_env()?,
         bootstrap_topics_from: None,
     };
 
@@ -706,6 +708,8 @@ struct OrchestratorYamlConfig {
     admin_prefix: Option<String>,
     /// HTTP API bind address (e.g. "0.0.0.0:8080"). Also settable via `MITIFLOW_HTTP_BIND`.
     http_bind: Option<String>,
+    /// Bearer token for HTTP API auth. Also settable via `MITIFLOW_AUTH_TOKEN`.
+    auth_token: Option<String>,
     /// Path to a YAML file with `topics` to bootstrap on startup.
     /// Also settable via `MITIFLOW_BOOTSTRAP_TOPICS_FROM`.
     bootstrap_topics_from: Option<PathBuf>,
@@ -722,7 +726,9 @@ fn default_lag_interval() -> u64 {
 }
 
 impl OrchestratorYamlConfig {
-    fn into_orch_config(self) -> mitiflow_orchestrator::orchestrator::OrchestratorConfig {
+    fn into_orch_config(
+        self,
+    ) -> anyhow::Result<mitiflow_orchestrator::orchestrator::OrchestratorConfig> {
         // Env var takes precedence over YAML config
         let http_bind = std::env::var("MITIFLOW_HTTP_BIND")
             .ok()
@@ -734,14 +740,47 @@ impl OrchestratorYamlConfig {
             .map(PathBuf::from)
             .or(self.bootstrap_topics_from);
 
-        mitiflow_orchestrator::orchestrator::OrchestratorConfig {
+        let auth_token = auth_token_from_primary_env()?
+            .or(normalize_auth_token(
+                self.auth_token,
+                "auth_token in orchestrator YAML config",
+            )?)
+            .or(auth_token_from_legacy_env()?);
+
+        Ok(mitiflow_orchestrator::orchestrator::OrchestratorConfig {
             key_prefix: self.key_prefix,
             data_dir: self.data_dir,
             lag_interval: Duration::from_millis(self.lag_interval_ms),
             admin_prefix: self.admin_prefix,
             http_bind,
-            auth_token: None,
+            auth_token,
             bootstrap_topics_from,
-        }
+        })
+    }
+}
+
+fn auth_token_from_env() -> anyhow::Result<Option<String>> {
+    Ok(auth_token_from_primary_env()?.or(auth_token_from_legacy_env()?))
+}
+
+fn auth_token_from_primary_env() -> anyhow::Result<Option<String>> {
+    if let Ok(token) = std::env::var("MITIFLOW_AUTH_TOKEN") {
+        return normalize_auth_token(Some(token), "MITIFLOW_AUTH_TOKEN");
+    }
+    Ok(None)
+}
+
+fn auth_token_from_legacy_env() -> anyhow::Result<Option<String>> {
+    if let Ok(token) = std::env::var("MITIFLOW_UI_TOKEN") {
+        return normalize_auth_token(Some(token), "MITIFLOW_UI_TOKEN");
+    }
+    Ok(None)
+}
+
+fn normalize_auth_token(token: Option<String>, source: &str) -> anyhow::Result<Option<String>> {
+    match token {
+        Some(token) if token.trim().is_empty() => anyhow::bail!("{source} must not be empty"),
+        Some(token) => Ok(Some(token)),
+        None => Ok(None),
     }
 }
