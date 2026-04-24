@@ -38,7 +38,7 @@ mitiflow ctl diagnose
 
 ### `mitiflow dev`
 
-All-in-one development mode — co-locates orchestrator and a single-node agent.
+All-in-one development mode — co-locates orchestrator and a single-node storage agent.
 
 ```bash
 mitiflow dev --topics "my-topic:8:1"

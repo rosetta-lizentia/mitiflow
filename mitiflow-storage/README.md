@@ -23,7 +23,7 @@ assignment using weighted rendezvous hashing and Zenoh liveliness.
 
 ```bash
 # Via unified CLI
-mitiflow agent --config storage.yaml
+mitiflow storage --config storage.yaml
 
 # Directly
 cargo run -p mitiflow-storage -- --config storage.yaml

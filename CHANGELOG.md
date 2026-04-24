@@ -46,10 +46,10 @@ Initial release of mitiflow — a brokerless event streaming platform built on Z
 - **Zenoh admin API** — queryable endpoints on `_admin/**`
 
 #### CLI (`mitiflow-cli`)
-- **Unified binary** — `mitiflow agent`, `mitiflow orchestrator`, `mitiflow ctl`, `mitiflow dev`
+- **Unified binary** — `mitiflow storage`, `mitiflow orchestrator`, `mitiflow ctl`, `mitiflow dev`
 - **Admin commands** — topics list/get/create/delete, cluster nodes/status/drain/undrain
 - **Diagnostics** — `mitiflow ctl diagnose` for connectivity and health checks
-- **Dev mode** — co-located orchestrator + agent for local development
+- **Dev mode** — co-located orchestrator + storage agent for local development
 
 #### Emulator (`mitiflow-emulator`)
 - **YAML topology runner** — declarative topology definition with roles
