@@ -429,7 +429,14 @@ async fn storage_agent_serves_schema_after_orchestrator_shutdown() {
     let mut agent = StorageAgent::start_multi(&agent_session, agent_config)
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Wait until the storage agent itself can answer schema queries before
+    // removing the orchestrator. A fixed sleep made this test race on slower CI
+    // runners: the agent could still be bootstrapping when the only upstream
+    // schema source was shut down.
+    fetch_schema_with_timeout(&agent_session, &topic_prefix, Duration::from_secs(5))
+        .await
+        .expect("storage agent should finish schema bootstrap before orchestrator shutdown");
 
     // Shut down orchestrator
     orch.shutdown().await;
