@@ -238,6 +238,24 @@ impl TestCluster {
         }
     }
 
+    /// Publish `n` events to a partition and wait for store watermark confirmation.
+    #[allow(dead_code)]
+    pub async fn publish_events_durable(
+        &self,
+        publisher: &EventPublisher,
+        partition: u32,
+        count: usize,
+    ) {
+        let key = format!("test/{}/p/{partition}/data", self.test_name);
+        for i in 0..count {
+            let payload = format!("msg-{i}");
+            publisher
+                .publish_bytes_durable_to(&key, payload.as_bytes().to_vec())
+                .await
+                .unwrap();
+        }
+    }
+
     /// Query a store partition via Zenoh and return the number of events found.
     #[allow(dead_code)]
     pub async fn query_store_count(&self, session: &zenoh::Session, partition: u32) -> usize {

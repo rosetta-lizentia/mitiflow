@@ -347,11 +347,12 @@ async fn e2e_data_live_ingestion() {
     assert_eq!(total, 4, "all stores should be assigned before publishing");
     cluster.wait_for_no_overlap(Duration::from_secs(10)).await;
 
-    // Publish events.
+    // Publish events and wait for store watermark confirmation. Plain Zenoh
+    // puts can race subscriber propagation even after assignment is visible.
     let pub_session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let publisher = cluster.create_publisher(&pub_session).await;
     for p in 0..4u32 {
-        cluster.publish_events(&publisher, p, 5).await;
+        cluster.publish_events_durable(&publisher, p, 5).await;
     }
 
     // Verify events are stored. CI can lag while store subscribers/queryables
