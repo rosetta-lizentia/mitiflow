@@ -54,7 +54,7 @@ Deep dives into how Mitiflow works internally. Read these to understand design t
 |----------|-------|
 | [Durability](03_durability.md) | Watermark protocol, durability strategy matrix, Event Store role |
 | [Sequencing & Replay](04_sequencing_and_replay.md) | Per-(partition, publisher) sequencing, HLC replay ordering |
-| [Replication](05_replication.md) | Multi-store fan-out, quorum watermarks, no Raft needed |
+| [Replication](05_replication.md) | Multi-store fan-out and planned quorum watermarks |
 | [Cache Recovery](09_cache_recovery_design.md) | Three-tier recovery: publisher cache → Event Store, ZBytes optimization |
 
 ### Consumer Patterns

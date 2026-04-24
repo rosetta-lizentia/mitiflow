@@ -215,6 +215,10 @@ miss handler can:
 
 ## Quorum Watermarks (Replicated Stores)
 
+> **Not yet implemented.** This section describes the planned design. Current
+> `publish_durable()` waits for a single store's watermark only. See
+> [05_replication.md](05_replication.md) for the full replication design.
+
 When multiple Event Store replicas subscribe to the same key expression (see
 [05_replication.md](05_replication.md)), each replica independently publishes its
 own watermark. The publisher waits for a **quorum** of replicas to confirm
@@ -289,6 +293,9 @@ non-negotiable and the extra hop is acceptable.
 
 ## Strategy D: Producer WAL (Optional Feature)
 
+> **Not yet implemented.** The `wal` feature flag exists but no publisher-side
+> WAL code path is present in the current codebase.
+
 For truly crash-proof publishing, embed a local WAL in the producer:
 
 ```rust
@@ -327,7 +334,7 @@ Enabled via `feature = "wal"`.
 |-------------------|----------|--------|
 | Telemetry, UI updates | A (Accept gap) | `publisher.publish(&event)` |
 | Business events | B (Watermark) | `publisher.publish_durable(&event)` |
-| Business + HA | B + Quorum | `publisher.publish_durable_quorum(&event)` |
+| Business + HA (planned) | B + Quorum | `publish_durable_quorum()` — not yet implemented |
 | Financial / audit | C or D | Inbox or WAL |
 
 ---

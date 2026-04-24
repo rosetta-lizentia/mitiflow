@@ -67,7 +67,7 @@ Other crates: `mitiflow-storage` (storage daemon), `mitiflow-orchestrator`
 default = ["store"]
 store = []                           # EventStore infrastructure, offload, consumer groups
 fjall-backend = ["store", "dep:fjall"] # Concrete LSM implementation
-wal = ["dep:fjall"]                  # Write-ahead log for durable publisher (planned)
+wal = ["dep:fjall"]                  # Placeholder for future publisher WAL support
 full = ["store", "fjall-backend", "wal"]
 ```
 

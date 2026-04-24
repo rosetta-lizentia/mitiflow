@@ -47,8 +47,8 @@ serde_json = "1"
 |------|---------|-----------------|
 | `store` | Yes | `EventStore` + storage backend trait |
 | `fjall-backend` | No | Concrete fjall LSM-tree persistence backend (implies `store`) |
-| `wal` | No | Write-ahead log for durable publisher |
-| `full` | No | All of the above |
+| `wal` | No | Placeholder for future publisher WAL support; no code path currently uses it |
+| `full` | No | Store + fjall backend + currently placeholder WAL flag |
 
 For a quick start, `features = ["full"]` is recommended.
 
@@ -166,7 +166,7 @@ publisher.publish_durable(&event).await?;
 3. Event Store publishes a watermark on `{prefix}/_watermark`.
 4. Publisher waits for watermark ≥ this event's sequence, or times out.
 
-> **See also:** [Durability](03_durability.md) for the watermark protocol and strategy matrix, [Replication](05_replication.md) for multi-store quorum writes.
+> **See also:** [Durability](03_durability.md) for the watermark protocol and strategy matrix, [Replication](05_replication.md) for the planned multi-store quorum design.
 
 ---
 
@@ -396,7 +396,7 @@ mitiflow dev --topics "my-topic:8:1"
 mitiflow orchestrator --config orchestrator.yaml
 
 # 2. Start storage agent(s)
-mitiflow storage --config agent.yaml
+mitiflow storage --config storage.yaml
 
 # 3. Admin operations
 mitiflow ctl topics list
