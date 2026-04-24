@@ -32,7 +32,7 @@ pub struct OrchestratorConfig {
     pub admin_prefix: Option<String>,
     /// Bind address for optional HTTP API (e.g. `0.0.0.0:8080`).
     pub http_bind: Option<std::net::SocketAddr>,
-    /// Auth token for HTTP API. Falls back to `MITIFLOW_UI_TOKEN` env var.
+    /// Auth token for HTTP API. Falls back to `MITIFLOW_AUTH_TOKEN`, then legacy `MITIFLOW_UI_TOKEN`.
     pub auth_token: Option<String>,
     /// Path to a YAML file containing topic definitions to bootstrap on startup.
     /// The file must have a `topics` array (other top-level keys are ignored).
@@ -344,11 +344,15 @@ impl Orchestrator {
                 cluster_view: self.cluster_view.clone(),
                 key_prefix: self.config.key_prefix.clone(),
             };
-            let auth_token = self
-                .config
-                .auth_token
-                .clone()
-                .or_else(|| std::env::var("MITIFLOW_UI_TOKEN").ok());
+            let auth_token = auth_token_from_primary_env()?
+                .or(self
+                    .config
+                    .auth_token
+                    .clone()
+                    .map(|token| normalize_auth_token(Some(token), "OrchestratorConfig.auth_token"))
+                    .transpose()?
+                    .flatten())
+                .or(auth_token_from_legacy_env()?);
             let http_handle =
                 crate::http::start_http(http_state, bind_addr, self.cancel.clone(), auth_token)
                     .await;
@@ -654,6 +658,33 @@ impl Orchestrator {
             tm.into_inner().shutdown().await;
         }
         info!("orchestrator shut down");
+    }
+}
+
+fn auth_token_from_primary_env() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>>
+{
+    if let Ok(token) = std::env::var("MITIFLOW_AUTH_TOKEN") {
+        return normalize_auth_token(Some(token), "MITIFLOW_AUTH_TOKEN");
+    }
+    Ok(None)
+}
+
+fn auth_token_from_legacy_env() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>>
+{
+    if let Ok(token) = std::env::var("MITIFLOW_UI_TOKEN") {
+        return normalize_auth_token(Some(token), "MITIFLOW_UI_TOKEN");
+    }
+    Ok(None)
+}
+
+fn normalize_auth_token(
+    token: Option<String>,
+    source: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    match token {
+        Some(token) if token.trim().is_empty() => Err(format!("{source} must not be empty").into()),
+        Some(token) => Ok(Some(token)),
+        None => Ok(None),
     }
 }
 
