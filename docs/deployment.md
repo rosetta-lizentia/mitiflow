@@ -29,7 +29,7 @@ Mitiflow is brokerless — there is no central process that routes messages. You
 |------|-----------|----------|
 | **Library only** | Your app + Mitiflow crate | Embedded streaming, no separate processes |
 | **Dev mode** | `mitiflow dev` (all-in-one) | Local development and testing |
-| **Production** | Storage agent(s) + Orchestrator (optional) + Zenoh router (optional) | Multi-node deployments |
+| **Production** | Storage agent(s) + Orchestrator (optional) + optional explicit Zenoh routing | Multi-node deployments |
 
 **Key insight:** The orchestrator and storage agent are *operational utilities*, not message routers. Your publishers and subscribers communicate directly over Zenoh peer-to-peer — the system works without any infrastructure processes.
 
@@ -76,21 +76,23 @@ mitiflow ctl diagnose
 ### Architecture
 
 ```
-┌──────────────┐      ┌──────────────────┐      ┌──────────────┐
-│ Zenoh Router │◄────►│   Orchestrator    │◄────►│    Storage    │
-│  (optional)  │      │  (HTTP API :8080) │      │    Agent      │
-│    :7447     │      │  + embedded UI    │      │  (fjall LSM)  │
-└──────┬───────┘      └──────────────────┘      └───────────────┘
-       │
-       │  Zenoh peer-to-peer mesh
-       │
-┌──────┴───────┐      ┌──────────────────┐
-│  Publisher   │◄────►│   Subscriber     │
-│  (your app)  │      │   (your app)     │
-└──────────────┘      └──────────────────┘
+┌──────────────────┐      Zenoh peer mesh      ┌──────────────┐
+│   Orchestrator    │◄────────────────────────►│    Storage    │
+│  (HTTP API :8080) │                          │    Agent      │
+│  + embedded UI    │                          │  (fjall LSM)  │
+└─────────┬────────┘                          └──────┬───────┘
+          │                                          │
+          │              Zenoh peer mesh             │
+          ▼                                          ▼
+┌──────────────────┐                          ┌──────────────┐
+│  Publisher       │◄────────────────────────►│  Subscriber  │
+│  (your app)      │                          │  (your app)  │
+└──────────────────┘                          └──────────────┘
 ```
 
-All components connect to the Zenoh router (or directly in peer-to-peer mode). Messages flow directly between publishers and subscribers — they never pass through the router.
+The checked-in compose stack uses the production binaries' current default Zenoh
+configuration, which means peer discovery rather than an explicit router
+endpoint. Messages flow directly between publishers and subscribers.
 
 ---
 
@@ -101,8 +103,8 @@ All components connect to the Zenoh router (or directly in peer-to-peer mode). M
 | `MITIFLOW_KEY_PREFIX` | `mitiflow` | Zenoh key expression prefix for all topics |
 | `MITIFLOW_DATA_DIR` | `/data` | Directory for persistent storage (fjall LSM) |
 | `MITIFLOW_HTTP_BIND` | `0.0.0.0:8080` | Orchestrator HTTP bind address |
+| `MITIFLOW_AUTH_TOKEN` | — | Bearer token required for orchestrator HTTP API and UI when set |
 | `MITIFLOW_NUM_PARTITIONS` | `16` | Default partition count per topic |
-| `ZENOH_CONNECT` | — | Zenoh endpoint (e.g., `tcp/zenoh-router:7447`) |
 | `RUST_LOG` | `info` | Logging filter (e.g., `mitiflow_storage=debug`) |
 
 ---
@@ -122,7 +124,7 @@ podman build \
     -t mitiflow-orchestrator .
 
 # Or use the justfile shortcuts:
-just container-agent
+just container-storage
 just container-orchestrator
 just container-all          # Both images
 ```
@@ -133,13 +135,13 @@ just container-all          # Both images
 
 ## 6. Compose Stack
 
-The [`docker-compose.yml`](../docker-compose.yml) defines a ready-to-use three-service stack:
+The [`docker-compose.yml`](../docker-compose.yml) defines a ready-to-use two-service stack:
 
 ```bash
 # Start all services
 podman compose up -d
 
-# Start only storage (with Zenoh router dependency)
+# Start only storage
 podman compose up -d storage
 
 # View logs
@@ -153,7 +155,6 @@ podman compose down -v
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| `zenoh-router` | `eclipse/zenoh:latest` | 7447 | Zenoh message routing (optional in peer-to-peer mode) |
 | `orchestrator` | `mitiflow-orchestrator` | 8080 | HTTP admin API + embedded web UI |
 | `storage` | `mitiflow-storage` | — | Multi-topic storage agent |
 
@@ -173,7 +174,7 @@ Run each component as a standalone binary:
 zenohd
 
 # Terminal 2: Storage agent
-mitiflow storage --config agent.yaml
+mitiflow storage --config storage.yaml
 
 # Terminal 3: Orchestrator
 mitiflow orchestrator --config orchestrator.yaml
@@ -181,15 +182,12 @@ mitiflow orchestrator --config orchestrator.yaml
 # Your application links against the mitiflow crate directly.
 ```
 
-### Minimal agent config (`agent.yaml`)
+### Minimal storage config (`storage.yaml`)
 
 ```yaml
 key_prefix: myapp
 data_dir: /var/lib/mitiflow/storage
 num_partitions: 16
-zenoh:
-  connect:
-    - tcp/localhost:7447
 ```
 
 ### Minimal orchestrator config (`orchestrator.yaml`)
@@ -198,10 +196,21 @@ zenoh:
 key_prefix: myapp
 data_dir: /var/lib/mitiflow/orchestrator
 http_bind: 0.0.0.0:8080
-zenoh:
-  connect:
-    - tcp/localhost:7447
+auth_token: change-me-in-production
 ```
+
+The HTTP API is unauthenticated unless `auth_token`, `MITIFLOW_AUTH_TOKEN`, or
+legacy `MITIFLOW_UI_TOKEN` is set. Precedence is `MITIFLOW_AUTH_TOKEN` → YAML
+`auth_token` → `MITIFLOW_UI_TOKEN`; blank tokens are rejected at startup. Use
+bearer auth for any non-local deployment:
+
+```bash
+MITIFLOW_AUTH_TOKEN=change-me mitiflow orchestrator --config orchestrator.yaml
+curl -H 'Authorization: Bearer change-me' http://localhost:8080/api/v1/topics
+```
+
+Bearer tokens are sent in cleartext over plain HTTP. Expose the orchestrator API
+only on localhost/private networks or behind TLS termination in production.
 
 ---
 
@@ -229,13 +238,9 @@ A Zenoh router provides a stable rendezvous point. Nodes connect via TCP. Works 
 └─────────┘                  └──────────┘                  └─────────┘
 ```
 
-Set `ZENOH_CONNECT=tcp/<router-host>:7447` on each node, or configure it in YAML:
-
-```yaml
-zenoh:
-  connect:
-    - tcp/router.example.com:7447
-```
+Mitiflow currently opens Zenoh with the default Zenoh configuration in the
+production binaries; first-class Mitiflow YAML/env plumbing for explicit router
+endpoints and TLS/mTLS profiles is planned.
 
 > **See also:** [Zenoh Capabilities](01_zenoh_capabilities.md) for the stable Zenoh APIs Mitiflow relies on.
 
@@ -249,16 +254,16 @@ When the orchestrator is running, it exposes REST endpoints on the configured bi
 
 ```bash
 # Cluster overview
-curl http://localhost:8080/api/cluster/status
+curl http://localhost:8080/api/v1/cluster/status
 
 # List topics
-curl http://localhost:8080/api/topics
+curl http://localhost:8080/api/v1/topics
 
 # Topic details
-curl http://localhost:8080/api/topics/my-topic
+curl http://localhost:8080/api/v1/topics/my-topic
 
-# Consumer group lag
-curl http://localhost:8080/api/groups/my-group/lag
+# Consumer group details and lag
+curl http://localhost:8080/api/v1/consumer-groups/my-group
 ```
 
 ### Web UI
@@ -274,7 +279,7 @@ All components use `tracing` with `RUST_LOG` filter:
 
 ```bash
 # Storage agent debug logging
-RUST_LOG=mitiflow_storage=debug mitiflow storage --config agent.yaml
+RUST_LOG=mitiflow_storage=debug mitiflow storage --config storage.yaml
 
 # Verbose Zenoh protocol tracing
 RUST_LOG=mitiflow=debug,zenoh=trace mitiflow dev --topics "test:4:1"
