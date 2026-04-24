@@ -16,17 +16,10 @@ ignore = [
     # rsa: Marvin Attack timing sidechannel — transitive dep via zenoh/quinn;
     # no direct RSA usage in mitiflow, awaiting upstream fix.
     "RUSTSEC-2023-0071",
-    # rustls-webpki: CRL distribution point matching — low impact for our use case
-    # (no CRL-based revocation). Transitive via zenoh.
-    "RUSTSEC-2026-0049",
     # lz4_flex: memory disclosure from uninitialized/reused buffer on invalid input.
     # Transitive via zenoh-transport (lz4_flex 0.10.0). Fixed in 0.11.6/0.12.1 but
     # zenoh pins the 0.10.x semver range. Awaiting upstream Zenoh update.
     "RUSTSEC-2026-0041",
-    # rand: unsound with custom logger calling rand::rng() — aliased mutable ref.
-    # Affects rand >=0.7, <0.9.3 and 0.10.0. Transitive via zenoh (rand 0.8.5).
-    # Patched in >=0.9.3 / >=0.10.1 but zenoh pins 0.8.x. Awaiting upstream fix.
-    "RUSTSEC-2026-0097",
 ]
 
 # ──────────────────────────────────────────────
