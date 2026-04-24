@@ -383,6 +383,13 @@ async fn e2e_publish_during_rebalance() {
     cluster.start_agent(1).await;
     cluster.wait_for_stable(Duration::from_millis(1500)).await;
 
+    let initial_total = cluster.wait_for_coverage(4, Duration::from_secs(10)).await;
+    assert_eq!(
+        initial_total, 4,
+        "all stores should be assigned before pre-crash publishing"
+    );
+    cluster.wait_for_no_overlap(Duration::from_secs(10)).await;
+
     let pub_session = zenoh::open(zenoh::Config::default()).await.unwrap();
     let publisher = cluster.create_publisher(&pub_session).await;
 
@@ -447,22 +454,24 @@ async fn e2e_data_survives_crash_and_recovery() {
     cluster.wait_for_stable(Duration::from_millis(2000)).await;
 
     // Node-0 should take over all partitions.
-    let total = cluster.wait_for_coverage(4, Duration::from_secs(5)).await;
+    let total = cluster.wait_for_coverage(4, Duration::from_secs(15)).await;
     assert!(
         total >= 4,
         "node-0 should cover all 4 partitions, got {total}"
     );
+    cluster.wait_for_no_overlap(Duration::from_secs(10)).await;
 
     // Publish new events after crash.
     for p in 0..4u32 {
         cluster.publish_events(&publisher, p, 3).await;
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // At least the post-crash events should be in the stores.
     let mut found_total = 0;
     for p in 0..4u32 {
-        let count = cluster.query_store_count(&pub_session, p).await;
+        let count = cluster
+            .wait_for_events(&pub_session, p, 1, Duration::from_secs(10))
+            .await;
         found_total += count;
     }
     assert!(
