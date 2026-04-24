@@ -2,7 +2,8 @@
 
 Two-tier architecture for partition placement and lifecycle across a cluster of `StorageAgent` nodes.
 
-**Implementation status:** Tier 1 complete, Tier 2 not started.
+**Implementation status:** Tier 1 and Tier 2 are implemented. Orchestrator HA
+and automatic failure-driven drain generation remain planned work.
 
 | Area | Key Files |
 |------|-----------|
@@ -223,7 +224,7 @@ The `replica` index in assignment tuples `(partition, replica)` maps directly to
 
 - All replicas subscribe to `{prefix}/p/{partition}/**`; Zenoh fan-out delivers events simultaneously
 - Each replica publishes its watermark at `_watermark/{partition}/{replica}`
-- Publishers using `Durability::Quorum` confirm when a quorum of replicas report the sequence as committed
+- Quorum durability (`Durability::Quorum`) is planned but not yet implemented; current `publish_durable()` uses a single-store watermark
 - Recovery uses the existing EventStore queryable — no new protocol needed
 
 ---
@@ -249,11 +250,11 @@ Weighted HRW, MembershipTracker, Reconciler, StorageAgent binary, configuration,
 
 RecoveryManager (peer query + cache fallback), rack-aware assignment, multi-replica support, override support, drain grace period.
 
-### Phase 3: Orchestrator Cluster Extensions (Tier 2) — Not started
+### Phase 3: Orchestrator Cluster Extensions (Tier 2) — Done
 
-ClusterView, OverrideManager, drain operation, admin API extensions, orchestrator HA.
+ClusterView, OverrideManager, drain operation, and admin API extensions. Orchestrator HA is still planned.
 
-### Phase 4: Multi-Topic & Polish — Not started
+### Phase 4: Multi-Topic & Polish — Done
 
 Multi-topic discovery, rebalance operations, CLI tooling, dashboard integration.
 
