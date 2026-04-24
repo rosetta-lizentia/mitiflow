@@ -3,7 +3,7 @@
 //! Each test spins up N StorageAgent instances + an Orchestrator in-process,
 //! then validates behaviour under drain, override, crash, and restart scenarios.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use mitiflow::EventBusConfig;
@@ -215,6 +215,26 @@ impl OrchestratorTestCluster {
         map
     }
 
+    /// Wait until the live agent assignment snapshot satisfies `predicate`.
+    async fn wait_for_assignment_snapshot<F>(
+        &self,
+        timeout: Duration,
+        mut predicate: F,
+    ) -> HashMap<String, Vec<(u32, u32)>>
+    where
+        F: FnMut(&HashMap<String, Vec<(u32, u32)>>) -> bool,
+    {
+        let start = tokio::time::Instant::now();
+        loop {
+            self.recompute_all().await;
+            let snapshot = self.get_assignment_snapshot().await;
+            if predicate(&snapshot) || start.elapsed() > timeout {
+                return snapshot;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     /// Verify every (partition, replica) has at least one owner.
     #[allow(dead_code)]
     async fn verify_full_coverage(&self) {
@@ -395,29 +415,32 @@ async fn e2e_override_offline_node_falls_back_to_hrw() {
     .await
     .unwrap();
 
-    // Let agents reconcile
-    for _ in 0..5 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        c.recompute_all().await;
-    }
-
     // With an override to a non-existent node, the HRW owner skips p0r0
     // and node-99 doesn't exist, so p0r0 is UNASSIGNED. This is expected
     // override semantics — the orchestrator should never override to an
     // offline node in production. Here we verify the system stays stable.
-    let snapshot = c.get_assignment_snapshot().await;
+    let snapshot = c
+        .wait_for_assignment_snapshot(Duration::from_secs(15), |snapshot| {
+            let all: Vec<(u32, u32)> = snapshot.values().flatten().copied().collect();
+            let unique: HashSet<(u32, u32)> = all.iter().copied().collect();
+            all.len() == expected - 1
+                && !unique.contains(&(0, 0))
+                && (1..c.num_partitions).all(|p| unique.contains(&(p, 0)))
+        })
+        .await;
     let all: Vec<(u32, u32)> = snapshot.values().flatten().copied().collect();
+    let unique: HashSet<(u32, u32)> = all.iter().copied().collect();
 
     // p0r0 should NOT be assigned (override sends it to non-existent node)
     assert!(
-        !all.contains(&(0, 0)),
+        !unique.contains(&(0, 0)),
         "p0r0 should be unassigned when override points to non-existent node. Snapshot: {snapshot:?}"
     );
 
     // All other partitions (1-5) should remain assigned
     for p in 1..c.num_partitions {
         assert!(
-            all.contains(&(p, 0)),
+            unique.contains(&(p, 0)),
             "p{p}r0 should still be assigned. Snapshot: {snapshot:?}"
         );
     }
