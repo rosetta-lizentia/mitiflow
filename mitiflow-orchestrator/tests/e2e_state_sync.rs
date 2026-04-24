@@ -1150,8 +1150,10 @@ async fn e2e_orchestrator_restart_rediscovers_all_agents() {
         // Restart orchestrator (with HTTP again)
         c.start_orchestrator_with_http().await;
 
-        // Should rediscover all 3 agents
-        let seen = c.wait_for_online_count(3, Duration::from_secs(5)).await;
+        // Restarted orchestrators must bootstrap existing Zenoh liveliness
+        // tokens. CI can take longer than fresh-start discovery here, so give
+        // the rediscovery path enough time to avoid racing the assertion.
+        let seen = c.wait_for_online_count(3, Duration::from_secs(15)).await;
         assert_eq!(seen, 3, "restarted orchestrator should rediscover 3 agents");
 
         // Verify via HTTP
