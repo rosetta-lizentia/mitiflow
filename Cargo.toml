@@ -13,11 +13,11 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-authors = ["Pawissanutt"]
+authors = ["Rosetta Lizentia"]
 license = "Apache-2.0"
 rust-version = "1.93"
-repository = "https://github.com/pawissanutt/mitiflow"
-homepage = "https://github.com/pawissanutt/mitiflow"
+repository = "https://github.com/rosetta-lizentia/mitiflow"
+homepage = "https://github.com/rosetta-lizentia/mitiflow"
 documentation = "https://docs.rs/mitiflow"
 
 [workspace.dependencies]
