@@ -109,9 +109,10 @@ pub fn weighted_hrw_score(node_id: &str, partition: u32, replica: u32, weight: u
     (node_id, partition, replica).hash(&mut hasher);
     let hash_val = hasher.finish();
 
-    // Normalize to (0, 1] — avoid ln(0)
-    let normalized = (hash_val as f64) / (u64::MAX as f64);
-    let normalized = normalized.max(f64::MIN_POSITIVE);
+    // Normalize to (0, 1) to avoid ln(0) and ln(1).
+    // Using a half-open interval can yield 1.0 for hash_val == u64::MAX, which
+    // makes ln(1) = 0 and produces +/-inf or NaN scores.
+    let normalized = ((hash_val as f64) + 1.0) / ((u64::MAX as f64) + 2.0);
 
     // Weighted score: higher weight → higher score in expectation
     -(weight as f64) / normalized.ln()
@@ -130,7 +131,7 @@ pub fn assign_replicas(
         .iter()
         .map(|n| (weighted_hrw_score(&n.id, partition, 0, n.capacity), n))
         .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
 
     scored
         .into_iter()
@@ -153,7 +154,7 @@ pub fn assign_replicas_rack_aware(
         .iter()
         .map(|n| (weighted_hrw_score(&n.id, partition, 0, n.capacity), n))
         .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
 
     let rf = replication_factor as usize;
     let mut selected = Vec::with_capacity(rf);
@@ -322,6 +323,14 @@ mod tests {
         let s1 = weighted_hrw_score("node-a", 5, 0, 100);
         let s2 = weighted_hrw_score("node-a", 5, 0, 100);
         assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn weighted_hrw_score_zero_weight_is_finite() {
+        // Zero-weight nodes can appear from external configuration; scoring must
+        // remain finite and sortable.
+        let score = weighted_hrw_score("zero", 5, 0, 0);
+        assert!(score.is_finite());
     }
 
     #[test]
