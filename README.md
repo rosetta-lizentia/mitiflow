@@ -1,16 +1,17 @@
 # Mitiflow
 
-Brokerless event streaming built on [Zenoh](https://zenoh.io). Kafka-class
-reliability — sequencing, gap detection, durable storage, consumer groups —
-with microsecond-latency pub/sub. No brokers, no ZooKeeper, no external
-coordinator.
+Brokerless event streaming built on [Zenoh](https://zenoh.io). Mitiflow adds
+sequencing, gap detection, durable storage, and consumer groups to Zenoh-native
+pub/sub without a mandatory broker, ZooKeeper, or external coordinator. Current
+durable publishing is single-store watermark confirmation; quorum durability and
+Kafka protocol compatibility are planned but not implemented yet.
 
 ## Features
 
 - **Brokerless** — Zenoh peer-to-peer mesh; no central broker to manage or scale
-- **Microsecond latency** — events flow directly between publishers and subscribers via Zenoh
+- **Low-latency pub/sub** — events flow directly between publishers and subscribers via Zenoh
 - **Gap detection & recovery** — per-publisher sequence tracking with tiered recovery (store → publisher cache → backoff)
-- **Durable publishing** — watermark-confirmed writes with configurable timeout
+- **Durable publishing** — single-store watermark-confirmed writes with configurable timeout
 - **Key-based publishing** — `publish_keyed()` with automatic partition routing and Zenoh-native key filtering
 - **Consumer groups** — offset commits with zombie fencing, auto-commit, and rebalancing via rendezvous hashing
 - **Event store** — fjall LSM backend with replay ordering (HLC), key index, log compaction, and GC
@@ -63,9 +64,10 @@ traditional message broker:
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
 | `mitiflow-storage` | Storage agent — distributed partition management (not on the message path) |
 | `mitiflow-orchestrator` | Optional control plane — config CRUD, lag monitoring, HTTP API (not required for operation) |
-| `mitiflow-cli` | Unified CLI binary (`mitiflow agent`, `orchestrator`, `ctl`, `dev`) |
+| `mitiflow-cli` | Unified CLI binary (`mitiflow storage`, `orchestrator`, `ctl`, `dev`) |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks (Kafka, NATS, Redis, Redpanda) |
+| `mitiflow-gateway` | Kafka protocol gateway stub (not implemented yet) |
 
 ## Quick Start
 
@@ -157,12 +159,12 @@ let event: Event<MyPayload> = consumer.recv().await?;
 # Install the CLI
 cargo install --path mitiflow-cli/
 
-# Dev mode: orchestrator + agent in one process
+# Dev mode: orchestrator + storage agent in one process
 mitiflow dev --topics "my-topic:8:1"
 
-# Production: separate agent and orchestrator
+# Production: separate storage agent and orchestrator
 mitiflow orchestrator --config orchestrator.yaml
-mitiflow agent --config agent.yaml
+mitiflow storage --config storage.yaml
 
 # Admin
 mitiflow ctl topics list
@@ -176,8 +178,21 @@ mitiflow ctl diagnose
 |------|---------|-------------|
 | `store` | Yes | EventStore + storage backend trait |
 | `fjall-backend` | No | Concrete fjall LSM-tree backend |
-| `wal` | No | Write-ahead log for durable publisher |
-| `full` | No | All of the above |
+| `wal` | No | Placeholder for future publisher WAL support; no code path currently uses it |
+| `full` | No | Store + fjall backend + currently placeholder WAL flag |
+
+## Feature Status
+
+| Capability | Status |
+|------------|--------|
+| Core pub/sub, sequencing, gap recovery | Implemented |
+| Event store, replay, consumer groups | Implemented |
+| Keyed live subscribers and store-polled `KeyedConsumer` | Implemented |
+| `mitiflow dev` all-in-one mode | Implemented |
+| Durable publish | Implemented for a single store watermark |
+| Kafka protocol gateway | Stub / planned |
+| Quorum durability and durability levels | Planned |
+| Publisher WAL durability | Placeholder flag / not implemented |
 
 ## Examples
 

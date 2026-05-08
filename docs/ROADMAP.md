@@ -27,7 +27,7 @@ re-introduces the coordination that native mitiflow avoids.
 | Offset | Gateway-assigned monotonic counter (or HLC-to-integer encoding) |
 | Consumer Group | `PartitionManager` + store-managed offset commits |
 | ISR | Zenoh pub/sub fan-out to store replicas |
-| acks=all | `publish_durable()` (watermark confirmation) |
+| acks=all | Planned quorum durability; current `publish_durable()` is single-store watermark confirmation |
 
 ### Implementation phases
 
@@ -56,13 +56,13 @@ primary API.
 
 ## 2. Key-Scoped Subscribing — Mode 2 (Store-Mediated)
 
-**Priority:** Medium — needed for complete key-filtered event sourcing.
+**Status:** Implemented.
 
 **Ref:** [15_key_based_publishing.md](15_key_based_publishing.md)
 
-Mode 1 (live passthrough via `new_keyed()` / `new_key_prefix()`) exists
-today — microsecond latency, event_id dedup, no gap detection. Mode 2 adds
-**pull-based store queries** for consumers that need completeness and ordering.
+Mode 1 (live passthrough via `new_keyed()` / `new_key_prefix()`) and Mode 2
+(`KeyedConsumer`, pull-based store queries) both exist today. Mode 2 is for
+consumers that need completeness and deterministic replay ordering.
 
 ### Design: Two subscriber modes
 
@@ -74,7 +74,7 @@ today — microsecond latency, event_id dedup, no gap detection. Mode 2 adds
 | Store dependency | None | Required |
 | Cursor | None (stateless) | HLC timestamp (cross-replica portable) |
 
-### KeyedConsumer API (planned)
+### KeyedConsumer API
 
 ```rust
 let mut consumer = KeyedConsumer::builder(&session, config)
@@ -89,11 +89,11 @@ loop {
 }
 ```
 
-### Implementation phases
+### Implemented phases
 
-1. **Store key-scoped replay** — add `key`/`key_prefix` to `ReplayFilters`, implement `query_replay_keyed()` in FjallBackend
-2. **KeyedConsumer** — poll-based consumer with HLC cursor, builder pattern
-3. **Consumer group key offsets** — `KeyedOffsetCommit` type, HLC-based offset storage
+1. **Store key-scoped replay** — `key`/`key_prefix` filters on replay queries
+2. **KeyedConsumer** — poll-based consumer with HLC cursor and builder pattern
+3. **Consumer group key offsets** — HLC-based offset storage for committed keyed cursors
 
 ### Why pull instead of hybrid
 
@@ -135,7 +135,6 @@ replicas serve reads.
 | Item | Notes |
 |------|-------|
 | OpenTelemetry integration | `tracing-opentelemetry` + `opentelemetry-prometheus` metrics export |
-| `mitiflow dev` subcommand | Co-locate orchestrator + agent + Zenoh router in one process for local dev |
 | Auto-drain on node failure | Automatic override generation when a node goes offline |
 | Rebalance advisor | Load-aware override generation |
 | Topic data deletion | Orchestrator triggers on-disk cleanup on agents |

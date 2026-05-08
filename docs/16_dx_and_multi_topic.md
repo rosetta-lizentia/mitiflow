@@ -59,7 +59,7 @@ Late-joining agents query the orchestrator's `_config/**` queryable on startup.
 Single `mitiflow` binary with `clap` subcommands:
 
 ```bash
-mitiflow agent --config agent.yaml
+mitiflow storage --config storage.yaml
 mitiflow orchestrator --config orchestrator.yaml
 mitiflow ctl topics list
 mitiflow ctl cluster drain node-1
@@ -131,7 +131,6 @@ Embedded axum server mirroring the Zenoh queryable:
 
 ## Deferred Items
 
-- `mitiflow dev` — co-locate orchestrator + agent + Zenoh in one process
 - OpenTelemetry integration — distributed traces and Prometheus metrics
 - Auto-drain on node failure
 - Rebalance advisor / auto-rebalance

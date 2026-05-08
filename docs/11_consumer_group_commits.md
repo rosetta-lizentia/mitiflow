@@ -761,8 +761,7 @@ session.get("mitiflow/_admin/groups/order-processor/lag").await?;  // get lag
 // Via HTTP REST (for dashboards / external tools):
 // GET /api/v1/topics
 // GET /api/v1/topics/orders
-// GET /api/v1/groups
-// GET /api/v1/groups/order-processor/lag
+// GET /api/v1/consumer-groups/order-processor
 // POST /api/v1/topics  { name: "orders", partitions: 16, rf: 3 }
 ```
 

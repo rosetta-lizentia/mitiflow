@@ -2,9 +2,10 @@
 
 Production-grade event streaming for [Zenoh](https://zenoh.io).
 
-Layers Kafka-class reliability — sequencing, gap detection, recovery, durability,
-consumer groups — on top of Zenoh's microsecond-latency pub/sub using only
-stable APIs. No brokers, no external coordinator.
+Layers sequencing, gap detection, recovery, single-store durable publishing, and
+consumer groups on top of Zenoh pub/sub using stable APIs. No mandatory brokers
+and no external coordinator. Quorum durability and Kafka protocol compatibility
+are planned but not implemented yet.
 
 ## Features
 
@@ -50,8 +51,8 @@ async fn main() -> mitiflow::Result<()> {
 |------|---------|-------------|
 | `store` | Yes | EventStore + storage backend trait |
 | `fjall-backend` | No | Concrete fjall LSM-tree backend |
-| `wal` | No | Write-ahead log for durable publisher |
-| `full` | No | All of the above |
+| `wal` | No | Placeholder for future publisher WAL support; no code path currently uses it |
+| `full` | No | Store + fjall backend + currently placeholder WAL flag |
 
 ## License
 

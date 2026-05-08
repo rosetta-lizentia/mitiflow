@@ -18,7 +18,7 @@ mitiflow/
 ├── mitiflow/                     # core library crate
 ├── mitiflow-storage/               # multi-topic storage agent
 ├── mitiflow-orchestrator/        # control plane (config, lag, alerts)
-├── mitiflow-cli/                 # unified CLI (agent, orchestrator, ctl)
+├── mitiflow-cli/                 # unified CLI (storage, orchestrator, ctl, dev)
 ├── mitiflow-emulator/            # topology simulation
 ├── mitiflow-gateway/             # Kafka protocol gateway (stub)
 ├── mitiflow-bench/               # comparative benchmarks
@@ -445,7 +445,7 @@ mitiflow-gateway/
 
 **Phase 5a: Read/Write (MVP)**
 - 6 API keys: Produce, Fetch, Metadata, OffsetCommit, OffsetFetch, ListOffsets
-- acks mapping: `acks=0` → fire-and-forget, `acks=1` → Block, `acks=all` → `publish_durable()` — see [ROADMAP.md](ROADMAP.md) § Kafka Gateway
+- acks mapping: `acks=0` → fire-and-forget, `acks=1` → Block, `acks=all` → planned quorum durability; current `publish_durable()` is single-store — see [ROADMAP.md](ROADMAP.md) § Kafka Gateway
 - Fetch: live stream via `EventSubscriber` + historical replay via Event Store queryable — see [ROADMAP.md](ROADMAP.md) § Kafka Gateway
 - Validation: `rdkafka` Rust client smoke test
 
@@ -615,7 +615,7 @@ mitiflow-bench/
 |-----------|-------|--------|
 | `bench_mitiflow_vs_kafka_latency` | Same payload, same machine | p50/p95/p99 latency side-by-side |
 | `bench_mitiflow_vs_kafka_throughput` | 64B payload, 10s sustained | msgs/s side-by-side |
-| `bench_mitiflow_vs_kafka_durable` | `acks=all` / `publish_durable()` | confirmed events/s |
+| `bench_mitiflow_vs_kafka_durable` | Kafka `acks=all` / Mitiflow single-store `publish_durable()` | confirmed events/s |
 
 Expected results based on benchmarks cited in [06_comparison.md](06_comparison.md) § 2:
 - **Latency:** mitiflow 100-1000× lower (µs vs ms)
@@ -712,19 +712,20 @@ Features beyond the core library phases, tracked across the codebase.
 | Alert Manager | `mitiflow-orchestrator` | 8 unit tests | — |
 | Replication (multi-store + recovery) | `mitiflow-storage` | recovery.rs (5 tests) | [05_replication.md](05_replication.md) |
 | Topic Schema Registry | `mitiflow`, `mitiflow-storage`, `mitiflow-orchestrator`, `mitiflow-cli` | 10 unit + 7 integration + 6 store tests | [18_topic_schema_registry.md](18_topic_schema_registry.md) |
+| Key-Scoped Subscribing (Mode 2: `KeyedConsumer`) | `mitiflow` | keyed consumer unit/integration coverage | [15_key_based_publishing.md](15_key_based_publishing.md) |
+| `mitiflow dev` subcommand | `mitiflow-cli` | CLI/dev-mode coverage | [16_dx_and_multi_topic.md](16_dx_and_multi_topic.md) |
 
 ### Open / Deferred
 
 | Item | Notes |
 |------|-------|
 | Kafka Gateway (phases 5a–5c) | Stub only. See [ROADMAP.md](ROADMAP.md). |
-| Key-Scoped Subscribing (Mode 2: store queries) | Design only. See [ROADMAP.md](ROADMAP.md). |
 | Orchestrator HA | Leader election via liveliness + lowest UUID |
 | Quorum watermark tracker | `QuorumTracker` collecting watermarks from N replicas |
 | Publisher quorum confirmation | `publish_durable()` waiting for quorum instead of single-store |
 | Durability levels (Single/Quorum/All) | Configurable per-publish |
+| Publisher WAL durability | `wal` feature flag exists, but no publisher WAL code path is implemented yet |
 | OpenTelemetry integration | `tracing-opentelemetry` + `opentelemetry-prometheus` |
-| `mitiflow dev` subcommand | Co-locate orchestrator + agent + Zenoh router in one process |
 | Auto-drain on node failure | Automatic override generation when node goes offline |
 | Rebalance advisor | Load-aware override generation |
 | Topic data deletion command | Orchestrator triggers on-disk cleanup on agents |

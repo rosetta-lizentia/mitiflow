@@ -1,6 +1,6 @@
 # mitiflow: Production-Grade Event Streaming for Zenoh
 
-**A Rust crate that brings Kafka-class reliability to Zenoh's microsecond-latency pub/sub.**
+**A Rust crate that layers event-streaming semantics onto Zenoh-native pub/sub.**
 
 ---
 
@@ -12,7 +12,7 @@ Modern distributed systems need event streaming with sequencing, durability, con
 
 **`mitiflow`** bridges this gap by layering production-grade event streaming patterns on top of Zenoh's stable core APIs (`put`, `subscribe`, `queryable`, `get`, `liveliness`).
 
-> **Status (2026-03):** All core features implemented. See [implementation_plan.md](implementation_plan.md) for status and [ROADMAP.md](ROADMAP.md) for planned features.
+> **Status (2026-03):** Core pub/sub, store-backed recovery, consumer groups, keyed publishing, `KeyedConsumer`, and dev mode are implemented. Quorum durability, publisher WAL durability, and Kafka protocol compatibility are planned or stubbed. See [implementation_plan.md](implementation_plan.md) for status and [ROADMAP.md](ROADMAP.md) for planned features.
 
 ## What You Get
 
@@ -46,9 +46,9 @@ All publishers subscribe to watermark stream:
 
 One batch broadcast serves all publishers. Cost is O(1) regardless of publisher count.
 
-With replicated stores, each replica publishes its own watermark. Publishers wait
-for a **quorum** of replicas to confirm — no Raft, no leader election, just Zenoh
-pub/sub fan-out as the replication transport.
+With replicated stores, each replica can publish its own watermark. Publisher-side
+quorum confirmation is planned; the current `publish_durable()` implementation
+waits for a single store watermark.
 
 ## Architecture Overview
 
@@ -145,7 +145,7 @@ while let Ok(event) = consumer.recv::<MyPayload>().await {
 | `mitiflow-storage` | Storage member daemon — per-topic workers, rebalancing, membership, recovery | ✅ Complete |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API, cluster view | ✅ Core done |
 | `mitiflow-emulator` | YAML-driven topology runner, chaos testing, process/container backends | ✅ Complete |
-| `mitiflow-cli` | Unified CLI — agent, orchestrator, ctl subcommands | ✅ Complete |
+| `mitiflow-cli` | Unified CLI — storage, orchestrator, ctl, dev subcommands | ✅ Complete |
 | `mitiflow-gateway` | Kafka protocol gateway | 🔧 Stub |
 | `mitiflow-bench` | Comparative benchmarks vs Kafka, NATS, Redis, Redpanda | ✅ Complete |
 | `mitiflow-ui` | Web dashboard (Svelte 5) | 🔧 Early |

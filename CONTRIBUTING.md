@@ -32,8 +32,8 @@ just test                                    # Via justfile
 |------|-------------|
 | `store` (default) | EventStore + storage backend trait |
 | `fjall-backend` | Concrete fjall LSM-tree backend |
-| `wal` | Write-ahead log for durable publisher |
-| `full` | All of the above |
+| `wal` | Placeholder for future publisher WAL support; no code path currently uses it |
+| `full` | Store + fjall backend + currently placeholder WAL flag |
 
 ## Code Conventions
 
@@ -95,7 +95,7 @@ async fn test_something() {
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API |
 | `mitiflow-storage` | Storage agent — distributed partition management |
-| `mitiflow-cli` | Unified CLI binary — agent, orchestrator, ctl, dev mode |
+| `mitiflow-cli` | Unified CLI binary — storage, orchestrator, ctl, dev mode |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks (Kafka, NATS, Redis, Redpanda) |
 | `mitiflow-gateway` | Kafka protocol gateway (not yet implemented) |

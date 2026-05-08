@@ -9,7 +9,7 @@ Brokerless event streaming on Zenoh. Rust 2024 edition workspace + standalone Sv
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
 | `mitiflow-storage` | Storage agent — distributed partition management |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API (axum) |
-| `mitiflow-cli` | Unified CLI binary — `agent`, `orchestrator`, `ctl`, `dev` subcommands |
+| `mitiflow-cli` | Unified CLI binary — `storage`, `orchestrator`, `ctl`, `dev` subcommands |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks (Kafka, NATS, Redis, Redpanda) |
 | `mitiflow-gateway` | Kafka protocol gateway (stub, not yet implemented) |
@@ -68,8 +68,8 @@ VS Code is configured with `rust-analyzer.cargo.features: ["full"]`.
 |------|---------|-------------|
 | `store` | Yes | EventStore + storage backend trait |
 | `fjall-backend` | No | Concrete fjall LSM-tree backend (implies `store`) |
-| `wal` | No | Write-ahead log for durable publisher |
-| `full` | No | All of the above |
+| `wal` | No | Placeholder for future publisher WAL support; no code path currently uses it |
+| `full` | No | Store + fjall backend + currently placeholder WAL flag |
 
 Always pass `--features full` when building/testing to enable all code paths.
 

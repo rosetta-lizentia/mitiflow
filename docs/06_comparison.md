@@ -59,7 +59,7 @@ Data sourced from published benchmarks ([zenoh.io 2023](https://zenoh.io/blog/20
 | **At-least-once** | ✅ Reliable channel | ✅ acks=1/all | ✅ Publisher confirm | ✅ AckAll | ✅ | ✅ XACK |
 | **In-session dedup** | ✅ mitiflow L1 (seq tracking) | ❌ Consumer-side | ❌ | ✅ AckPolicy | ❌ | ❌ |
 | **Exactly-once** | ⚠️ L4 checkpoint | ✅ Idempotent producer | ❌ | ✅ Double-ack | ✅ Transaction | ❌ |
-| **Confirmed durable** | ✅ Watermark stream | ✅ acks=all + ISR | ✅ Publisher confirm | ✅ | ✅ | ⚠️ fsync config |
+| **Confirmed durable** | ✅ Single-store watermark stream; quorum planned | ✅ acks=all + ISR | ✅ Publisher confirm | ✅ | ✅ | ⚠️ fsync config |
 
 ### Durability & Persistence
 
@@ -166,9 +166,10 @@ This is **simpler** than Kafka's approach where partition reassignment requires 
 
 ### 5.2 Replication via Pub/Sub Fan-Out
 
-Multiple Event Store replicas subscribe to the same key expression and receive
-all events simultaneously via Zenoh's native fan-out. Publishers wait for a
-quorum of replica watermarks — no Raft, no leader election.
+Multiple Event Store replicas can subscribe to the same key expression and receive
+all events simultaneously via Zenoh's native fan-out. Publisher-side quorum
+confirmation is planned; current durable publishing waits for a single store
+watermark.
 
 See [05_replication.md](05_replication.md) for the full design, including
 recovery protocol, consistency guarantees, and failure modes.
@@ -217,7 +218,7 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | Storage capacity | ✅ | Partitioned Event Stores, each with own DB |
 | Write throughput | ✅ | Parallel writes across partition stores |
 | Read throughput | ✅ | Replicas can serve reads |
-| Fault tolerance | ✅ | Replicas via Zenoh fan-out + quorum watermark |
+| Fault tolerance | ⚠️ | Replica fan-out exists in the design; quorum watermark is planned |
 | Log compaction | ✅ | StorageBackend trait method |
 | Tiered storage | ✅ | Hot (fjall) → cold (S3) archive pipeline |
 | Geo-replication | ✅ | Zenoh router mesh + remote Event Stores |
@@ -269,8 +270,8 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | **Latency** | ✅ 10-16 µs (peer) | ❌ 1-50 ms |
 | **Throughput** | ✅ 67 Gbps (peer) | ⚠️ 5 Gbps (Kafka) |
 | **Scalability** | ✅ Partition + replicate Event Store | ✅ Native partitions + ISR |
-| **Replication cost** | ✅ Free (Zenoh fan-out, quorum watermark) | ⚠️ Followers fetch from leader |
-| **Durability** | ✅ Event Store sidecar | ✅ Native |
+| **Replication cost** | ⚠️ Designed around Zenoh fan-out; quorum watermark is planned | ⚠️ Followers fetch from leader |
+| **Durability** | ✅ Event Store sidecar; current publisher confirmation is single-store | ✅ Native |
 | **Consumer groups** | ✅ Store-managed offsets + generation fencing | ✅ Native |
 | **Ecosystem maturity** | ❌ Young (Rust-only) | ✅ Battle-tested, multi-language |
 | **Managed offerings** | ❌ Self-hosted only | ✅ Multiple cloud providers |
@@ -278,4 +279,4 @@ For mitiflow, single-partition exactly-once is achievable via watermark + sequen
 | **Broker dependency** | ✅ None | ❌ Always required |
 | **Custom queryable storage** | ✅ Full control | ⚠️ Limited |
 
-> **Bottom line:** Zenoh + `mitiflow` achieves Kafka-class reliability and scalability (partitioned + replicated Event Store with quorum-confirmed durability) at **100-1000x lower latency** and **without mandatory broker infrastructure**. The architectural gaps are ecosystem (tooling, connectors, multi-language SDKs) — not scalability or durability. For Rust-based systems where latency matters, this is the strictly better foundation.
+> **Bottom line:** Zenoh + `mitiflow` is designed for brokerless, low-latency streaming with sequencing, recovery, consumer groups, and sidecar persistence. The current implementation should be described as single-store durable publishing plus planned quorum durability, not as Kafka-class quorum-confirmed reliability. For Rust-based systems where topology flexibility and low latency matter, it is a promising foundation that still needs published benchmarks and failure-test evidence.

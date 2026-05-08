@@ -94,6 +94,8 @@ pub struct HttpState {
 /// If `auth_token` is `Some`, all API routes (except health) require
 /// `Authorization: Bearer <token>`. Pass `None` to disable auth (local dev).
 pub fn build_router(state: HttpState, auth_token: Option<&str>) -> Router {
+    let auth_token = normalize_auth_token(auth_token);
+
     // Public routes (always accessible)
     let public = Router::new().route("/api/v1/health", get(health));
 
@@ -189,6 +191,15 @@ pub fn build_router(state: HttpState, auth_token: Option<&str>) -> Router {
     let router = router.fallback(get(serve_ui));
 
     router
+}
+
+fn normalize_auth_token(auth_token: Option<&str>) -> Option<&str> {
+    match auth_token {
+        Some(token) if token.trim().is_empty() => {
+            panic!("HTTP auth token must not be empty")
+        }
+        other => other,
+    }
 }
 
 /// Start the HTTP server.

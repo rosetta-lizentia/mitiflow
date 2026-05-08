@@ -1,6 +1,6 @@
 # Mitiflow — Project Guidelines
 
-Mitiflow is a brokerless event streaming platform built on Zenoh, providing Kafka-like reliability (sequencing, gap detection, durable storage, consumer groups) with microsecond-latency pub/sub.
+Mitiflow is a brokerless event streaming platform built on Zenoh, layering sequencing, gap detection, single-store durable publishing, and consumer groups onto Zenoh-native pub/sub. Quorum durability and Kafka protocol compatibility are planned but not implemented yet.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ Seven crates in a Cargo workspace (plus a standalone Svelte UI):
 | `mitiflow` | Core library — publisher, subscriber, event store, partitions, DLQ |
 | `mitiflow-orchestrator` | Control plane — config CRUD, lag monitoring, HTTP API |
 | `mitiflow-storage` | Storage agent — distributed partition management, multi-topic |
-| `mitiflow-cli` | Unified CLI binary — `agent`, `orchestrator`, `ctl`, `dev` subcommands |
+| `mitiflow-cli` | Unified CLI binary — `storage`, `orchestrator`, `ctl`, `dev` subcommands |
 | `mitiflow-emulator` | YAML-driven topology runner and chaos testbed |
 | `mitiflow-bench` | Comparative benchmarks vs Kafka, NATS, Redis, Redpanda |
 | `mitiflow-gateway` | Kafka protocol gateway (stub, not yet implemented) |
@@ -36,7 +36,7 @@ cargo bench -p mitiflow                      # Criterion micro-benchmarks
 **Feature flags** (in `mitiflow` crate):
 - `store` (default) — EventStore + storage backend trait
 - `fjall-backend` — Concrete fjall LSM-tree backend (implies `store`)
-- `wal` — Write-ahead log for durable publisher
+- `wal` — Placeholder for future publisher WAL support; no code path currently uses it
 - `full` — All of the above
 
 ## Code Conventions

@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bootstrap_topics_from: Option<PathBuf> = std::env::var("MITIFLOW_BOOTSTRAP_TOPICS_FROM")
         .ok()
         .map(PathBuf::from);
+    let auth_token = auth_token_from_env()?;
 
     let session = zenoh::open(zenoh::Config::default()).await?;
 
@@ -52,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         lag_interval: Duration::from_millis(lag_interval_ms),
         admin_prefix: None,
         http_bind,
-        auth_token: None,
+        auth_token,
         bootstrap_topics_from,
     };
 
@@ -71,4 +72,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     session.close().await?;
 
     Ok(())
+}
+
+fn auth_token_from_env() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(auth_token_from_primary_env()?.or(auth_token_from_legacy_env()?))
+}
+
+fn auth_token_from_primary_env() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>>
+{
+    if let Ok(token) = std::env::var("MITIFLOW_AUTH_TOKEN") {
+        return normalize_auth_token(Some(token), "MITIFLOW_AUTH_TOKEN");
+    }
+    Ok(None)
+}
+
+fn auth_token_from_legacy_env() -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>>
+{
+    if let Ok(token) = std::env::var("MITIFLOW_UI_TOKEN") {
+        return normalize_auth_token(Some(token), "MITIFLOW_UI_TOKEN");
+    }
+    Ok(None)
+}
+
+fn normalize_auth_token(
+    token: Option<String>,
+    source: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    match token {
+        Some(token) if token.trim().is_empty() => Err(format!("{source} must not be empty").into()),
+        Some(token) => Ok(Some(token)),
+        None => Ok(None),
+    }
 }

@@ -48,13 +48,16 @@ build-with-ui: ui-build
 
 # --- Container builds (podman) ---
 
-# Build the agent container image
-container-agent:
+# Build the storage container image
+container-storage:
     podman build --build-arg PACKAGE=mitiflow-storage -t mitiflow-storage .
+
+# Backward-compatible alias for the old storage-agent recipe name
+container-agent: container-storage
 
 # Build the orchestrator container image (with embedded UI)
 container-orchestrator:
     podman build --build-arg PACKAGE=mitiflow-orchestrator --build-arg BUILD_UI=true -t mitiflow-orchestrator .
 
 # Build both container images
-container-all: container-agent container-orchestrator
+container-all: container-storage container-orchestrator
